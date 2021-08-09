@@ -8,4 +8,4 @@ services:
     build: .
     environment:
       URL: 'https://push.statuscake.com/?PK=f2ce1bae94e0357&TestID=6075093&time=0'
-      PERIOD: "1m"
+      PERIOD: "90s"
