@@ -15,5 +15,5 @@ jobs:
       if: success()
       with:
         balena_api_token: ${{secrets.BALENA_API_TOKEN}}
-        balena_command: "deploy ${{ secrets.BALENA_APP_NAME }}"
+        balena_command: "push ${{ secrets.BALENA_APP_NAME }}"
 
