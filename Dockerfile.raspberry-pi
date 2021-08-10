@@ -6,7 +6,7 @@ COPY . /go/src/github.com/mjasion/balena-monitoring
 
 RUN go build .
 
-FROM balenalib/raspberry-pi-alpine:3.13
+FROM balenalib/raspberry-pi-alpine:3.12
 
 WORKDIR /go/src/github.com/mjasion/balena-monitoring
 COPY --from=build /go/src/github.com/mjasion/balena-monitoring .
