@@ -1,4 +1,4 @@
-module balena-chelm
+module balena-monitoring
 
 go 1.16
 
