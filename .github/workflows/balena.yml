@@ -11,7 +11,7 @@ jobs:
     - name: Setup NodeJS
       uses: actions/setup-node@v2.4.0
     - name: Balena Deploy
-      uses: mjasion/balena-cli-action@v2.0.0
+      uses: mjasion/balena-cli-action@master
       if: success()
       with:
         balena_api_token: ${{secrets.BALENA_API_TOKEN}}
