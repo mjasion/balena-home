@@ -7,5 +7,5 @@ services:
   statuscake:
     build: .
     environment:
-      URL: 'https://push.statuscake.com/?PK=dac2c707fc25b74&TestID=6076325&time=0'
+      URL: 'https://push.statuscake.com/?PK=6d0384f11bce10f&TestID=6086033&time=0'
       PERIOD: "60s"
