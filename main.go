@@ -29,13 +29,14 @@ func main() {
 }
 
 func healthCheckCron() {
+	url := os.Getenv("URL")
 	c := cron.New()
-	c.AddFunc("@every " + os.Getenv("PERIOD"),      func() {
-		resp, err := http.Get(os.Getenv("URL"))
+	c.AddFunc("@every "+os.Getenv("PERIOD"), func() {
+		resp, err := http.Get(url)
 		if err != nil {
 			log.Fatalf("%v", err)
 		}
-		log.Println("Response", resp.Status)
+		log.Printf("Access: %s - %s", url, resp.Status)
 	})
 	c.Start()
 }
