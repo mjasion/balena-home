@@ -1,11 +1,5 @@
 version: "2.1"
 
-volumes:
-  config:
-
 services:
   statuscake:
     build: .
-    environment:
-      URL: 'https://push.statuscake.com/?PK=dac2c707fc25b74&TestID=6076325&time=0'
-      PERIOD: "60s"
