@@ -1,5 +1,12 @@
 version: "2.1"
 
 services:
-  statuscake:
+  ping-monitoring:
     build: ping-monitoring
+  wifi-monitoring:
+    build: wifi-monitoring
+#    network_mode: host
+#    privileged: true
+#    cap_add:
+#      - NET_ADMIN
+#      - ALL
