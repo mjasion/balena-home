@@ -3,3 +3,8 @@ version: "2.1"
 services:
   ping-monitoring:
     build: ping-monitoring
+  nginx:
+    build: nginx
+    expose:
+      - "8080"
+      - "8443"
