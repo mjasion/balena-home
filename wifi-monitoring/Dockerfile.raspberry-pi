@@ -1,7 +1,0 @@
-FROM balenalib/raspberry-pi-alpine:3.14
-
-RUN apk add networkmanager bash
-
-COPY start.sh .
-
-CMD ["bash", "start.sh"]
