@@ -9,7 +9,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v2
     - name: Setup NodeJS
-      uses: actions/setup-node@v2.5.1
+      uses: actions/setup-node@v3
     - name: Balena Deploy
       uses: mjasion/balena-cli-action@master
       if: success()
