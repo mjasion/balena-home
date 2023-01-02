@@ -3,6 +3,8 @@ version: "2.1"
 services:
   ping-monitoring:
     build: ping-monitoring
+  cloudflare-ddns:
+    build: cloudflare-ddns
   nginx:
     build: nginx
     ports:

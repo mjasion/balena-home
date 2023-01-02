@@ -1,0 +1,13 @@
+FROM balenalib/raspberry-pi-alpine-golang:1.18-3.15-build-20221215 AS build
+
+WORKDIR /go/src/github.com/mjasion/cloudflare-ddns
+
+COPY . /go/src/github.com/mjasion/cloudflare-ddns
+
+RUN go build .
+
+FROM balenalib/raspberry-pi-alpine:3.15
+
+COPY --from=build /go/src/github.com/mjasion/cloudflare-ddns/cloudflare-ddns .
+
+CMD ./cloudflare-ddns
