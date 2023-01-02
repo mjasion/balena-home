@@ -6,7 +6,7 @@ COPY . /go/src/github.com/mjasion/cloudflare-ddns
 
 RUN go build .
 
-FROM balenalib/raspberry-pi-alpine:3.15
+FROM balenalib/raspberry-pi-alpine:3.15-20221215
 
 COPY --from=build /go/src/github.com/mjasion/cloudflare-ddns/cloudflare-ddns .
 
