@@ -93,6 +93,7 @@ func UpdateDomain(ctx context.Context, api *cloudflare.API, domainNames, ipEndpo
 		// Update the DNS record to include the new IP address.
 		record.Content = newIP
 		record.Proxiable = false
+		record.TTL = 120
 
 		if err := api.UpdateDNSRecord(ctx, record.ZoneID, record.ID, *record); err != nil {
 			return errors.Wrap(err, "could not update the DNS record")

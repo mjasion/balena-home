@@ -34,6 +34,7 @@ func updateDomain() {
 	defer cancel()
 	token := os.Getenv("CF_TOKEN")
 	period := os.Getenv("PERIOD")
+	domain := os.Getenv("DOMAIN")
 	api, err := cloudflare.NewWithAPIToken(token)
 
 	if err != nil {
@@ -45,10 +46,14 @@ func updateDomain() {
 		logrus.Error("Missing PERIOD env")
 		logrus.Exit(1)
 	}
+	if domain == "" {
+		logrus.Error("Missing DOMAIN env")
+		logrus.Exit(1)
+	}
 
 	c := cron.New()
 	c.AddFunc("@every "+period, func() {
-		err := UpdateDomain(ctx, api, "home.mjasion.pl", "https://api.ipify.org/")
+		err := UpdateDomain(ctx, api, domain, "https://api.ipify.org/")
 		if err != nil {
 			logrus.WithError(err).Error()
 		}
