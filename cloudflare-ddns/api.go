@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"time"
 
 	cloudflare "github.com/cloudflare/cloudflare-go"
 	"github.com/pkg/errors"
@@ -33,6 +34,8 @@ func GetRecord(ctx context.Context, api *cloudflare.API, domainName string) (*cl
 
 	logrus.WithField("zoneID", zoneID).Info("got zone id")
 
+	time.Sleep(1 * time.Second)
+
 	// Print zone details
 	dnsRecords, err := api.DNSRecords(ctx, zoneID, cloudflare.DNSRecord{
 		Name: domainName,
@@ -40,6 +43,7 @@ func GetRecord(ctx context.Context, api *cloudflare.API, domainName string) (*cl
 	if err != nil {
 		return nil, errors.Wrap(err, "could not locate dns record for zone")
 	}
+	time.Sleep(1 * time.Second)
 
 	if len(dnsRecords) != 1 {
 		return nil, errors.Errorf("Expected to find a single dns record, got %d", len(dnsRecords))
