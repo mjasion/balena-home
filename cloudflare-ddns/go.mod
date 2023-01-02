@@ -1,4 +1,4 @@
-module balena-monitoring
+module cloudflare-ddns
 
 go 1.16
 
