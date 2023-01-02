@@ -31,7 +31,7 @@ func GetRecord(ctx context.Context, api *cloudflare.API, domainName string) (*cl
 		return nil, errors.Wrap(err, "could not find zone by name")
 	}
 
-	logrus.WithField("zoneID", zoneID).Debug("got zone id")
+	logrus.WithField("zoneID", zoneID).Info("got zone id")
 
 	// Print zone details
 	dnsRecords, err := api.DNSRecords(ctx, zoneID, cloudflare.DNSRecord{
@@ -79,7 +79,7 @@ func UpdateDomain(ctx context.Context, api *cloudflare.API, domainNames, ipEndpo
 		return errors.Wrap(err, "could not get the current IP address")
 	}
 
-	logrus.WithField("ip", newIP).Debug("got current IP address")
+	logrus.WithField("ip", newIP).Info("got current IP address")
 
 	// Split the domain names by comma, and range over them.
 	splitDomainNames := strings.Split(domainNames, ",")
