@@ -37,7 +37,7 @@ func GetRecord(ctx context.Context, api *cloudflare.API, domainName string) (*cl
 	time.Sleep(1 * time.Second)
 
 	// Print zone details
-	dnsRecords, err := api.DNSRecords(ctx, zoneID, cloudflare.DNSRecord{
+	dnsRecords, _, err := api.ListDNSRecords(ctx, cloudflare.ZoneIdentifier(zoneID), cloudflare.ListDNSRecordsParams{
 		Name: domainName,
 	})
 	if err != nil {
@@ -99,7 +99,14 @@ func UpdateDomain(ctx context.Context, api *cloudflare.API, domainNames, ipEndpo
 		record.Proxiable = false
 		record.TTL = 120
 
-		if err := api.UpdateDNSRecord(ctx, record.ZoneID, record.ID, *record); err != nil {
+		if err := api.UpdateDNSRecord(ctx, cloudflare.ZoneIdentifier(record.ZoneID), cloudflare.UpdateDNSRecordParams{
+			ID:        record.ID,
+			Type:      record.Type,
+			Name:      record.Name,
+			Content:   newIP,
+			Proxiable: false,
+			TTL:       120,
+		}); err != nil {
 			return errors.Wrap(err, "could not update the DNS record")
 		}
 

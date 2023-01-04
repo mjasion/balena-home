@@ -52,11 +52,14 @@ func updateDomain() {
 	}
 
 	c := cron.New()
-	c.AddFunc("@every "+period, func() {
+	update := func() {
 		err := UpdateDomain(ctx, api, domain, "https://api.ipify.org/")
 		if err != nil {
 			logrus.WithError(err).Error()
 		}
-	})
+	}
+	c.AddFunc("@every "+period, update)
 	c.Start()
+
+	go update()
 }
