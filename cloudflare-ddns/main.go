@@ -11,8 +11,9 @@ import (
 )
 
 func main() {
-
-	updateDomain()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	updateDomain(ctx)
 
 	sigs := make(chan os.Signal, 1)
 	done := make(chan bool, 1)
@@ -29,9 +30,7 @@ func main() {
 	<-done
 }
 
-func updateDomain() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func updateDomain(ctx context.Context) {
 	token := os.Getenv("CF_TOKEN")
 	period := os.Getenv("PERIOD")
 	domain := os.Getenv("DOMAIN")
@@ -52,14 +51,13 @@ func updateDomain() {
 	}
 
 	c := cron.New()
-	update := func() {
+	c.AddFunc("@every "+period, func() {
+		logrus.Infoln("Starting new execution")
 		err := UpdateDomain(ctx, api, domain, "https://api.ipify.org/")
 		if err != nil {
 			logrus.WithError(err).Error()
 		}
-	}
-	c.AddFunc("@every "+period, update)
+	})
 	c.Start()
 
-	go update()
 }

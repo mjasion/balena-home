@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
-	"io/ioutil"
-	"net/http"
-	"strings"
-	"time"
-
 	cloudflare "github.com/cloudflare/cloudflare-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"io/ioutil"
+	"net/http"
+	"strings"
 )
 
 // GetRecord fetches the record from the Cloudflare api.
@@ -34,8 +32,6 @@ func GetRecord(ctx context.Context, api *cloudflare.API, domainName string) (*cl
 
 	logrus.WithField("zoneID", zoneID).Info("got zone id")
 
-	time.Sleep(1 * time.Second)
-
 	// Print zone details
 	dnsRecords, _, err := api.ListDNSRecords(ctx, cloudflare.ZoneIdentifier(zoneID), cloudflare.ListDNSRecordsParams{
 		Name: domainName,
@@ -43,7 +39,6 @@ func GetRecord(ctx context.Context, api *cloudflare.API, domainName string) (*cl
 	if err != nil {
 		return nil, errors.Wrap(err, "could not locate dns record for zone")
 	}
-	time.Sleep(1 * time.Second)
 
 	if len(dnsRecords) != 1 {
 		return nil, errors.Errorf("Expected to find a single dns record, got %d", len(dnsRecords))
@@ -88,6 +83,7 @@ func UpdateDomain(ctx context.Context, api *cloudflare.API, domainNames, ipEndpo
 	// Split the domain names by comma, and range over them.
 	splitDomainNames := strings.Split(domainNames, ",")
 	for _, domainName := range splitDomainNames {
+		logrus.WithField("domainName", domainName).Infoln("Checking domain")
 		// Get the record in question.
 		record, err := GetRecord(ctx, api, domainName)
 		if err != nil {
@@ -100,12 +96,11 @@ func UpdateDomain(ctx context.Context, api *cloudflare.API, domainNames, ipEndpo
 		record.TTL = 120
 
 		if err := api.UpdateDNSRecord(ctx, cloudflare.ZoneIdentifier(record.ZoneID), cloudflare.UpdateDNSRecordParams{
-			ID:        record.ID,
-			Type:      record.Type,
-			Name:      record.Name,
-			Content:   newIP,
-			Proxiable: false,
-			TTL:       120,
+			ID:      record.ID,
+			Type:    record.Type,
+			Name:    record.Name,
+			Content: newIP,
+			TTL:     120,
 		}); err != nil {
 			return errors.Wrap(err, "could not update the DNS record")
 		}
