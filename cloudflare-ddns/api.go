@@ -95,7 +95,7 @@ func UpdateDomain(ctx context.Context, api *cloudflare.API, domainNames, ipEndpo
 		record.Proxiable = false
 		record.TTL = 120
 
-		if err := api.UpdateDNSRecord(ctx, cloudflare.ZoneIdentifier(record.ZoneID), cloudflare.UpdateDNSRecordParams{
+		if _, err := api.UpdateDNSRecord(ctx, cloudflare.ZoneIdentifier(record.ZoneID), cloudflare.UpdateDNSRecordParams{
 			ID:      record.ID,
 			Type:    record.Type,
 			Name:    record.Name,
