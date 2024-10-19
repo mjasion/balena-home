@@ -12,25 +12,10 @@ import (
 
 // GetRecord fetches the record from the Cloudflare api.
 func GetRecord(ctx context.Context, api *cloudflare.API, domainName string) (*cloudflare.DNSRecord, error) {
-	// Split the domain name by periods.
-	splitDomainName := strings.Split(domainName, ".")
-
-	// The domain name must be at least 2 elements, a name and a tld.
-	if len(splitDomainName) < 2 {
-		return nil, errors.Errorf("%s did not contain a TLD", domainName)
-	}
-
-	// Extract the zone name from the domain name. This should be the last two
-	// period delimitered strings.
-	zoneName := strings.Join(splitDomainName[len(splitDomainName)-2:], ".")
-
-	// Fetch the zone ID
-	zoneID, err := api.ZoneIDByName(zoneName) // Assuming example.com exists in your Cloudflare account already
+	zoneID, err := GetZoneId(api, domainName)
 	if err != nil {
-		return nil, errors.Wrap(err, "could not find zone by name")
+		return nil, errors.Wrap(err, "could not locate zone for hostname")
 	}
-
-	logrus.WithField("zoneID", zoneID).Info("got zone id")
 
 	// Print zone details
 	dnsRecords, _, err := api.ListDNSRecords(ctx, cloudflare.ZoneIdentifier(zoneID), cloudflare.ListDNSRecordsParams{
@@ -95,7 +80,12 @@ func UpdateDomain(ctx context.Context, api *cloudflare.API, domainNames, ipEndpo
 		record.Proxiable = false
 		record.TTL = 120
 
-		if _, err := api.UpdateDNSRecord(ctx, cloudflare.ZoneIdentifier(record.ZoneID), cloudflare.UpdateDNSRecordParams{
+		zoneID, err := GetZoneId(api, domainName)
+		if err != nil {
+			return errors.Wrap(err, "could not get the DNS record")
+		}
+
+		if _, err := api.UpdateDNSRecord(ctx, cloudflare.ZoneIdentifier(zoneID), cloudflare.UpdateDNSRecordParams{
 			ID:      record.ID,
 			Type:    record.Type,
 			Name:    record.Name,
@@ -113,4 +103,27 @@ func UpdateDomain(ctx context.Context, api *cloudflare.API, domainNames, ipEndpo
 	}
 
 	return nil
+}
+
+func GetZoneId(api *cloudflare.API, domainName string) (string, error) {
+	// Split the domain name by periods.
+	splitDomainName := strings.Split(domainName, ".")
+
+	// The domain name must be at least 2 elements, a name and a tld.
+	if len(splitDomainName) < 2 {
+		return "", errors.Errorf("%s did not contain a TLD", domainName)
+	}
+
+	// Extract the zone name from the domain name. This should be the last two
+	// period delimitered strings.
+	zoneName := strings.Join(splitDomainName[len(splitDomainName)-2:], ".")
+
+	// Fetch the zone ID
+	zoneID, err := api.ZoneIDByName(zoneName) // Assuming example.com exists in your Cloudflare account already
+	if err != nil {
+		return "", errors.Wrap(err, "could not find zone by name")
+	}
+
+	logrus.WithField("zoneID", zoneID).Info("got zone id")
+	return zoneID, nil
 }
