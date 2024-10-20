@@ -5,7 +5,6 @@ import (
 	"github.com/cloudflare/cloudflare-go"
 	"github.com/robfig/cron/v3"
 	"github.com/sirupsen/logrus"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -57,9 +56,9 @@ func healthCheckCron(period string, pushUrl string) {
 	c.AddFunc("@every "+period, func() {
 		resp, err := http.Get(pushUrl)
 		if err != nil {
-			log.Fatalf("%v", err)
+			logrus.Errorf("%v", err)
 		}
-		log.Printf("Access: %s - %s", pushUrl, resp.Status)
+		logrus.Infof("Access: %s - %s", pushUrl, resp.Status)
 	})
 	c.Start()
 }
