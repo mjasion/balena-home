@@ -3,13 +3,13 @@ version: "2.1"
 services:
   cloudflare-ddns:
     build: cloudflare-ddns
-  tunnel:
-    container_name: cloudflared-tunnel
-    image: cloudflare/cloudflared
-    restart: unless-stopped
-    command: tunnel run
-    environment:
-      - TUNNEL_TOKEN=eyJhIjoiNGJlMzc2Mjk5ZWE2ZjM4MDRkNmI4OWQ2NjFkMmUzMGEiLCJ0IjoiODAxMzIyY2EtZjM3Yy00NTEwLThiMzEtNjUxNjgxM2IzZGJhIiwicyI6Ik1qUTBNekV3TXpJdFpXUmpNeTAwWldZMUxUazNOVGt0TkRBNU9UY3hNRFptTUdSaiJ9
+  # tunnel:
+  #   container_name: cloudflared-tunnel
+  #   image: cloudflare/cloudflared
+  #   restart: unless-stopped
+  #   command: tunnel run
+  #   environment:
+  #     - TUNNEL_TOKEN=eyJhIjoiNGJlMzc2Mjk5ZWE2ZjM4MDRkNmI4OWQ2NjFkMmUzMGEiLCJ0IjoiODAxMzIyY2EtZjM3Yy00NTEwLThiMzEtNjUxNjgxM2IzZGJhIiwicyI6Ik1qUTBNekV3TXpJdFpXUmpNeTAwWldZMUxUazNOVGt0TkRBNU9UY3hNRFptTUdSaiJ9
   nginx:
     build: nginx
     ports:
