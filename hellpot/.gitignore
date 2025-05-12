@@ -1,0 +1,8 @@
+/dist
+art
+HellPot
+.idea/
+*.save
+*.toml
+*.yaml
+.backups/
