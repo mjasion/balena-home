@@ -1,10 +1,10 @@
 FROM golang:1.23 as build
 WORKDIR /go/src/app
 
-ADD go.* .
+COPY go.* /go/src/app/
 RUN go mod download
 
-COPY . .
+COPY . /go/src/app/
 
 RUN go vet -v ./...
 RUN go test -v ./...
