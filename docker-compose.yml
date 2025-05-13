@@ -17,3 +17,13 @@ services:
     ports:
       - "80:80"
       - "443:443"
+  wolweb:
+    build: wolweb
+    network_mode: host
+
+    # Use environment variable below to change port or virtual directory.
+    environment:
+      WOLWEBHOST: "0.0.0.0"
+      WOLWEBPORT: "8089"
+      #WOLWEBVDIR: "/wolweb"
+      WOLWEBBCASTIP: "192.168.1.255:9"
