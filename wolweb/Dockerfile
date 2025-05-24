@@ -1,0 +1,36 @@
+# docker build -t wolweb .
+FROM golang:1.20-alpine AS builder
+
+LABEL org.label-schema.vcs-url="https://github.com/sameerdhoot/wolweb" \
+    org.label-schema.url="https://github.com/sameerdhoot/wolweb/blob/master/README.md"
+
+RUN mkdir /wolweb
+WORKDIR /wolweb
+
+# Install Dependecies
+ADD . .
+
+# Build Source Files
+RUN go build -o wolweb . 
+
+# Create 2nd Stage final image
+FROM alpine
+WORKDIR /wolweb
+COPY --from=builder /wolweb/index.html .
+COPY --from=builder /wolweb/wolweb .
+COPY --from=builder /wolweb/devices.json .
+COPY --from=builder /wolweb/config.json .
+COPY --from=builder /wolweb/static ./static
+
+RUN apk add --no-cache curl
+
+ARG WOLWEBPORT=8089
+ARG WOLWEBVDIR=/
+ENV WOLWEBPORT=${WOLWEBPORT}
+ENV WOLWEBVDIR=${WOLWEBVDIR}
+
+CMD ["/wolweb/wolweb"]
+
+EXPOSE ${WOLWEBPORT}
+HEALTHCHECK --interval=5s --timeout=3s \
+    CMD curl --silent --show-error --fail http://localhost:${WOLWEBPORT}/${WOLWEBVDIR}/health || exit 1
