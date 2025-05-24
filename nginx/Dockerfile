@@ -1,6 +1,6 @@
 FROM nginx:1.28.0-alpine
 
-COPY default.conf /etc/nginx/default.conf
+COPY nginx.conf /etc/nginx/nginx.conf
 COPY web* /etc/nginx/conf.d/
 
 RUN rm /etc/nginx/conf.d/default.conf
