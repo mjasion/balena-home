@@ -34,7 +34,7 @@ jobs:
 
       - name: Build and Push Alpine Dockerfile
         id: docker_build
-        uses: docker/build-push-action@v3.2.0
+        uses: docker/build-push-action@v3.3.1
         with:
           platforms: linux/arm64,linux/armhf,linux/386,linux/amd64
           push: true
@@ -67,7 +67,7 @@ jobs:
 
       - name: Build and Push Debian Dockerfile
         id: docker_build
-        uses: docker/build-push-action@v3.2.0
+        uses: docker/build-push-action@v3.3.1
         with:
           platforms: linux/arm64,linux/armhf,linux/386,linux/amd64
           push: true
