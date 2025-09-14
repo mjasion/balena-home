@@ -2,7 +2,7 @@ module github.com/yunginnanet/HellPot
 
 go 1.23.0
 
-toolchain go1.24.5
+toolchain go1.25.1
 
 require (
 	git.tcp.direct/kayos/common v1.0.0
