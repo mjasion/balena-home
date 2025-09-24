@@ -11,7 +11,7 @@ require (
 	github.com/knadh/koanf/parsers/toml/v2 v2.2.0
 	github.com/knadh/koanf/providers/env v1.1.0
 	github.com/knadh/koanf/providers/file v1.2.0
-	github.com/knadh/koanf/v2 v2.2.0
+	github.com/knadh/koanf/v2 v2.3.0
 	github.com/rs/zerolog v1.34.0
 	github.com/valyala/fasthttp v1.62.0
 	golang.org/x/term v0.32.0
@@ -20,7 +20,7 @@ require (
 require (
 	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
+	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
