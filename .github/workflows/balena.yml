@@ -12,12 +12,20 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v5
-    - name: Setup NodeJS
-      uses: actions/setup-node@v5
-    - name: Balena Deploy
-      uses: mjasion/balena-cli-action@master
-      if: success()
+
+    - name: Create .env file
+      run: |
+        cat > .env << EOF
+        TUNNEL_TOKEN=${{ secrets.TUNNEL_TOKEN }}
+        EOF
+
+    - name: Deploy to BalenaCloud
+      uses: balena-io/deploy-to-balena-action@master
+      id: build
       with:
-        balena_api_token: ${{secrets.BALENA_API_TOKEN}}
-        balena_command: "push ${{ secrets.BALENA_APP_NAME }}"
+        balena_token: ${{ secrets.BALENA_API_TOKEN }}
+        fleet: ${{ secrets.BALENA_APP_NAME }}
+
+    - name: Log release ID
+      run: echo "Built release ID ${{ steps.build.outputs.release_id }}"
 
