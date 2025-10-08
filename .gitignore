@@ -1,0 +1,14 @@
+# Environment variables
+.env
+
+# Build artifacts
+hellpot/HellPot
+wolweb/wolweb
+*.exe
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log

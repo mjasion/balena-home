@@ -11,7 +11,7 @@ services:
     restart: unless-stopped
     command: tunnel run
     environment:
-      - TUNNEL_TOKEN=eyJhIjoiNGJlMzc2Mjk5ZWE2ZjM4MDRkNmI4OWQ2NjFkMmUzMGEiLCJ0IjoiYTQ3ZDUyYjktYzg2ZS00NTM1LThmNTctMmM5M2I5NjZkYTA4IiwicyI6Ik9XWmhNalEzTmpVdE1XRm1OUzAwWkRnMExUa3dOVGN0TmpGa09HRTNNell6WmpBMiJ9
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
   nginx:
     build: nginx
     ports:
