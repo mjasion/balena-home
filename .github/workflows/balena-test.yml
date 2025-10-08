@@ -1,0 +1,35 @@
+name: Balena Build Test
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches-ignore:
+      - main
+
+concurrency:
+  group: balena-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+
+    - name: Create .env file
+      run: |
+        cat > .env << EOF
+        TUNNEL_TOKEN=test-token-placeholder
+        EOF
+
+    - name: Test Balena Build
+      uses: balena-io/deploy-to-balena-action@master
+      with:
+        balena_token: ${{ secrets.BALENA_API_TOKEN }}
+        fleet: ${{ secrets.BALENA_APP_NAME }}
+        create_ref: false
+
+    - name: Build completed
+      run: echo "Balena build test completed successfully"
