@@ -1,0 +1,36 @@
+# Binaries
+pstryk_metric
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# Environment files with secrets
+.env
+*.env
+!example.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

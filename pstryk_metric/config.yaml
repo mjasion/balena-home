@@ -1,0 +1,43 @@
+# Energy Meter Scraper Configuration
+
+# HTTP endpoint to scrape energy meter data from
+scrapeUrl: "http://192.168.25.46/state"
+
+# How often to scrape the endpoint (in seconds)
+scrapeIntervalSeconds: 2
+
+# HTTP request timeout for scraping (in seconds)
+scrapeTimeoutSeconds: 1.5
+
+# How often to push metrics to Prometheus (in seconds)
+pushIntervalSeconds: 30
+
+# Prometheus remote_write endpoint URL
+# For Grafana Cloud, use: https://prometheus-prod-XX-YY-ZZ.grafana.net/api/prom/push
+prometheusUrl: "https://prometheus-blocks-prod-us-central1.grafana.net/api/prom/push"
+
+# Prometheus basic auth username (Grafana Cloud instance ID)
+prometheusUsername: "83165"
+
+# Prometheus basic auth password (Grafana Cloud API key)
+# IMPORTANT: Use environment variable PROMETHEUS_PASSWORD for production
+prometheusPassword: ""
+
+# Name of the metric to create in Prometheus
+metricName: "active_power_watts"
+
+# Whether to start scraping at an even second (0, 2, 4, 6, etc.)
+# This ensures predictable timing
+startAtEvenSecond: true
+
+# Ring buffer size (number of scrape results to keep in memory)
+bufferSize: 1000
+
+# Health check HTTP server port
+healthCheckPort: 8080
+
+# Logging configuration
+# Format: "json" for structured JSON logging, "console" for human-readable output
+logFormat: "console"
+# Level: "debug", "info", "warn", or "error"
+logLevel: "info"
