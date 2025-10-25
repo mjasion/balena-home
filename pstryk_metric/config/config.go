@@ -1,0 +1,177 @@
+package config
+
+import (
+	"fmt"
+	"net/url"
+	"strings"
+
+	"github.com/ilyakaznacheev/cleanenv"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+)
+
+// Config holds all configuration parameters for the energy meter scraper
+type Config struct {
+	// Scraping configuration
+	ScrapeURL             string  `yaml:"scrapeUrl" env:"SCRAPE_URL" env-required:"true"`
+	ScrapeIntervalSeconds int     `yaml:"scrapeIntervalSeconds" env:"SCRAPE_INTERVAL_SECONDS" env-default:"2"`
+	ScrapeTimeoutSeconds  float64 `yaml:"scrapeTimeoutSeconds" env:"SCRAPE_TIMEOUT_SECONDS" env-default:"1.5"`
+
+	// Push configuration
+	PushIntervalSeconds int `yaml:"pushIntervalSeconds" env:"PUSH_INTERVAL_SECONDS" env-default:"15"`
+
+	// Prometheus configuration
+	PrometheusURL      string `yaml:"prometheusUrl" env:"PROMETHEUS_URL" env-required:"true"`
+	PrometheusUsername string `yaml:"prometheusUsername" env:"PROMETHEUS_USERNAME" env-required:"true"`
+	PrometheusPassword string `yaml:"prometheusPassword" env:"PROMETHEUS_PASSWORD" env-required:"true"`
+
+	// Metric configuration
+	MetricName        string `yaml:"metricName" env:"METRIC_NAME" env-default:"active_power_watts"`
+	StartAtEvenSecond bool   `yaml:"startAtEvenSecond" env:"START_AT_EVEN_SECOND" env-default:"true"`
+
+	// Buffer configuration
+	BufferSize int `yaml:"bufferSize" env:"BUFFER_SIZE" env-default:"1000"`
+
+	// Health check configuration
+	HealthCheckPort int `yaml:"healthCheckPort" env:"HEALTH_CHECK_PORT" env-default:"8080"`
+
+	// Logging configuration
+	LogFormat string `yaml:"logFormat" env:"LOG_FORMAT" env-default:"json"`
+	LogLevel  string `yaml:"logLevel" env:"LOG_LEVEL" env-default:"info"`
+}
+
+// Load reads configuration from the specified file path and applies environment variable overrides
+func Load(configPath string) (*Config, error) {
+	var cfg Config
+
+	if err := cleanenv.ReadConfig(configPath, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to read config from %s: %w", configPath, err)
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// Validate checks that all configuration parameters are valid
+func (c *Config) Validate() error {
+	// Validate scrape URL
+	if _, err := url.ParseRequestURI(c.ScrapeURL); err != nil {
+		return fmt.Errorf("invalid scrapeUrl: %w", err)
+	}
+
+	// Validate Prometheus URL
+	if _, err := url.ParseRequestURI(c.PrometheusURL); err != nil {
+		return fmt.Errorf("invalid prometheusUrl: %w", err)
+	}
+
+	// Validate intervals are positive
+	if c.ScrapeIntervalSeconds <= 0 {
+		return fmt.Errorf("scrapeIntervalSeconds must be positive, got %d", c.ScrapeIntervalSeconds)
+	}
+
+	if c.ScrapeTimeoutSeconds <= 0 {
+		return fmt.Errorf("scrapeTimeoutSeconds must be positive, got %f", c.ScrapeTimeoutSeconds)
+	}
+
+	if c.PushIntervalSeconds <= 0 {
+		return fmt.Errorf("pushIntervalSeconds must be positive, got %d", c.PushIntervalSeconds)
+	}
+
+	// Validate buffer size
+	if c.BufferSize <= 0 {
+		return fmt.Errorf("bufferSize must be positive, got %d", c.BufferSize)
+	}
+
+	// Validate health check port
+	if c.HealthCheckPort <= 0 || c.HealthCheckPort > 65535 {
+		return fmt.Errorf("healthCheckPort must be between 1 and 65535, got %d", c.HealthCheckPort)
+	}
+
+	// Validate metric name is not empty
+	if strings.TrimSpace(c.MetricName) == "" {
+		return fmt.Errorf("metricName cannot be empty")
+	}
+
+	// Validate log format
+	if c.LogFormat != "json" && c.LogFormat != "console" {
+		return fmt.Errorf("logFormat must be 'json' or 'console', got '%s'", c.LogFormat)
+	}
+
+	// Validate log level
+	validLevels := map[string]bool{
+		"debug": true,
+		"info":  true,
+		"warn":  true,
+		"error": true,
+	}
+	if !validLevels[strings.ToLower(c.LogLevel)] {
+		return fmt.Errorf("logLevel must be one of: debug, info, warn, error, got '%s'", c.LogLevel)
+	}
+
+	return nil
+}
+
+// Redacted returns a copy of the config with sensitive fields redacted for logging
+func (c *Config) Redacted() map[string]interface{} {
+	return map[string]interface{}{
+		"scrapeUrl":             c.ScrapeURL,
+		"scrapeIntervalSeconds": c.ScrapeIntervalSeconds,
+		"scrapeTimeoutSeconds":  c.ScrapeTimeoutSeconds,
+		"pushIntervalSeconds":   c.PushIntervalSeconds,
+		"prometheusUrl":         redactURL(c.PrometheusURL),
+		"prometheusUsername":    c.PrometheusUsername,
+		"prometheusPassword":    "***",
+		"metricName":            c.MetricName,
+		"startAtEvenSecond":     c.StartAtEvenSecond,
+		"bufferSize":            c.BufferSize,
+		"healthCheckPort":       c.HealthCheckPort,
+		"logFormat":             c.LogFormat,
+		"logLevel":              c.LogLevel,
+	}
+}
+
+// NewLogger creates a zap logger based on the configuration
+func (c *Config) NewLogger() (*zap.Logger, error) {
+	var zapConfig zap.Config
+
+	// Set log level
+	var level zapcore.Level
+	switch strings.ToLower(c.LogLevel) {
+	case "debug":
+		level = zapcore.DebugLevel
+	case "info":
+		level = zapcore.InfoLevel
+	case "warn":
+		level = zapcore.WarnLevel
+	case "error":
+		level = zapcore.ErrorLevel
+	default:
+		level = zapcore.InfoLevel
+	}
+
+	// Set format
+	if c.LogFormat == "json" {
+		zapConfig = zap.NewProductionConfig()
+	} else {
+		zapConfig = zap.NewDevelopmentConfig()
+	}
+
+	zapConfig.Level = zap.NewAtomicLevelAt(level)
+
+	return zapConfig.Build()
+}
+
+// redactURL removes credentials from URLs for logging
+func redactURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "***"
+	}
+	if u.User != nil {
+		u.User = url.UserPassword("***", "***")
+	}
+	return u.String()
+}

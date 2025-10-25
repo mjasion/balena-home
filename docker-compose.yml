@@ -23,3 +23,7 @@ services:
       WOLWEBPORT: "8089"
       #WOLWEBVDIR: "/wolweb"
       WOLWEBBCASTIP: "192.168.1.255:9"
+  pstryk_metric:
+    build: pstryk_metric
+    network_mode: host
+

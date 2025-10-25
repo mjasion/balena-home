@@ -1,0 +1,40 @@
+# Binaries
+pstryk_metric
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test files
+*_test.go
+*.test
+*.out
+coverage.out
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+README.md
+*.md
+
+# OpenSpec
+openspec/
+
+# Claude
+.claude/
+CLAUDE.md
+AGENTS.md
