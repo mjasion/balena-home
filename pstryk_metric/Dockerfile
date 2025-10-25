@@ -32,7 +32,7 @@ WORKDIR /app
 COPY --from=builder /build/pstryk_metric .
 
 # Copy default config (can be overridden with volume mount)
-COPY config.yaml ./config.yaml.example
+COPY config.yaml ./config.yaml
 
 # Expose health check port
 EXPOSE 8080
