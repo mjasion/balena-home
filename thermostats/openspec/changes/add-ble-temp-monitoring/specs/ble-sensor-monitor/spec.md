@@ -46,54 +46,40 @@ The system SHALL support monitoring multiple LYWSD03MMC sensors simultaneously t
 - **THEN** the system SHALL only process advertisements from configured sensor MAC addresses
 - **AND** SHALL ignore advertisements from other devices
 
-### Requirement: Periodic Output
+### Requirement: Sensor Reading Logging
 
-The system SHALL output temperature readings to stdout at configurable intervals with a minimum frequency of once per minute.
+The system SHALL log sensor readings using zap structured logging for monitoring and debugging.
 
-#### Scenario: Scheduled output with cron-like behavior
+#### Scenario: Log sensor readings
 
-- **WHEN** the configured interval elapses (default: 60 seconds)
-- **THEN** the system SHALL output the most recent reading from each configured sensor
-- **AND** SHALL include timestamp, MAC address, temperature, humidity, battery percentage, and battery voltage
+- **WHEN** sensor readings are decoded from BLE advertisements
+- **THEN** the system SHALL log readings using zap with structured fields: timestamp, mac_address, temperature_celsius, humidity_percent, battery_percent, battery_voltage_mv, rssi
+- **AND** SHALL use appropriate log levels (info for successful readings, warn for sensor timeouts)
 
 #### Scenario: Missing sensor data
 
-- **WHEN** the output interval elapses and a sensor has not sent advertisements
-- **THEN** the system SHALL output a warning indicating the sensor is unavailable or out of range
-
-### Requirement: Structured Output Format
-
-The system SHALL output temperature readings in a structured, parseable format suitable for log aggregation and processing.
-
-#### Scenario: JSON output format
-
-- **WHEN** outputting sensor readings
-- **THEN** each line SHALL be a valid JSON object containing fields: timestamp (ISO 8601), mac_address, temperature_celsius, humidity_percent, battery_percent, battery_voltage_mv, and rssi (signal strength)
-
-#### Scenario: Human-readable alternative
-
-- **WHEN** configured for human-readable output mode
-- **THEN** the system SHALL output formatted text with labeled fields for easy reading
+- **WHEN** a configured sensor has not sent advertisements within the expected interval
+- **THEN** the system SHALL log a warning with the sensor MAC address and last seen timestamp
 
 ### Requirement: Configuration Management
 
-The system SHALL load configuration from a JSON file with support for environment variable overrides following the project's cleanenv pattern.
+The system SHALL load configuration from a YAML file with support for environment variable overrides following the project's cleanenv pattern.
 
 #### Scenario: Load from config file
 
 - **WHEN** the service starts with a config file path specified via `-c` flag
-- **THEN** it SHALL load configuration from the specified JSON file
+- **THEN** it SHALL load configuration from the specified YAML file
 - **AND** SHALL use default values for any missing fields
 
 #### Scenario: Environment variable overrides
 
-- **WHEN** environment variables are set (e.g., BLEHOST, BLEPORT, BLESCANINTERVAL, BLESENSORS)
+- **WHEN** environment variables are set (e.g., SCAN_INTERVAL_SECONDS, SENSORS, PROMETHEUS_URL)
 - **THEN** they SHALL override corresponding values from the config file
 
 #### Scenario: Sensor MAC list configuration
 
 - **WHEN** configuring sensor MAC addresses
-- **THEN** the system SHALL accept a comma-separated list via BLESENSORS environment variable or sensors array in config.json
+- **THEN** the system SHALL accept a comma-separated list via SENSORS environment variable or sensors array in config.yaml
 
 ### Requirement: Raspberry Pi Deployment
 

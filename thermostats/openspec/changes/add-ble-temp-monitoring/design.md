@@ -38,11 +38,13 @@ The home automation platform needs to collect temperature data from multiple LYW
 
 - Active BLE connections to sensors (passive only for energy efficiency)
 - Web UI or HTTP API (future phase if needed)
-- Data persistence to files/database (stdout only for now)
+- Data persistence to files/database (Prometheus only)
+- Separate stdout output formatting (zap logging handles all output)
 - Support for other sensor types (focus on LYWSD03MMC with ATC firmware)
 - Netatmo thermostat integration (deferred to future change)
-- Historical data analysis or graphing
+- Historical data analysis or graphing (delegated to Grafana)
 - Sensor firmware flashing tools
+- Complex alerting logic (delegated to Grafana Cloud)
 
 ## Decisions
 
@@ -80,58 +82,88 @@ The home automation platform needs to collect temperature data from multiple LYW
 
 **Trade-off**: Relies on sensors using ATC custom firmware. Stock Xiaomi firmware requires connections/encryption, but user can flash ATC firmware easily.
 
-### Decision 3: Output Format - JSON to stdout
+### Decision 3: Logging-Only Output with Zap
 
-**Choice**: Output one JSON object per line to stdout, logs to stderr
+**Choice**: Use zap structured logging exclusively for all output, no separate stdout formatting
 
 **Rationale**:
-- Structured data is easily parseable by other tools (jq, log aggregators)
-- Separating stdout (data) from stderr (logs) follows Unix philosophy
-- Easy integration with Docker logging, syslog, or file redirection
-- Future pipeline integration (e.g., `service | jq | logger`)
-- Optional human-readable mode via flag for debugging
+- Zap provides both human-readable (console) and structured (JSON) formats based on LOG_FORMAT
+- Eliminates duplicate output logic (no need for separate stdout writer)
+- Console format: Clear, human-readable logs for real-time monitoring via `docker logs`
+- JSON format: Structured logs for log aggregation systems (if needed)
+- Prometheus push provides the primary data pipeline for metrics and analysis
+- Simpler architecture with fewer components
+
+**Log format examples**:
+```
+# Console format (LOG_FORMAT=console, default for development)
+2025-10-26T17:30:15.123Z  INFO  sensor_reading  mac=A4:C1:38:XX:XX:XX temp=22.5°C humidity=45% battery=85% voltage=2.9V rssi=-65dBm
+
+# JSON format (LOG_FORMAT=json, for production)
+{"level":"info","ts":"2025-10-26T17:30:15.123Z","msg":"sensor_reading","mac":"A4:C1:38:XX:XX:XX","temperature_celsius":22.5,"humidity_percent":45,"battery_percent":85,"battery_voltage_mv":2900,"rssi_dbm":-65}
+```
 
 **Alternatives considered**:
-- CSV format: Less flexible for nested data or future fields
-- Plain text: Harder to parse reliably
-- Direct database writes: Out of scope; prefer decoupled architecture
+- Separate stdout writer with custom formatting: Duplicate logic, more code to maintain
+- Stdout for data, stderr for logs: Unnecessary complexity when Prometheus handles data pipeline
+- Printf-style logging: No structured fields, harder to parse
 
-**Trade-off**: Requires downstream processing for visualization, but maximizes flexibility.
+**Trade-off**: All output goes to logs (no separate data stream), but Prometheus provides the primary data pipeline anyway, and zap gives us flexibility for both human and machine-readable formats.
 
-### Decision 4: Configuration - JSON file + Environment Variables
+### Decision 4: Configuration - YAML file + Environment Variables
 
-**Choice**: Use cleanenv pattern with JSON config file and environment variable overrides
+**Choice**: Use cleanenv pattern with YAML config file and environment variable overrides (following pstryk_metric pattern)
 
 **Rationale**:
-- Consistency with wolweb service architecture
-- Balena deployment relies on environment variables
-- JSON file provides defaults and documentation
+- Consistency with pstryk_metric service architecture in the balena-home project
+- Balena deployment relies heavily on environment variables
+- YAML provides better readability and comment support compared to JSON
 - cleanenv handles merging and validation
+- Environment variables enable secure credential management (e.g., PROMETHEUS_PASSWORD)
 
 **Configuration fields**:
-```json
-{
-  "scan_interval_seconds": 60,
-  "output_format": "json",
-  "sensors": [
-    "A4:C1:38:XX:XX:XX",
-    "A4:C1:38:YY:YY:YY",
-    "A4:C1:38:ZZ:ZZ:ZZ",
-    "A4:C1:38:WW:WW:WW"
-  ]
-}
+```yaml
+# BLE scanning configuration
+scanIntervalSeconds: 60
+sensors:
+  - "A4:C1:38:XX:XX:XX"
+  - "A4:C1:38:YY:YY:YY"
+  - "A4:C1:38:ZZ:ZZ:ZZ"
+  - "A4:C1:38:WW:WW:WW"
+
+# Prometheus metrics push configuration
+pushIntervalSeconds: 15
+prometheusUrl: "https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push"
+prometheusUsername: "123456"
+prometheusPassword: ""  # Use PROMETHEUS_PASSWORD env var
+metricName: "ble_temperature_celsius"
+startAtEvenSecond: true
+bufferSize: 1000
+
+# Logging configuration
+logFormat: "json"  # json or console
+logLevel: "info"   # debug, info, warn, error
 ```
 
 Environment variables:
-- `BLESCANINTERVAL`: Override scan_interval_seconds
-- `BLEOUTPUTFORMAT`: Override output_format (json|text)
-- `BLESENSORS`: Comma-separated MAC addresses
+- `SCAN_INTERVAL_SECONDS`: Override scanIntervalSeconds
+- `SENSORS`: Comma-separated MAC addresses (overrides sensors list)
+- `PUSH_INTERVAL_SECONDS`: Override pushIntervalSeconds
+- `PROMETHEUS_URL`: Override prometheusUrl
+- `PROMETHEUS_USERNAME`: Override prometheusUsername
+- `PROMETHEUS_PASSWORD`: Override prometheusPassword (REQUIRED for Grafana Cloud)
+- `METRIC_NAME`: Override metricName
+- `START_AT_EVEN_SECOND`: Override startAtEvenSecond (true/false)
+- `BUFFER_SIZE`: Override bufferSize
+- `LOG_FORMAT`: Override logFormat (json|console)
+- `LOG_LEVEL`: Override logLevel (debug|info|warn|error)
 
 **Alternatives considered**:
+- JSON config: Less readable, no native comment support
 - Command-line flags only: Less convenient for Docker/Balena
-- Environment variables only: Harder to document defaults
+- Environment variables only: Harder to document defaults, verbose for lists
 
-**Trade-off**: Small config file to maintain, but flexible deployment options.
+**Trade-off**: YAML requires proper indentation but provides much better readability for complex configurations.
 
 ### Decision 5: BLE Library - TinyGo Bluetooth
 
@@ -156,76 +188,154 @@ Environment variables:
 
 **Trade-off**: Requires BlueZ to be installed on the host (standard on Raspberry Pi OS). D-Bus adds a small overhead, but simplifies the implementation significantly. The library is well-maintained and production-ready for Linux BLE scanning use cases.
 
-### Decision 6: Sensor Data Model - In-Memory Recent Readings
+### Decision 6: Ring Buffer Package - Separate Concurrent-Safe Buffer
 
-**Choice**: Maintain last 5 minutes of readings per sensor in memory (circular buffer)
+**Choice**: Create a dedicated `buffer` package with thread-safe ring buffer implementation (following pstryk_metric pattern)
 
 **Rationale**:
-- Future thermostat control logic may need recent history (e.g., temperature trends)
-- Enables averaging or smoothing if needed
-- Small memory footprint (4 sensors × 5 readings/minute × 5 minutes = ~100 readings)
-- No persistence required for this phase
+- Consistency with pstryk_metric architecture which already has a proven ring buffer implementation
+- Reusable component that can be shared across services
+- Encapsulates concurrency concerns (sync.RWMutex) in a well-tested module
+- Clean separation of concerns: buffer management is independent of BLE scanning or metrics pushing
+- Configurable capacity via BUFFER_SIZE (default: 1000 readings)
+- Circular buffer behavior: overwrites oldest entries when full
+
+**Buffer behavior**:
+- Thread-safe Add() for BLE scanner goroutine to insert readings
+- Thread-safe GetAll() for metrics pusher goroutine to retrieve all buffered readings
+- Handles wrap-around automatically
+- Logs warnings when buffer is full and dropping old data
 
 **Alternatives considered**:
-- Only store latest reading: Simplest but limits future control logic
-- Persist to file/database: Out of scope for initial implementation
+- Inline map-based storage in main: Less reusable, harder to test, error-prone concurrency
+- Channel-based buffer: More complex, potential blocking issues
+- Time-based retention (5 minutes): Size-based is simpler and more predictable for memory usage
 
-**Trade-off**: Slight memory overhead, but enables future use cases without architectural changes.
+**Trade-off**: Slight abstraction overhead, but significantly improves code quality and testability.
+
+### Decision 7: Prometheus Remote Write Integration
+
+**Choice**: Push metrics to Grafana Cloud using Prometheus remote_write protocol with protobuf + snappy compression
+
+**Rationale**:
+- Grafana Cloud provides managed Prometheus instance (no self-hosting required)
+- Remote_write is the standard protocol for Prometheus metric ingestion
+- Proven implementation in pstryk_metric (can reuse pusher.go with minimal changes)
+- Supports authentication via HTTP Basic Auth (required for Grafana Cloud)
+- Snappy compression reduces bandwidth usage
+- Configurable push interval (default: 15 seconds) balances data freshness with network overhead
+
+**Metrics structure**:
+- Metric name: Configurable via `metricName` (default: "ble_temperature_celsius")
+- Labels: `sensor_id` (MAC address of sensor)
+- Values: Temperature in Celsius (converted from raw sensor data)
+- Timestamps: Rounded to the nearest second, then converted to milliseconds for remote_write protocol
+
+**Alternatives considered**:
+- InfluxDB: Different ecosystem, would require new knowledge
+- Direct Prometheus exposition: Requires Prometheus to scrape the service (push is simpler for home IoT)
+- CSV/JSON file export: Not suitable for real-time monitoring
+
+**Trade-off**: Dependency on Grafana Cloud availability, but provides robust visualization and alerting capabilities.
+
+### Decision 8: Structured Logging with Zap
+
+**Choice**: Use `go.uber.org/zap` for structured logging with configurable format and level
+
+**Rationale**:
+- Consistency with pstryk_metric which already uses zap
+- High performance (minimal allocation overhead)
+- Structured JSON logs for production (easy to parse, search, and alert on)
+- Console logs for development (human-readable)
+- Log level filtering (debug, info, warn, error) helps reduce noise in production
+
+**Logging strategy**:
+- Operational events: service start/stop, configuration loaded, BLE adapter initialized
+- Sensor readings: Log each sensor reading with structured fields for monitoring (clear messages like "sensor_reading")
+- Metrics events: buffer status, push attempts, push success/failure with data point counts
+- Errors: BLE scanning errors, advertisement parsing errors, network errors with retries
+- Warnings: buffer full (data loss), sensor timeouts, push retry attempts
+- Use clear, descriptive log messages that explain what the process is doing at each step
+
+**Alternatives considered**:
+- Standard log package: No structure, harder to parse programmatically
+- logrus: Heavier, less performant than zap
+- zerolog: Similar performance, but less adoption in the project
+
+**Trade-off**: Learning curve for zap API, but significant benefits for operational visibility.
 
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────┐
-│  BLE Temperature Monitor (Go)                   │
-│                                                  │
-│  ┌──────────────┐         ┌─────────────────┐  │
-│  │ Config       │         │  BLE Scanner    │  │
-│  │ (cleanenv)   │────────▶│  (tinygo/ble)   │  │
-│  │              │         │                 │  │
-│  │ - Sensors    │         │ - Passive scan  │  │
-│  │ - Interval   │         │ - Filter MACs   │  │
-│  └──────────────┘         │ - Parse UUID    │  │
-│                           │   0x181A        │  │
-│                           └────────┬────────┘  │
-│                                    │            │
-│                                    ▼            │
-│                           ┌─────────────────┐  │
-│                           │  ATC Decoder    │  │
-│                           │                 │  │
-│                           │ - Extract data  │  │
-│                           │ - Convert temp  │  │
-│                           └────────┬────────┘  │
-│                                    │            │
-│                                    ▼            │
-│                           ┌─────────────────┐  │
-│                           │  Data Store     │  │
-│                           │  (in-memory)    │  │
-│                           │                 │  │
-│                           │ - Recent        │  │
-│                           │   readings      │  │
-│                           └────────┬────────┘  │
-│                                    │            │
-│                                    ▼            │
-│  ┌──────────────┐         ┌─────────────────┐  │
-│  │  Ticker      │────────▶│  Output Writer  │  │
-│  │  (interval)  │         │                 │  │
-│  │              │         │ - Format JSON   │  │
-│  │              │         │ - Write stdout  │  │
-│  └──────────────┘         └─────────────────┘  │
-│                                    │            │
-└────────────────────────────────────┼───────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  BLE Temperature Monitor (Go)                                    │
+│                                                                   │
+│  ┌──────────────┐         ┌─────────────────┐                   │
+│  │ Config       │         │  BLE Scanner    │                   │
+│  │ (cleanenv    │────────▶│  (tinygo/ble)   │                   │
+│  │  YAML)       │         │                 │                   │
+│  │              │         │ - Passive scan  │                   │
+│  │ - Sensors    │         │ - Filter MACs   │                   │
+│  │ - Intervals  │         │ - Parse UUID    │                   │
+│  │ - Prometheus │         │   0x181A        │                   │
+│  │ - Logging    │         └────────┬────────┘                   │
+│  └──────────────┘                  │                             │
+│                                    ▼                             │
+│                           ┌─────────────────┐                   │
+│                           │  ATC Decoder    │                   │
+│                           │                 │                   │
+│                           │ - Extract data  │                   │
+│                           │ - Convert temp  │                   │
+│                           └────────┬────────┘                   │
+│                                    │                             │
+│                                    ▼                             │
+│                           ┌─────────────────┐                   │
+│                           │  Ring Buffer    │                   │
+│                           │  (concurrent)   │                   │
+│                           │                 │◀─────────┐        │
+│                           │ - sync.RWMutex  │          │        │
+│                           │ - Circular      │          │        │
+│                           │ - Log readings  │          │        │
+│                           └────────┬────────┘          │        │
+│                                    │                   │        │
+│                                    ▼                   │        │
+│                           ┌────────────────────────┐   │        │
+│                           │  Prometheus Pusher      │   │        │
+│                           │  (goroutine)            │   │        │
+│                           │                         │   │        │
+│                           │ - Ticker (push interval)│   │        │
+│                           │ - GetAll() from buffer  │───┘        │
+│                           │ - Protobuf + snappy     │            │
+│                           │ - HTTP Basic Auth       │            │
+│                           │ - Retry logic (3x)      │            │
+│                           └────────┬────────────────┘            │
+│                                    │                             │
+│  ┌─────────────────────────────────┼─────────────────────────┐  │
+│  │  Zap Logger (all output)        │                         │  │
+│  │  - Console or JSON format       │                         │  │
+│  │  - Sensor readings              │                         │  │
+│  │  - Operational events           │                         │  │
+│  └─────────────────────────────────┘                         │  │
+└───────────────────────────────────────────────────────────────┘
                                      │
                                      ▼
-                                  stdout (JSON)
+                          Grafana Cloud Prometheus
+                          (remote_write endpoint)
 ```
+
+**Key goroutines**:
+1. **Main goroutine**: Configuration loading, initialization, signal handling
+2. **BLE Scanner goroutine**: Continuous BLE advertisement scanning, decoding, buffer writes, logging readings
+3. **Prometheus Pusher goroutine**: Periodic batch push of buffered readings to Grafana Cloud
 
 ### Component Responsibilities
 
-1. **Config Module** (`config.go`)
-   - Load JSON config file (via `-c` flag)
-   - Merge environment variable overrides
-   - Validate sensor MAC addresses
-   - Provide configuration to other modules
+1. **Config Module** (`config/config.go`)
+   - Load YAML config file (via `-c` flag, default: config.yaml)
+   - Merge environment variable overrides using cleanenv
+   - Validate sensor MAC addresses and required Prometheus fields
+   - Provide configuration struct to other modules
+   - Initialize zap logger based on logFormat and logLevel
 
 2. **BLE Scanner** (`scanner.go`)
    - Initialize BLE adapter via tinygo.org/x/bluetooth
@@ -233,46 +343,62 @@ Environment variables:
    - Filter advertisements by configured MAC addresses
    - Extract service data for UUID 0x181A
    - Pass raw advertisement data to decoder
+   - Add decoded readings to ring buffer
 
 3. **ATC Decoder** (`decoder.go`)
    - Parse ATC advertisement format binary data
    - Extract: MAC, temperature, humidity, battery %, battery mV, counter
    - Convert temperature (divide by 10)
-   - Return structured sensor reading
+   - Return structured sensor reading with timestamp
 
-4. **Data Store** (`store.go`)
-   - Maintain in-memory map of recent readings per sensor
-   - Store last 5 minutes per sensor (circular buffer)
-   - Thread-safe access (mutex)
-   - Provide latest reading for each sensor
+4. **Ring Buffer** (`buffer/buffer.go`)
+   - Thread-safe circular buffer using sync.RWMutex
+   - Add() method for inserting sensor readings (called by BLE scanner)
+   - GetAll() method for retrieving all buffered readings (called by Prometheus pusher)
+   - Configurable capacity (BUFFER_SIZE)
+   - Automatic overwrite of oldest entries when full
+   - Log warnings on buffer overflow
 
-5. **Output Writer** (`output.go`)
-   - Format sensor readings as JSON or text
-   - Write to stdout (data) or stderr (logs)
-   - Handle missing sensor data (timeouts)
+5. **Prometheus Pusher** (`metrics/pusher.go`)
+   - Build Prometheus WriteRequest from sensor readings
+   - Group readings by sensor ID (MAC address)
+   - Round timestamps to the nearest second before converting to milliseconds
+   - Marshal to protobuf and compress with snappy
+   - Push to Grafana Cloud remote_write endpoint with HTTP Basic Auth
+   - Implement retry logic with exponential backoff (3 attempts)
+   - Log push success/failure with structured data (sensor count, data points, timestamp ranges)
 
 6. **Main** (`main.go`)
-   - Parse command-line flags
-   - Initialize config, scanner, store
-   - Start BLE scanning goroutine
-   - Run ticker for periodic output
-   - Handle signals (SIGINT/SIGTERM) for graceful shutdown
+   - Parse command-line flags (`-c` for config file)
+   - Load configuration and initialize zap logger
+   - Log service startup with clear, descriptive messages
+   - Create ring buffer instance
+   - Start BLE scanning goroutine (logs sensor readings as they arrive)
+   - Start Prometheus pusher goroutine
+   - Handle signals (SIGINT/SIGTERM) for graceful shutdown with final push attempt
+   - Log all important process steps with structured fields
 
 ## File Structure
 
 ```
 thermostats/
-├── main.go           # Entry point, orchestration, signal handling
-├── config.go         # Configuration loading (cleanenv)
-├── scanner.go        # BLE scanning (tinygo.org/x/bluetooth)
-├── decoder.go        # ATC advertisement format parser
-├── store.go          # In-memory data store with mutex
-├── output.go         # JSON/text formatting and stdout writer
-├── types.go          # Data structures (Config, Reading, etc.)
-├── config.json       # Default configuration file
-├── go.mod            # Go module dependencies
-├── go.sum            # Dependency checksums
-└── README.md         # Usage documentation
+├── main.go               # Entry point, orchestration, goroutine coordination, signal handling
+├── scanner.go            # BLE scanning (tinygo.org/x/bluetooth), logs sensor readings
+├── decoder.go            # ATC advertisement format parser
+├── types.go              # Data structures (SensorReading, etc.)
+├── config/
+│   └── config.go         # Configuration loading (cleanenv, YAML parsing, zap initialization)
+├── buffer/
+│   ├── buffer.go         # Thread-safe ring buffer implementation
+│   └── buffer_test.go    # Ring buffer unit tests
+├── metrics/
+│   └── pusher.go         # Prometheus remote_write client (adapted from pstryk_metric)
+├── config.yaml           # Default configuration file with comments
+├── example.env           # Example environment variables for documentation
+├── go.mod                # Go module dependencies
+├── go.sum                # Dependency checksums
+├── Dockerfile            # Multi-stage build for Balena deployment
+└── README.md             # Usage documentation, deployment instructions
 ```
 
 ## Risks / Trade-offs
@@ -293,9 +419,9 @@ thermostats/
 
 **Mitigation**: Use tinygo.org/x/bluetooth which is actively maintained (August 2025) and wraps mature BlueZ stack via D-Bus. The library has 337+ packages using it and proven production use. Fall back to Python implementation if blockers found (unlikely based on research).
 
-### Trade-off: No data persistence
+### Trade-off: In-memory buffering only
 
-**Impact**: If service crashes, recent data is lost. For this use case (real-time monitoring), acceptable. Future phases can add optional persistence if needed.
+**Impact**: If service crashes before pushing to Prometheus, buffered data (up to BUFFER_SIZE readings) is lost. For this use case (real-time monitoring with 15-second push intervals), acceptable. Prometheus provides long-term persistence.
 
 ### Trade-off: Root/privileged execution
 
