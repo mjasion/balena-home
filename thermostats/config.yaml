@@ -1,44 +1,48 @@
 # BLE Temperature Monitoring Configuration
 
-# BLE scanning interval in seconds (minimum: 1)
-scanIntervalSeconds: 60
+# BLE scanning configuration
+ble:
+  # Interval between scan cycles in seconds (minimum: 1)
+  scanIntervalSeconds: 60
 
-# List of sensor MAC addresses to monitor
-# Format: XX:XX:XX:XX:XX:XX (case insensitive)
-sensors:
-  - "A4:C1:38:00:00:01"  # Replace with your sensor MAC
-  - "A4:C1:38:00:00:02"  # Replace with your sensor MAC
-  - "A4:C1:38:00:00:03"  # Replace with your sensor MAC
-  - "A4:C1:38:00:00:04"  # Replace with your sensor MAC
+  # List of sensor MAC addresses to monitor
+  # Format: XX:XX:XX:XX:XX:XX (case insensitive)
+  sensors:
+    - "A4:C1:38:00:00:01"  # Replace with your sensor MAC
+    - "A4:C1:38:00:00:02"  # Replace with your sensor MAC
+    - "A4:C1:38:00:00:03"  # Replace with your sensor MAC
+    - "A4:C1:38:00:00:04"  # Replace with your sensor MAC
 
-# How often to push metrics to Prometheus (in seconds)
-pushIntervalSeconds: 15
+# Prometheus metrics push configuration
+prometheus:
+  # Interval between metric pushes in seconds (minimum: 1)
+  pushIntervalSeconds: 15
 
-# Prometheus remote_write endpoint URL
-# For Grafana Cloud, use: https://prometheus-prod-XX-YY-ZZ.grafana.net/api/prom/push
-prometheusUrl: "https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push"
+  # Grafana Cloud Prometheus remote_write endpoint
+  # Example: https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push
+  prometheusUrl: "https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push"
 
-# Prometheus basic auth username (Grafana Cloud instance ID)
-prometheusUsername: "123456"
+  # Grafana Cloud username (instance ID)
+  prometheusUsername: "123456"
 
-# Prometheus basic auth password (Grafana Cloud API key)
-# IMPORTANT: Use environment variable PROMETHEUS_PASSWORD for production
-prometheusPassword: ""
+  # Grafana Cloud password (API key)
+  # IMPORTANT: Use PROMETHEUS_PASSWORD environment variable instead of storing here
+  prometheusPassword: ""
 
-# Name of the metric to create in Prometheus
-metricName: "ble_temperature_celsius"
+  # Prometheus metric name
+  metricName: "ble_temperature_celsius"
 
-# Whether to start pushing at even second boundaries (improves alignment in time series)
-startAtEvenSecond: true
+  # Start pushing at even second boundaries (improves alignment in time series)
+  startAtEvenSecond: true
 
-# Ring buffer capacity (number of readings to buffer before push)
-bufferCapacity: 1000
-
-# Health check HTTP server port
-healthCheckPort: 8080
+  # Ring buffer size (number of readings to buffer before push)
+  bufferSize: 1000
 
 # Logging configuration
-# Format: "json" for structured JSON logging, "console" for human-readable output
-logFormat: "console"
-# Level: "debug", "info", "warn", or "error"
-logLevel: "info"
+logging:
+  # Log format: "console" (human-readable) or "json" (structured)
+  # Use "console" for development, "json" for production
+  logFormat: "console"
+
+  # Log level: "debug", "info", "warn", "error"
+  logLevel: "info"

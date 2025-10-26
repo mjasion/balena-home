@@ -30,8 +30,8 @@ metricName: "active_power_watts"
 # This ensures predictable timing
 startAtEvenSecond: true
 
-# Ring buffer capacity (number of scrape results to keep in memory)
-bufferCapacity: 1000
+# Ring buffer size (number of scrape results to keep in memory)
+bufferSize: 1000
 
 # Health check HTTP server port
 healthCheckPort: 8080
