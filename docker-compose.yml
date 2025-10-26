@@ -3,7 +3,7 @@ version: "2.1"
 services:
   tunnel:
     container_name: cloudflared-tunnel
-    image: cloudflare/cloudflared
+    image: cloudflare/cloudflared:2025.10.0
     restart: unless-stopped
     command: tunnel run
     environment:
@@ -26,4 +26,12 @@ services:
   pstryk_metric:
     build: pstryk_metric
     network_mode: host
+  scanner:
+    build: scanner
+    network_mode: host
+    privileged: true
+    environment:
+      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/host/run/dbus/system_bus_socket
+    labels:
+      io.balena.features.dbus: '1'
 
