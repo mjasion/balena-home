@@ -8,22 +8,20 @@ ble:
   # List of sensor MAC addresses to monitor
   # Format: XX:XX:XX:XX:XX:XX (case insensitive)
   sensors:
-    - "A4:C1:38:00:00:01"  # Replace with your sensor MAC
-    - "A4:C1:38:00:00:02"  # Replace with your sensor MAC
-    - "A4:C1:38:00:00:03"  # Replace with your sensor MAC
-    - "A4:C1:38:00:00:04"  # Replace with your sensor MAC
+    - A4:C1:38:ED:C0:21   # Sypialnia
+    - A4:C1:38:26:E2:4C   # Salon
 
 # Prometheus metrics push configuration
 prometheus:
   # Interval between metric pushes in seconds (minimum: 1)
   pushIntervalSeconds: 15
 
-  # Grafana Cloud Prometheus remote_write endpoint
-  # Example: https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push
-  prometheusUrl: "https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push"
+  # Prometheus remote_write endpoint URL
+  # For Grafana Cloud, use: https://prometheus-prod-XX-YY-ZZ.grafana.net/api/prom/push
+  prometheusUrl: "https://prometheus-blocks-prod-us-central1.grafana.net/api/prom/push"
 
-  # Grafana Cloud username (instance ID)
-  prometheusUsername: "123456"
+  # Prometheus basic auth username (Grafana Cloud instance ID)
+  prometheusUsername: "83165"
 
   # Grafana Cloud password (API key)
   # IMPORTANT: Use PROMETHEUS_PASSWORD environment variable instead of storing here
