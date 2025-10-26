@@ -26,8 +26,8 @@ services:
   pstryk_metric:
     build: pstryk_metric
     network_mode: host
-  scanner:
-    build: scanner
+  thermostats:
+    build: thermostats
     network_mode: host
     privileged: true
     environment:
