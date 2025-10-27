@@ -16,10 +16,13 @@ func TestLoad_ValidConfig(t *testing.T) {
 
 	configContent := `
 ble:
-  scanIntervalSeconds: 60
   sensors:
-    - "A4:C1:38:00:00:01"
-    - "A4:C1:38:00:00:02"
+    - name: Sensor1
+      id: 1
+      macAddress: "A4:C1:38:00:00:01"
+    - name: Sensor2
+      id: 2
+      macAddress: "A4:C1:38:00:00:02"
 prometheus:
   pushIntervalSeconds: 15
   prometheusUrl: "https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push"
@@ -44,12 +47,12 @@ logging:
 	}
 
 	// Verify BLE config
-	if cfg.BLE.ScanIntervalSeconds != 60 {
-		t.Errorf("Expected scan interval 60, got %d", cfg.BLE.ScanIntervalSeconds)
-	}
-
 	if len(cfg.BLE.Sensors) != 2 {
 		t.Errorf("Expected 2 sensors, got %d", len(cfg.BLE.Sensors))
+	}
+
+	if cfg.BLE.Sensors[0].Name != "Sensor1" {
+		t.Errorf("Expected sensor name 'Sensor1', got '%s'", cfg.BLE.Sensors[0].Name)
 	}
 
 	// Verify Prometheus config
@@ -126,34 +129,34 @@ func TestValidate_MissingRequiredFields(t *testing.T) {
 			name: "No sensors",
 			config: Config{
 				BLE: BLEConfig{
-					ScanIntervalSeconds: 60,
-					Sensors:             []string{},
+					Sensors: []SensorConfig{},
 				},
 				Prometheus: PrometheusConfig{
 					PushIntervalSeconds: 15,
 					URL:                 "https://example.com",
 					Username:            "test",
-					BufferSize:      1000,
+					BufferSize:          1000,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
 					Level:  "info",
 				},
 			},
-			expectedErr: "at least one sensor MAC address must be configured",
+			expectedErr: "at least one sensor must be configured",
 		},
 		{
 			name: "Empty Prometheus URL",
 			config: Config{
 				BLE: BLEConfig{
-					ScanIntervalSeconds: 60,
-					Sensors:             []string{"A4:C1:38:00:00:01"},
+					Sensors: []SensorConfig{
+						{Name: "Test", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
+					},
 				},
 				Prometheus: PrometheusConfig{
 					PushIntervalSeconds: 15,
 					URL:                 "",
 					Username:            "test",
-					BufferSize:      1000,
+					BufferSize:          1000,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
@@ -166,14 +169,15 @@ func TestValidate_MissingRequiredFields(t *testing.T) {
 			name: "Empty Prometheus username",
 			config: Config{
 				BLE: BLEConfig{
-					ScanIntervalSeconds: 60,
-					Sensors:             []string{"A4:C1:38:00:00:01"},
+					Sensors: []SensorConfig{
+						{Name: "Test", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
+					},
 				},
 				Prometheus: PrometheusConfig{
 					PushIntervalSeconds: 15,
 					URL:                 "https://example.com",
 					Username:            "",
-					BufferSize:      1000,
+					BufferSize:          1000,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
@@ -217,14 +221,15 @@ func TestValidate_InvalidMACAddress(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			config := Config{
 				BLE: BLEConfig{
-					ScanIntervalSeconds: 60,
-					Sensors:             []string{tt.mac},
+					Sensors: []SensorConfig{
+						{Name: "Test", ID: 1, MACAddress: tt.mac},
+					},
 				},
 				Prometheus: PrometheusConfig{
 					PushIntervalSeconds: 15,
 					URL:                 "https://example.com",
 					Username:            "test",
-					BufferSize:      1000,
+					BufferSize:          1000,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
@@ -243,34 +248,32 @@ func TestValidate_InvalidMACAddress(t *testing.T) {
 	}
 }
 
-func TestValidate_IntervalBounds(t *testing.T) {
+func TestValidate_PushInterval(t *testing.T) {
 	tests := []struct {
 		name              string
-		scanInterval      int
 		pushInterval      int
 		wantErr           bool
 		expectedErrSubstr string
 	}{
-		{"Valid intervals", 60, 15, false, ""},
-		{"Scan interval too low", 0, 15, true, "scan interval must be at least 1 second"},
-		{"Scan interval negative", -1, 15, true, "scan interval must be at least 1 second"},
-		{"Push interval too low", 60, 0, true, "push interval must be at least 1 second"},
-		{"Push interval negative", 60, -1, true, "push interval must be at least 1 second"},
-		{"Minimum valid intervals", 1, 1, false, ""},
+		{"Valid interval", 15, false, ""},
+		{"Push interval too low", 0, true, "push interval must be at least 1 second"},
+		{"Push interval negative", -1, true, "push interval must be at least 1 second"},
+		{"Minimum valid interval", 1, false, ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := Config{
 				BLE: BLEConfig{
-					ScanIntervalSeconds: tt.scanInterval,
-					Sensors:             []string{"A4:C1:38:00:00:01"},
+					Sensors: []SensorConfig{
+						{Name: "Test", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
+					},
 				},
 				Prometheus: PrometheusConfig{
 					PushIntervalSeconds: tt.pushInterval,
 					URL:                 "https://example.com",
 					Username:            "test",
-					BufferSize:      1000,
+					BufferSize:          1000,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
@@ -310,14 +313,15 @@ func TestValidate_BufferSize(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			config := Config{
 				BLE: BLEConfig{
-					ScanIntervalSeconds: 60,
-					Sensors:             []string{"A4:C1:38:00:00:01"},
+					Sensors: []SensorConfig{
+						{Name: "Test", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
+					},
 				},
 				Prometheus: PrometheusConfig{
 					PushIntervalSeconds: 15,
 					URL:                 "https://example.com",
 					Username:            "test",
-					BufferSize:      tt.bufferCapacity,
+					BufferSize:          tt.bufferCapacity,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
@@ -354,14 +358,15 @@ func TestValidate_LogFormat(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			config := Config{
 				BLE: BLEConfig{
-					ScanIntervalSeconds: 60,
-					Sensors:             []string{"A4:C1:38:00:00:01"},
+					Sensors: []SensorConfig{
+						{Name: "Test", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
+					},
 				},
 				Prometheus: PrometheusConfig{
 					PushIntervalSeconds: 15,
 					URL:                 "https://example.com",
 					Username:            "test",
-					BufferSize:      1000,
+					BufferSize:          1000,
 				},
 				Logging: LoggingConfig{
 					Format: tt.format,
@@ -400,14 +405,15 @@ func TestValidate_LogLevel(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			config := Config{
 				BLE: BLEConfig{
-					ScanIntervalSeconds: 60,
-					Sensors:             []string{"A4:C1:38:00:00:01"},
+					Sensors: []SensorConfig{
+						{Name: "Test", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
+					},
 				},
 				Prometheus: PrometheusConfig{
 					PushIntervalSeconds: 15,
 					URL:                 "https://example.com",
 					Username:            "test",
-					BufferSize:      1000,
+					BufferSize:          1000,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
@@ -497,8 +503,10 @@ func TestInitLogger_AllLevels(t *testing.T) {
 func TestPrintConfig(t *testing.T) {
 	config := Config{
 		BLE: BLEConfig{
-			ScanIntervalSeconds: 60,
-			Sensors:             []string{"A4:C1:38:00:00:01", "A4:C1:38:00:00:02"},
+			Sensors: []SensorConfig{
+				{Name: "Sensor1", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
+				{Name: "Sensor2", ID: 2, MACAddress: "A4:C1:38:00:00:02"},
+			},
 		},
 		Prometheus: PrometheusConfig{
 			PushIntervalSeconds: 15,
@@ -507,7 +515,7 @@ func TestPrintConfig(t *testing.T) {
 			Password:            "secret",
 			MetricName:          "test_metric",
 			StartAtEvenSecond:   true,
-			BufferSize:      1000,
+			BufferSize:          1000,
 		},
 		Logging: LoggingConfig{
 			Format: "console",
@@ -529,9 +537,10 @@ func TestLoad_EnvironmentOverride(t *testing.T) {
 
 	configContent := `
 ble:
-  scanIntervalSeconds: 60
   sensors:
-    - "A4:C1:38:00:00:01"
+    - name: Sensor1
+      id: 1
+      macAddress: "A4:C1:38:00:00:01"
 prometheus:
   pushIntervalSeconds: 15
   prometheusUrl: "https://example.com"
@@ -549,12 +558,10 @@ logging:
 	}
 
 	// Set environment variables to override
-	os.Setenv("SCAN_INTERVAL_SECONDS", "120")
 	os.Setenv("PROMETHEUS_USERNAME", "env-user")
 	os.Setenv("METRIC_NAME", "env_metric")
 	os.Setenv("BUFFER_SIZE", "2000")
 	defer func() {
-		os.Unsetenv("SCAN_INTERVAL_SECONDS")
 		os.Unsetenv("PROMETHEUS_USERNAME")
 		os.Unsetenv("METRIC_NAME")
 		os.Unsetenv("BUFFER_SIZE")
@@ -566,10 +573,6 @@ logging:
 	}
 
 	// Verify environment variables override config file
-	if cfg.BLE.ScanIntervalSeconds != 120 {
-		t.Errorf("Expected scan interval 120 from env, got %d", cfg.BLE.ScanIntervalSeconds)
-	}
-
 	if cfg.Prometheus.Username != "env-user" {
 		t.Errorf("Expected username 'env-user' from env, got %s", cfg.Prometheus.Username)
 	}

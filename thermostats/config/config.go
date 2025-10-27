@@ -19,8 +19,7 @@ type Config struct {
 
 // BLEConfig contains BLE scanning configuration
 type BLEConfig struct {
-	ScanIntervalSeconds int            `yaml:"scanIntervalSeconds" env:"SCAN_INTERVAL_SECONDS" env-default:"60"`
-	Sensors             []SensorConfig `yaml:"sensors"`
+	Sensors []SensorConfig `yaml:"sensors"`
 }
 
 // SensorConfig contains configuration for a single sensor
@@ -109,11 +108,6 @@ func (c *Config) Validate() error {
 
 	if c.Prometheus.Username == "" {
 		return fmt.Errorf("prometheus username is required")
-	}
-
-	// Validate scan interval
-	if c.BLE.ScanIntervalSeconds < 1 {
-		return fmt.Errorf("scan interval must be at least 1 second")
 	}
 
 	// Validate push interval
@@ -209,7 +203,6 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 	}
 
 	logger.Info("configuration loaded",
-		zap.Int("scan_interval_seconds", c.BLE.ScanIntervalSeconds),
 		zap.Int("sensor_count", len(c.BLE.Sensors)),
 		zap.Strings("sensors", sensorInfo),
 		zap.Int("push_interval_seconds", c.Prometheus.PushIntervalSeconds),

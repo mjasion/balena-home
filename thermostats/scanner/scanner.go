@@ -29,10 +29,10 @@ type SensorConfig struct {
 
 // Scanner handles BLE scanning for temperature sensors
 type Scanner struct {
-	adapter     *bluetooth.Adapter
-	sensorMACs  map[string]SensorInfo // Map of MAC address to sensor info
-	buffer      *buffer.RingBuffer
-	logger      *zap.Logger
+	adapter    *bluetooth.Adapter
+	sensorMACs map[string]SensorInfo // Map of MAC address to sensor info
+	buffer     *buffer.RingBuffer
+	logger     *zap.Logger
 }
 
 // New creates a new BLE scanner
@@ -49,10 +49,10 @@ func New(sensors []SensorConfig, buf *buffer.RingBuffer, logger *zap.Logger) *Sc
 	}
 
 	return &Scanner{
-		adapter:     bluetooth.DefaultAdapter,
-		sensorMACs:  macMap,
-		buffer:      buf,
-		logger:      logger,
+		adapter:    bluetooth.DefaultAdapter,
+		sensorMACs: macMap,
+		buffer:     buf,
+		logger:     logger,
 	}
 }
 
@@ -80,9 +80,8 @@ func (s *Scanner) Start(ctx context.Context) error {
 		default:
 		}
 
-		// Get MAC address and normalize
-		mac := strings.ToUpper(result.Address.String())
 		// Filter by configured sensor MAC addresses
+		mac := strings.ToUpper(result.Address.String())
 		sensorInfo, found := s.sensorMACs[mac]
 		if !found {
 			return
@@ -123,7 +122,7 @@ func (s *Scanner) Start(ctx context.Context) error {
 				s.buffer.Add(bufReading)
 
 				// Log sensor reading
-				s.logger.Info("sensor_reading",
+				s.logger.Debug("sensor_reading",
 					zap.String("sensor_name", sensorInfo.Name),
 					zap.Int("sensor_id", sensorInfo.ID),
 					zap.String("mac", reading.MAC),

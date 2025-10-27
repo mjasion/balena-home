@@ -34,9 +34,9 @@ go build -o ble-temp-monitor .
 ### Configuration
 
 Edit `config.yaml` to configure:
-- Sensor MAC addresses
+- Sensor names, IDs, and MAC addresses
 - Prometheus endpoint and credentials
-- Scan and push intervals
+- Metric push interval
 - Logging format and level
 
 See `example.env` for environment variable overrides.
@@ -113,8 +113,12 @@ thermostats/
 ## Configuration Reference
 
 ### BLE Settings
-- `scanIntervalSeconds`: Interval between scan cycles (default: 60)
-- `sensors`: Array of sensor MAC addresses (format: XX:XX:XX:XX:XX:XX)
+- `sensors`: Array of sensor configurations with:
+  - `name`: Friendly sensor name (e.g., "Bedroom", "Living Room")
+  - `id`: Unique numeric identifier (starting from 1)
+  - `macAddress`: BLE MAC address (format: XX:XX:XX:XX:XX:XX)
+
+**Note**: BLE scanning runs continuously. Sensors broadcast advertisements every 2-5 seconds, and all readings are collected in the ring buffer until pushed to Prometheus.
 
 ### Prometheus Settings
 - `pushIntervalSeconds`: Interval between metric pushes (default: 15)

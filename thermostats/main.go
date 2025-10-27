@@ -129,6 +129,10 @@ func main() {
 							zap.Error(err),
 							zap.Int("reading_count", len(readings)),
 						)
+					} else {
+						// Clear buffer after successful push
+						ringBuffer.Clear()
+						logger.Debug("buffer cleared after successful push")
 					}
 				} else {
 					logger.Debug("no readings to push")

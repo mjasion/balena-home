@@ -2,10 +2,8 @@
 
 # BLE scanning configuration
 ble:
-  # Interval between scan cycles in seconds (minimum: 1)
-  scanIntervalSeconds: 60
-
   # List of sensors to monitor
+  # Note: BLE scanning runs continuously; sensors broadcast every 2-5 seconds
   sensors:
     - name: Sypialnia
       id: 1
