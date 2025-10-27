@@ -19,8 +19,15 @@ type Config struct {
 
 // BLEConfig contains BLE scanning configuration
 type BLEConfig struct {
-	ScanIntervalSeconds int      `yaml:"scanIntervalSeconds" env:"SCAN_INTERVAL_SECONDS" env-default:"60"`
-	Sensors             []string `yaml:"sensors" env:"SENSORS" env-separator:","`
+	ScanIntervalSeconds int            `yaml:"scanIntervalSeconds" env:"SCAN_INTERVAL_SECONDS" env-default:"60"`
+	Sensors             []SensorConfig `yaml:"sensors"`
+}
+
+// SensorConfig contains configuration for a single sensor
+type SensorConfig struct {
+	Name       string `yaml:"name"`
+	ID         int    `yaml:"id"`
+	MACAddress string `yaml:"macAddress"`
 }
 
 // PrometheusConfig contains Prometheus metrics push configuration
@@ -62,13 +69,37 @@ func Load(configPath string) (*Config, error) {
 func (c *Config) Validate() error {
 	// Validate sensor MAC addresses
 	if len(c.BLE.Sensors) == 0 {
-		return fmt.Errorf("at least one sensor MAC address must be configured")
+		return fmt.Errorf("at least one sensor must be configured")
 	}
 
-	for _, mac := range c.BLE.Sensors {
-		if !macAddressRegex.MatchString(mac) {
-			return fmt.Errorf("invalid MAC address format: %s (expected format: XX:XX:XX:XX:XX:XX)", mac)
+	// Track unique IDs and MACs
+	seenIDs := make(map[int]bool)
+	seenMACs := make(map[string]bool)
+
+	for i, sensor := range c.BLE.Sensors {
+		// Validate name
+		if sensor.Name == "" {
+			return fmt.Errorf("sensor %d: name is required", i)
 		}
+
+		// Validate ID
+		if sensor.ID < 1 {
+			return fmt.Errorf("sensor %s: ID must be >= 1, got %d", sensor.Name, sensor.ID)
+		}
+		if seenIDs[sensor.ID] {
+			return fmt.Errorf("sensor %s: duplicate ID %d", sensor.Name, sensor.ID)
+		}
+		seenIDs[sensor.ID] = true
+
+		// Validate MAC address
+		if !macAddressRegex.MatchString(sensor.MACAddress) {
+			return fmt.Errorf("sensor %s: invalid MAC address format: %s (expected format: XX:XX:XX:XX:XX:XX)", sensor.Name, sensor.MACAddress)
+		}
+		macUpper := strings.ToUpper(sensor.MACAddress)
+		if seenMACs[macUpper] {
+			return fmt.Errorf("sensor %s: duplicate MAC address %s", sensor.Name, sensor.MACAddress)
+		}
+		seenMACs[macUpper] = true
 	}
 
 	// Validate Prometheus URL
@@ -171,10 +202,16 @@ func (c *Config) InitLogger() (*zap.Logger, error) {
 
 // PrintConfig prints the configuration (masking sensitive fields)
 func (c *Config) PrintConfig(logger *zap.Logger) {
+	// Build sensor info for logging
+	sensorInfo := make([]string, len(c.BLE.Sensors))
+	for i, sensor := range c.BLE.Sensors {
+		sensorInfo[i] = fmt.Sprintf("%s (ID:%d, MAC:%s)", sensor.Name, sensor.ID, sensor.MACAddress)
+	}
+
 	logger.Info("configuration loaded",
 		zap.Int("scan_interval_seconds", c.BLE.ScanIntervalSeconds),
 		zap.Int("sensor_count", len(c.BLE.Sensors)),
-		zap.Strings("sensors", c.BLE.Sensors),
+		zap.Strings("sensors", sensorInfo),
 		zap.Int("push_interval_seconds", c.Prometheus.PushIntervalSeconds),
 		zap.String("prometheus_url", c.Prometheus.URL),
 		zap.String("prometheus_username", c.Prometheus.Username),

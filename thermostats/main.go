@@ -13,6 +13,7 @@ import (
 	"github.com/mjasion/balena-home/thermostats/buffer"
 	"github.com/mjasion/balena-home/thermostats/config"
 	"github.com/mjasion/balena-home/thermostats/metrics"
+	"github.com/mjasion/balena-home/thermostats/scanner"
 	"go.uber.org/zap"
 )
 
@@ -64,12 +65,22 @@ func main() {
 	// Create wait group for goroutines
 	var wg sync.WaitGroup
 
+	// Convert config sensors to scanner format
+	scannerSensors := make([]scanner.SensorConfig, len(cfg.BLE.Sensors))
+	for i, sensor := range cfg.BLE.Sensors {
+		scannerSensors[i] = scanner.SensorConfig{
+			Name:       sensor.Name,
+			ID:         sensor.ID,
+			MACAddress: sensor.MACAddress,
+		}
+	}
+
 	// Start BLE scanner in goroutine
-	scanner := NewScanner(cfg.BLE.Sensors, ringBuffer, logger)
+	bleScanner := scanner.New(scannerSensors, ringBuffer, logger)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := scanner.Start(ctx)
+		err := bleScanner.Start(ctx)
 		if err != nil {
 			logger.Error("BLE scanner failed", zap.Error(err))
 			cancel() // Cancel context to stop other goroutines
@@ -139,7 +150,7 @@ func main() {
 
 	// Stop scanner
 	logger.Info("stopping BLE scanner")
-	if err := scanner.Stop(); err != nil {
+	if err := bleScanner.Stop(); err != nil {
 		logger.Error("failed to stop BLE scanner", zap.Error(err))
 	}
 

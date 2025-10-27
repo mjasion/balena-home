@@ -5,11 +5,14 @@ ble:
   # Interval between scan cycles in seconds (minimum: 1)
   scanIntervalSeconds: 60
 
-  # List of sensor MAC addresses to monitor
-  # Format: XX:XX:XX:XX:XX:XX (case insensitive)
+  # List of sensors to monitor
   sensors:
-    - A4:C1:38:ED:C0:21   # Sypialnia
-    - A4:C1:38:26:E2:4C   # Salon
+    - name: Sypialnia
+      id: 1
+      macAddress: A4:C1:38:ED:C0:21
+    - name: Salon
+      id: 2
+      macAddress: A4:C1:38:26:E2:4C
 
 # Prometheus metrics push configuration
 prometheus:
@@ -34,7 +37,7 @@ prometheus:
   startAtEvenSecond: true
 
   # Ring buffer size (number of readings to buffer before push)
-  bufferSize: 1000
+  bufferSize: 10000
 
 # Logging configuration
 logging:

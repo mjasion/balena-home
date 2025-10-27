@@ -26,6 +26,14 @@ services:
   pstryk_metric:
     build: pstryk_metric
     network_mode: host
+#  scanner:
+#    build: scanner
+#    network_mode: host
+#    privileged: true
+#    environment:
+#      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/host/run/dbus/system_bus_socket
+#    labels:
+#      io.balena.features.dbus: '1'
   thermostats:
     build: thermostats
     network_mode: host

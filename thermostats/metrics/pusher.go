@@ -90,50 +90,106 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.SensorReading) err
 
 // buildWriteRequest converts sensor readings to Prometheus WriteRequest
 func (p *Pusher) buildWriteRequest(readings []*buffer.SensorReading) (*prompb.WriteRequest, error) {
-	// Group readings by sensor MAC
-	sensorReadings := make(map[string][]*buffer.SensorReading)
+	// Group readings by sensor
+	type sensorKey struct {
+		name string
+		id   int
+	}
+	sensorReadings := make(map[sensorKey][]*buffer.SensorReading)
 	for _, reading := range readings {
-		sensorReadings[reading.MAC] = append(sensorReadings[reading.MAC], reading)
+		key := sensorKey{name: reading.SensorName, id: reading.SensorID}
+		sensorReadings[key] = append(sensorReadings[key], reading)
 	}
 
-	// Build time series for each sensor
+	// Build time series for each sensor and metric
 	var timeSeries []prompb.TimeSeries
-	for mac, sensorData := range sensorReadings {
-		// Create samples from readings
-		samples := make([]prompb.Sample, len(sensorData))
-		for i, reading := range sensorData {
+	for key, sensorData := range sensorReadings {
+		// Create base labels for this sensor
+		baseLabels := []prompb.Label{
+			{
+				Name:  "sensor_name",
+				Value: key.name,
+			},
+			{
+				Name:  "sensor_id",
+				Value: fmt.Sprintf("%d", key.id),
+			},
+			{
+				Name:  "mac",
+				Value: sensorData[0].MAC, // All readings have same MAC
+			},
+		}
+
+		// Temperature time series
+		tempSamples := make([]prompb.Sample, 0, len(sensorData))
+		humiditySamples := make([]prompb.Sample, 0, len(sensorData))
+		batterySamples := make([]prompb.Sample, 0, len(sensorData))
+
+		for _, reading := range sensorData {
 			// Round timestamp to nearest second, then convert to milliseconds
 			ts, ok := reading.Timestamp.(time.Time)
 			if !ok {
 				p.logger.Warn("invalid timestamp type in reading",
-					zap.String("mac", mac),
+					zap.String("sensor_name", key.name),
 				)
 				continue
 			}
 			roundedTime := ts.Round(time.Second)
 			timestampMs := roundedTime.UnixMilli()
 
-			samples[i] = prompb.Sample{
+			// Add temperature sample
+			tempSamples = append(tempSamples, prompb.Sample{
 				Value:     reading.TemperatureCelsius,
 				Timestamp: timestampMs,
-			}
+			})
+
+			// Add humidity sample
+			humiditySamples = append(humiditySamples, prompb.Sample{
+				Value:     float64(reading.HumidityPercent),
+				Timestamp: timestampMs,
+			})
+
+			// Add battery sample
+			batterySamples = append(batterySamples, prompb.Sample{
+				Value:     float64(reading.BatteryPercent),
+				Timestamp: timestampMs,
+			})
 		}
 
-		// Create labels
-		labels := []prompb.Label{
+		// Add temperature time series
+		tempLabels := append([]prompb.Label{
 			{
 				Name:  "__name__",
-				Value: p.metricName,
+				Value: "ble_temperature_celsius",
 			},
-			{
-				Name:  "sensor_id",
-				Value: mac,
-			},
-		}
-
+		}, baseLabels...)
 		timeSeries = append(timeSeries, prompb.TimeSeries{
-			Labels:  labels,
-			Samples: samples,
+			Labels:  tempLabels,
+			Samples: tempSamples,
+		})
+
+		// Add humidity time series
+		humidityLabels := append([]prompb.Label{
+			{
+				Name:  "__name__",
+				Value: "ble_humidity_percent",
+			},
+		}, baseLabels...)
+		timeSeries = append(timeSeries, prompb.TimeSeries{
+			Labels:  humidityLabels,
+			Samples: humiditySamples,
+		})
+
+		// Add battery time series
+		batteryLabels := append([]prompb.Label{
+			{
+				Name:  "__name__",
+				Value: "ble_battery_percent",
+			},
+		}, baseLabels...)
+		timeSeries = append(timeSeries, prompb.TimeSeries{
+			Labels:  batteryLabels,
+			Samples: batterySamples,
 		})
 	}
 

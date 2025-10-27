@@ -1,4 +1,4 @@
-package main
+package decoder
 
 import (
 	"encoding/binary"
@@ -6,10 +6,22 @@ import (
 	"time"
 )
 
+// SensorReading represents a decoded BLE sensor advertisement
+type SensorReading struct {
+	Timestamp          time.Time
+	MAC                string
+	TemperatureCelsius float64
+	HumidityPercent    int
+	BatteryPercent     int
+	BatteryVoltageMV   int
+	FrameCounter       int
+	RSSI               int16
+}
+
 // DecodeATCAdvertisement decodes the ATC_MiThermometer advertisement format
 // Format (13 bytes):
 // - Bytes 0-5: MAC address (big endian)
-// - Bytes 6-7: Temperature in 0.1°C (little endian signed int16)
+// - Bytes 6-7: Temperature in 0.1°C (big endian signed int16)
 // - Byte 8: Humidity in % (unsigned int8)
 // - Byte 9: Battery percentage (unsigned int8)
 // - Bytes 10-11: Battery voltage in mV (little endian unsigned int16)
@@ -23,8 +35,8 @@ func DecodeATCAdvertisement(data []byte, rssi int16) (*SensorReading, error) {
 	mac := fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X",
 		data[0], data[1], data[2], data[3], data[4], data[5])
 
-	// Extract temperature (bytes 6-7, little endian signed int16, divide by 10)
-	tempRaw := int16(binary.LittleEndian.Uint16(data[6:8]))
+	// Extract temperature (bytes 6-7, big endian signed int16, divide by 10)
+	tempRaw := int16(binary.BigEndian.Uint16(data[6:8]))
 	temperature := float64(tempRaw) / 10.0
 
 	// Extract humidity (byte 8, unsigned int8)

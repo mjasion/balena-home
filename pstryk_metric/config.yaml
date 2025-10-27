@@ -13,29 +13,28 @@ scrapeTimeoutSeconds: 1.5
 healthCheckPort: 8080
 
 # Prometheus metrics push configuration
-prometheus:
-  # Interval between metric pushes in seconds (minimum: 1)
-  pushIntervalSeconds: 30
+# Interval between metric pushes in seconds (minimum: 1)
+pushIntervalSeconds: 30
 
-  # Prometheus remote_write endpoint URL
-  # For Grafana Cloud, use: https://prometheus-prod-XX-YY-ZZ.grafana.net/api/prom/push
-  prometheusUrl: "https://prometheus-blocks-prod-us-central1.grafana.net/api/prom/push"
+# Prometheus remote_write endpoint URL
+# For Grafana Cloud, use: https://prometheus-prod-XX-YY-ZZ.grafana.net/api/prom/push
+prometheusUrl: "https://prometheus-blocks-prod-us-central1.grafana.net/api/prom/push"
 
-  # Prometheus basic auth username (Grafana Cloud instance ID)
-  prometheusUsername: "83165"
+# Prometheus basic auth username (Grafana Cloud instance ID)
+prometheusUsername: "83165"
 
-  # Grafana Cloud password (API key)
-  # IMPORTANT: Use PROMETHEUS_PASSWORD environment variable instead of storing here
-  prometheusPassword: ""
+# Grafana Cloud password (API key)
+# IMPORTANT: Use PROMETHEUS_PASSWORD environment variable instead of storing here
+prometheusPassword: ""
 
-  # Prometheus metric name
-  metricName: "active_power_watts"
+# Prometheus metric name
+metricName: "active_power_watts"
 
-  # Start pushing at even second boundaries (improves alignment in time series)
-  startAtEvenSecond: true
+# Start pushing at even second boundaries (improves alignment in time series)
+startAtEvenSecond: true
 
-  # Ring buffer size (number of scrape results to keep in memory)
-  bufferSize: 1000
+# Ring buffer size (number of scrape results to keep in memory)
+bufferSize: 5000
 
 # Logging configuration
 logging:

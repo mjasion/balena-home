@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for BLE temperature monitoring service
 
 # Builder stage
-FROM golang:1.23-bookworm AS builder
+FROM golang:1.25.3  -bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -22,7 +22,7 @@ RUN go mod download
 COPY . .
 
 # Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-extldflags "-static"' -o ble-temp-monitor .
+RUN CGO_ENABLED=1 GOOS=linux go build -o ble-temp-monitor .
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -34,10 +34,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bluez \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN groupadd -g 1000 appuser && \
-    useradd -u 1000 -g appuser -s /bin/bash -m appuser
-
 # Set working directory
 WORKDIR /app
 
@@ -46,12 +42,6 @@ COPY --from=builder /build/ble-temp-monitor .
 
 # Copy default config
 COPY config.yaml .
-
-# Change ownership to non-root user
-RUN chown -R appuser:appuser /app
-
-# Switch to non-root user
-USER appuser
 
 # Expose no ports (this service doesn't have HTTP API)
 

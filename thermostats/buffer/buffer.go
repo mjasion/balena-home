@@ -11,6 +11,8 @@ import (
 type SensorReading struct {
 	Timestamp          interface{} // time.Time
 	MAC                string
+	SensorName         string // Friendly name from config
+	SensorID           int    // Numeric ID from config
 	TemperatureCelsius float64
 	HumidityPercent    int
 	BatteryPercent     int
