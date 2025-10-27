@@ -9,7 +9,11 @@ scrapeIntervalSeconds: 2
 # HTTP request timeout for scraping (in seconds)
 scrapeTimeoutSeconds: 1.5
 
-# How often to push metrics to Prometheus (in seconds)
+# Health check HTTP server port
+healthCheckPort: 8080
+
+# Prometheus metrics push configuration
+# Interval between metric pushes in seconds (minimum: 1)
 pushIntervalSeconds: 30
 
 # Prometheus remote_write endpoint URL
@@ -19,25 +23,24 @@ prometheusUrl: "https://prometheus-blocks-prod-us-central1.grafana.net/api/prom/
 # Prometheus basic auth username (Grafana Cloud instance ID)
 prometheusUsername: "83165"
 
-# Prometheus basic auth password (Grafana Cloud API key)
-# IMPORTANT: Use environment variable PROMETHEUS_PASSWORD for production
+# Grafana Cloud password (API key)
+# IMPORTANT: Use PROMETHEUS_PASSWORD environment variable instead of storing here
 prometheusPassword: ""
 
-# Name of the metric to create in Prometheus
+# Prometheus metric name
 metricName: "active_power_watts"
 
-# Whether to start scraping at an even second (0, 2, 4, 6, etc.)
-# This ensures predictable timing
+# Start pushing at even second boundaries (improves alignment in time series)
 startAtEvenSecond: true
 
 # Ring buffer size (number of scrape results to keep in memory)
-bufferSize: 1000
-
-# Health check HTTP server port
-healthCheckPort: 8080
+bufferSize: 5000
 
 # Logging configuration
-# Format: "json" for structured JSON logging, "console" for human-readable output
-logFormat: "console"
-# Level: "debug", "info", "warn", or "error"
-logLevel: "info"
+logging:
+  # Log format: "console" (human-readable) or "json" (structured)
+  # Use "console" for development, "json" for production
+  logFormat: "console"
+
+  # Log level: "debug", "info", "warn", "error"
+  logLevel: "info"

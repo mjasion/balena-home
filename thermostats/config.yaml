@@ -1,0 +1,44 @@
+# BLE Temperature Monitoring Configuration
+
+# BLE scanning configuration
+ble:
+  # List of sensors to monitor
+  # Note: BLE scanning runs continuously; sensors broadcast every 2-5 seconds
+  sensors:
+    - name: Sypialnia
+      id: 1
+      macAddress: A4:C1:38:ED:C0:21
+    - name: Salon
+      id: 2
+      macAddress: A4:C1:38:26:E2:4C
+
+# Prometheus metrics push configuration
+prometheus:
+  # Interval between metric pushes in seconds (minimum: 1)
+  pushIntervalSeconds: 30
+
+  # Prometheus remote_write endpoint URL
+  # For Grafana Cloud, use: https://prometheus-prod-XX-YY-ZZ.grafana.net/api/prom/push
+  prometheusUrl: "https://prometheus-blocks-prod-us-central1.grafana.net/api/prom/push"
+
+  # Prometheus basic auth username (Grafana Cloud instance ID)
+  prometheusUsername: "83165"
+
+  # Grafana Cloud password (API key)
+  # IMPORTANT: Use PROMETHEUS_PASSWORD environment variable instead of storing here
+  prometheusPassword: ""
+
+  # Start pushing at even second boundaries (improves alignment in time series)
+  startAtEvenSecond: true
+
+  # Ring buffer size (number of readings to buffer before push)
+  bufferSize: 10000
+
+# Logging configuration
+logging:
+  # Log format: "console" (human-readable) or "json" (structured)
+  # Use "console" for development, "json" for production
+  logFormat: "console"
+
+  # Log level: "debug", "info", "warn", "error"
+  logLevel: "info"
