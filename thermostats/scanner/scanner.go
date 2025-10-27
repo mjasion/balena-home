@@ -122,7 +122,7 @@ func (s *Scanner) Start(ctx context.Context) error {
 				s.buffer.Add(bufReading)
 
 				// Log sensor reading
-				s.logger.Debug("sensor_reading",
+				s.logger.Info("Read sensor data",
 					zap.String("sensor_name", sensorInfo.Name),
 					zap.Int("sensor_id", sensorInfo.ID),
 					zap.String("mac", reading.MAC),

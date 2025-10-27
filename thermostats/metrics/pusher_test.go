@@ -19,7 +19,6 @@ func TestNew(t *testing.T) {
 		"https://example.com/api/push",
 		"test-user",
 		"test-password",
-		"test_metric",
 		logger,
 	)
 
@@ -39,10 +38,6 @@ func TestNew(t *testing.T) {
 		t.Errorf("Expected password test-password, got %s", pusher.password)
 	}
 
-	if pusher.metricName != "test_metric" {
-		t.Errorf("Expected metric name test_metric, got %s", pusher.metricName)
-	}
-
 	if pusher.client == nil {
 		t.Error("Expected HTTP client to be initialized")
 	}
@@ -52,7 +47,7 @@ func TestPush_EmptyReadings(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New("https://example.com", "user", "pass", "metric", logger)
+	pusher := New("https://example.com", "user", "pass", logger)
 
 	err := pusher.Push(context.Background(), []*buffer.SensorReading{})
 	if err != nil {
@@ -99,7 +94,7 @@ func TestPush_Success(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New(server.URL, "test-user", "test-password", "test_metric", logger)
+	pusher := New(server.URL, "test-user", "test-password", logger)
 
 	// Create test readings
 	readings := []*buffer.SensorReading{
@@ -144,7 +139,7 @@ func TestPush_MultipleSensors(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New(server.URL, "user", "pass", "metric", logger)
+	pusher := New(server.URL, "user", "pass", logger)
 
 	// Create readings from multiple sensors
 	readings := []*buffer.SensorReading{
@@ -197,7 +192,7 @@ func TestPush_ServerError(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New(server.URL, "user", "pass", "metric", logger)
+	pusher := New(server.URL, "user", "pass", logger)
 
 	readings := []*buffer.SensorReading{
 		{
@@ -229,7 +224,7 @@ func TestPush_WithRetries(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New(server.URL, "user", "pass", "metric", logger)
+	pusher := New(server.URL, "user", "pass", logger)
 
 	readings := []*buffer.SensorReading{
 		{
@@ -259,7 +254,7 @@ func TestPush_MaxRetriesExceeded(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New(server.URL, "user", "pass", "metric", logger)
+	pusher := New(server.URL, "user", "pass", logger)
 
 	readings := []*buffer.SensorReading{
 		{
@@ -286,7 +281,7 @@ func TestPush_ContextCancellation(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New(server.URL, "user", "pass", "metric", logger)
+	pusher := New(server.URL, "user", "pass", logger)
 
 	readings := []*buffer.SensorReading{
 		{
@@ -310,24 +305,36 @@ func TestBuildWriteRequest(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New("https://example.com", "user", "pass", "test_metric", logger)
+	pusher := New("https://example.com", "user", "pass", logger)
 
 	now := time.Now()
 	readings := []*buffer.SensorReading{
 		{
 			Timestamp:          now,
 			MAC:                "A4:C1:38:00:00:01",
+			SensorName:         "Living Room",
+			SensorID:           1,
 			TemperatureCelsius: 22.5,
+			HumidityPercent:    50,
+			BatteryPercent:     90,
 		},
 		{
 			Timestamp:          now.Add(time.Second),
 			MAC:                "A4:C1:38:00:00:01",
+			SensorName:         "Living Room",
+			SensorID:           1,
 			TemperatureCelsius: 22.6,
+			HumidityPercent:    51,
+			BatteryPercent:     90,
 		},
 		{
 			Timestamp:          now,
 			MAC:                "A4:C1:38:00:00:02",
+			SensorName:         "Bedroom",
+			SensorID:           2,
 			TemperatureCelsius: 23.1,
+			HumidityPercent:    55,
+			BatteryPercent:     85,
 		},
 	}
 
@@ -340,22 +347,53 @@ func TestBuildWriteRequest(t *testing.T) {
 		t.Fatal("Expected write request, got nil")
 	}
 
-	// Should have 2 time series (one per sensor)
-	if len(writeReq.Timeseries) != 2 {
-		t.Errorf("Expected 2 time series, got %d", len(writeReq.Timeseries))
+	// Should have 6 time series (3 metrics per sensor: temp, humidity, battery × 2 sensors)
+	if len(writeReq.Timeseries) != 6 {
+		t.Errorf("Expected 6 time series, got %d", len(writeReq.Timeseries))
 	}
 
-	// Verify each time series has the correct labels
+	// Count time series by metric type
+	metricCounts := make(map[string]int)
+	for _, ts := range writeReq.Timeseries {
+		for _, label := range ts.Labels {
+			if label.Name == "__name__" {
+				metricCounts[label.Value]++
+			}
+		}
+	}
+
+	// Verify we have 2 of each metric type (one per sensor)
+	expectedMetrics := map[string]int{
+		"ble_temperature_celsius": 2,
+		"ble_humidity_percent":    2,
+		"ble_battery_percent":     2,
+	}
+
+	for metricName, expectedCount := range expectedMetrics {
+		if count, exists := metricCounts[metricName]; !exists || count != expectedCount {
+			t.Errorf("Expected %d time series for metric %s, got %d", expectedCount, metricName, count)
+		}
+	}
+
+	// Verify each time series has the required labels
 	for _, ts := range writeReq.Timeseries {
 		foundName := false
 		foundSensorID := false
+		foundMAC := false
+		foundSensorName := false
 
 		for _, label := range ts.Labels {
-			if label.Name == "__name__" && label.Value == "test_metric" {
+			if label.Name == "__name__" {
 				foundName = true
 			}
 			if label.Name == "sensor_id" {
 				foundSensorID = true
+			}
+			if label.Name == "mac" {
+				foundMAC = true
+			}
+			if label.Name == "sensor_name" {
+				foundSensorName = true
 			}
 		}
 
@@ -365,6 +403,12 @@ func TestBuildWriteRequest(t *testing.T) {
 		if !foundSensorID {
 			t.Error("Expected sensor_id label in time series")
 		}
+		if !foundMAC {
+			t.Error("Expected mac label in time series")
+		}
+		if !foundSensorName {
+			t.Error("Expected sensor_name label in time series")
+		}
 	}
 }
 
@@ -372,7 +416,7 @@ func TestCountUniqueSensors(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New("https://example.com", "user", "pass", "metric", logger)
+	pusher := New("https://example.com", "user", "pass", logger)
 
 	readings := []*buffer.SensorReading{
 		{MAC: "A4:C1:38:00:00:01"},
@@ -393,7 +437,7 @@ func TestLastPushTime(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New("https://example.com", "user", "pass", "metric", logger)
+	pusher := New("https://example.com", "user", "pass", logger)
 
 	// Initial last push time should be recent
 	lastPush := pusher.LastPushTime()
@@ -444,7 +488,7 @@ func TestPush_NoBasicAuth(t *testing.T) {
 	defer logger.Sync()
 
 	// Create pusher with empty credentials
-	pusher := New(server.URL, "", "", "metric", logger)
+	pusher := New(server.URL, "", "", logger)
 
 	readings := []*buffer.SensorReading{
 		{
@@ -464,37 +508,62 @@ func TestPush_NoBasicAuth(t *testing.T) {
 	}
 }
 
-func TestRoundToSecond(t *testing.T) {
+func TestRoundToTenSeconds(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    time.Time
 		expected time.Time
 	}{
 		{
-			name:     "Round down",
-			input:    time.Date(2024, 1, 1, 12, 0, 0, 400000000, time.UTC),
+			name:     "Round down - 3 seconds",
+			input:    time.Date(2024, 1, 1, 12, 0, 3, 0, time.UTC),
 			expected: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
 		},
 		{
-			name:     "Round up",
-			input:    time.Date(2024, 1, 1, 12, 0, 0, 600000000, time.UTC),
-			expected: time.Date(2024, 1, 1, 12, 0, 1, 0, time.UTC),
+			name:     "Round down - 4.9 seconds",
+			input:    time.Date(2024, 1, 1, 12, 0, 4, 900000000, time.UTC),
+			expected: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
 		},
 		{
-			name:     "Exactly 500ms",
-			input:    time.Date(2024, 1, 1, 12, 0, 0, 500000000, time.UTC),
-			expected: time.Date(2024, 1, 1, 12, 0, 1, 0, time.UTC),
+			name:     "Round up - 5 seconds",
+			input:    time.Date(2024, 1, 1, 12, 0, 5, 0, time.UTC),
+			expected: time.Date(2024, 1, 1, 12, 0, 10, 0, time.UTC),
 		},
 		{
-			name:     "Already rounded",
+			name:     "Round up - 7 seconds",
+			input:    time.Date(2024, 1, 1, 12, 0, 7, 0, time.UTC),
+			expected: time.Date(2024, 1, 1, 12, 0, 10, 0, time.UTC),
+		},
+		{
+			name:     "Round down - 13 seconds to :10",
+			input:    time.Date(2024, 1, 1, 12, 0, 13, 0, time.UTC),
+			expected: time.Date(2024, 1, 1, 12, 0, 10, 0, time.UTC),
+		},
+		{
+			name:     "Round up - 15 seconds to :20",
+			input:    time.Date(2024, 1, 1, 12, 0, 15, 0, time.UTC),
+			expected: time.Date(2024, 1, 1, 12, 0, 20, 0, time.UTC),
+		},
+		{
+			name:     "Already rounded to :00",
 			input:    time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
 			expected: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
+		},
+		{
+			name:     "Already rounded to :10",
+			input:    time.Date(2024, 1, 1, 12, 0, 10, 0, time.UTC),
+			expected: time.Date(2024, 1, 1, 12, 0, 10, 0, time.UTC),
+		},
+		{
+			name:     "Already rounded to :50",
+			input:    time.Date(2024, 1, 1, 12, 0, 50, 0, time.UTC),
+			expected: time.Date(2024, 1, 1, 12, 0, 50, 0, time.UTC),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := roundToSecond(tt.input)
+			result := roundToTenSeconds(tt.input)
 			if !result.Equal(tt.expected) {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}

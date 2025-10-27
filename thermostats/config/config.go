@@ -35,7 +35,6 @@ type PrometheusConfig struct {
 	URL                 string `yaml:"prometheusUrl" env:"PROMETHEUS_URL" env-required:"true"`
 	Username            string `yaml:"prometheusUsername" env:"PROMETHEUS_USERNAME" env-required:"true"`
 	Password            string `yaml:"prometheusPassword" env:"PROMETHEUS_PASSWORD"`
-	MetricName          string `yaml:"metricName" env:"METRIC_NAME" env-default:"ble_temperature_celsius"`
 	StartAtEvenSecond   bool   `yaml:"startAtEvenSecond" env:"START_AT_EVEN_SECOND" env-default:"true"`
 	BufferSize          int    `yaml:"bufferSize" env:"BUFFER_SIZE" env-default:"1000"`
 }
@@ -209,7 +208,6 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.String("prometheus_url", c.Prometheus.URL),
 		zap.String("prometheus_username", c.Prometheus.Username),
 		zap.Bool("prometheus_password_set", c.Prometheus.Password != ""),
-		zap.String("metric_name", c.Prometheus.MetricName),
 		zap.Bool("start_at_even_second", c.Prometheus.StartAtEvenSecond),
 		zap.Int("buffer_size", c.Prometheus.BufferSize),
 		zap.String("log_format", c.Logging.Format),

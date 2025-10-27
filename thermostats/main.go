@@ -49,7 +49,6 @@ func main() {
 		cfg.Prometheus.URL,
 		cfg.Prometheus.Username,
 		cfg.Prometheus.Password,
-		cfg.Prometheus.MetricName,
 		logger,
 	)
 	logger.Info("prometheus pusher initialized", zap.String("url", cfg.Prometheus.URL))

@@ -17,22 +17,20 @@ import (
 
 // Pusher handles pushing metrics to Prometheus remote_write endpoint
 type Pusher struct {
-	url        string
-	username   string
-	password   string
-	metricName string
-	client     *http.Client
-	logger     *zap.Logger
-	lastPush   time.Time
+	url      string
+	username string
+	password string
+	client   *http.Client
+	logger   *zap.Logger
+	lastPush time.Time
 }
 
 // New creates a new Prometheus pusher
-func New(url, username, password, metricName string, logger *zap.Logger) *Pusher {
+func New(url, username, password string, logger *zap.Logger) *Pusher {
 	return &Pusher{
-		url:        url,
-		username:   username,
-		password:   password,
-		metricName: metricName,
+		url:      url,
+		username: username,
+		password: password,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -126,7 +124,7 @@ func (p *Pusher) buildWriteRequest(readings []*buffer.SensorReading) (*prompb.Wr
 		batterySamples := make([]prompb.Sample, 0, len(sensorData))
 
 		for _, reading := range sensorData {
-			// Round timestamp to nearest second, then convert to milliseconds
+			// Round timestamp to nearest 10 seconds, then convert to milliseconds
 			ts, ok := reading.Timestamp.(time.Time)
 			if !ok {
 				p.logger.Warn("invalid timestamp type in reading",
@@ -134,7 +132,7 @@ func (p *Pusher) buildWriteRequest(readings []*buffer.SensorReading) (*prompb.Wr
 				)
 				continue
 			}
-			roundedTime := ts.Round(time.Second)
+			roundedTime := roundToTenSeconds(ts)
 			timestampMs := roundedTime.UnixMilli()
 
 			// Add temperature sample
@@ -255,13 +253,19 @@ func (p *Pusher) LastPushTime() time.Time {
 	return p.lastPush
 }
 
-// roundToSecond rounds a time to the nearest second
-func roundToSecond(t time.Time) time.Time {
-	nsec := t.Nanosecond()
-	if nsec >= 500000000 {
-		// Round up
-		return t.Add(time.Second - time.Duration(nsec)).Truncate(time.Second)
+// roundToTenSeconds rounds a time to the nearest 10-second interval
+func roundToTenSeconds(t time.Time) time.Time {
+	// Truncate to 10-second boundary
+	truncated := t.Truncate(10 * time.Second)
+
+	// Calculate how far we are into the current 10-second interval
+	remainder := t.Sub(truncated)
+
+	// If we're at 5 seconds or more, round up to next 10-second mark
+	if remainder >= 5*time.Second {
+		return truncated.Add(10 * time.Second)
 	}
-	// Round down
-	return t.Truncate(time.Second)
+
+	// Otherwise, round down
+	return truncated
 }

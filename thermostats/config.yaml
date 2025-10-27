@@ -15,7 +15,7 @@ ble:
 # Prometheus metrics push configuration
 prometheus:
   # Interval between metric pushes in seconds (minimum: 1)
-  pushIntervalSeconds: 15
+  pushIntervalSeconds: 60
 
   # Prometheus remote_write endpoint URL
   # For Grafana Cloud, use: https://prometheus-prod-XX-YY-ZZ.grafana.net/api/prom/push
@@ -27,9 +27,6 @@ prometheus:
   # Grafana Cloud password (API key)
   # IMPORTANT: Use PROMETHEUS_PASSWORD environment variable instead of storing here
   prometheusPassword: ""
-
-  # Prometheus metric name
-  metricName: "ble_temperature_celsius"
 
   # Start pushing at even second boundaries (improves alignment in time series)
   startAtEvenSecond: true

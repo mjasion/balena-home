@@ -28,7 +28,6 @@ prometheus:
   prometheusUrl: "https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push"
   prometheusUsername: "123456"
   prometheusPassword: "test-password"
-  metricName: "ble_temperature_celsius"
   startAtEvenSecond: true
   bufferSize: 1000
 logging:
@@ -70,10 +69,6 @@ logging:
 
 	if cfg.Prometheus.Password != "test-password" {
 		t.Errorf("Expected password test-password, got %s", cfg.Prometheus.Password)
-	}
-
-	if cfg.Prometheus.MetricName != "ble_temperature_celsius" {
-		t.Errorf("Unexpected metric name: %s", cfg.Prometheus.MetricName)
 	}
 
 	if !cfg.Prometheus.StartAtEvenSecond {
@@ -512,10 +507,9 @@ func TestPrintConfig(t *testing.T) {
 			PushIntervalSeconds: 15,
 			URL:                 "https://example.com",
 			Username:            "test-user",
-			Password:            "secret",
-			MetricName:          "test_metric",
-			StartAtEvenSecond:   true,
-			BufferSize:          1000,
+			Password:          "secret",
+			StartAtEvenSecond: true,
+			BufferSize:        1000,
 		},
 		Logging: LoggingConfig{
 			Format: "console",
@@ -545,7 +539,6 @@ prometheus:
   pushIntervalSeconds: 15
   prometheusUrl: "https://example.com"
   prometheusUsername: "default-user"
-  metricName: "default_metric"
   bufferSize: 500
 logging:
   logFormat: "console"
@@ -559,11 +552,9 @@ logging:
 
 	// Set environment variables to override
 	os.Setenv("PROMETHEUS_USERNAME", "env-user")
-	os.Setenv("METRIC_NAME", "env_metric")
 	os.Setenv("BUFFER_SIZE", "2000")
 	defer func() {
 		os.Unsetenv("PROMETHEUS_USERNAME")
-		os.Unsetenv("METRIC_NAME")
 		os.Unsetenv("BUFFER_SIZE")
 	}()
 
@@ -575,10 +566,6 @@ logging:
 	// Verify environment variables override config file
 	if cfg.Prometheus.Username != "env-user" {
 		t.Errorf("Expected username 'env-user' from env, got %s", cfg.Prometheus.Username)
-	}
-
-	if cfg.Prometheus.MetricName != "env_metric" {
-		t.Errorf("Expected metric name 'env_metric' from env, got %s", cfg.Prometheus.MetricName)
 	}
 
 	if cfg.Prometheus.BufferSize != 2000 {
