@@ -15,7 +15,7 @@ ble:
 # Prometheus metrics push configuration
 prometheus:
   # Interval between metric pushes in seconds (minimum: 1)
-  pushIntervalSeconds: 60
+  pushIntervalSeconds: 30
 
   # Prometheus remote_write endpoint URL
   # For Grafana Cloud, use: https://prometheus-prod-XX-YY-ZZ.grafana.net/api/prom/push

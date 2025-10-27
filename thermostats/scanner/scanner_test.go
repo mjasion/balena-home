@@ -15,13 +15,13 @@ func TestNewScanner(t *testing.T) {
 
 	ringBuffer := buffer.New(100, logger)
 
-	sensorMACs := []string{
-		"A4:C1:38:00:00:01",
-		"A4:C1:38:00:00:02",
-		"a4:c1:38:00:00:03", // lowercase
+	sensors := []SensorConfig{
+		{Name: "Sensor1", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
+		{Name: "Sensor2", ID: 2, MACAddress: "A4:C1:38:00:00:02"},
+		{Name: "Sensor3", ID: 3, MACAddress: "a4:c1:38:00:00:03"}, // lowercase
 	}
 
-	scanner := NewScanner(sensorMACs, ringBuffer, logger)
+	scanner := New(sensors, ringBuffer, logger)
 
 	if scanner == nil {
 		t.Fatal("Expected scanner to be created, got nil")
@@ -45,21 +45,30 @@ func TestNewScanner(t *testing.T) {
 		t.Errorf("Expected %d sensor MACs, got %d", expectedMACCount, len(scanner.sensorMACs))
 	}
 
-	// Check uppercase normalization
-	if !scanner.sensorMACs["A4:C1:38:00:00:01"] {
+	// Check uppercase normalization and sensor info
+	sensorInfo1, ok := scanner.sensorMACs["A4:C1:38:00:00:01"]
+	if !ok {
 		t.Error("Expected A4:C1:38:00:00:01 to be in sensor map")
+	} else if sensorInfo1.Name != "Sensor1" || sensorInfo1.ID != 1 {
+		t.Errorf("Expected Sensor1 with ID 1, got %s with ID %d", sensorInfo1.Name, sensorInfo1.ID)
 	}
 
-	if !scanner.sensorMACs["A4:C1:38:00:00:02"] {
+	sensorInfo2, ok := scanner.sensorMACs["A4:C1:38:00:00:02"]
+	if !ok {
 		t.Error("Expected A4:C1:38:00:00:02 to be in sensor map")
+	} else if sensorInfo2.Name != "Sensor2" || sensorInfo2.ID != 2 {
+		t.Errorf("Expected Sensor2 with ID 2, got %s with ID %d", sensorInfo2.Name, sensorInfo2.ID)
 	}
 
-	if !scanner.sensorMACs["A4:C1:38:00:00:03"] {
+	sensorInfo3, ok := scanner.sensorMACs["A4:C1:38:00:00:03"]
+	if !ok {
 		t.Error("Expected A4:C1:38:00:00:03 (uppercase) to be in sensor map")
+	} else if sensorInfo3.Name != "Sensor3" || sensorInfo3.ID != 3 {
+		t.Errorf("Expected Sensor3 with ID 3, got %s with ID %d", sensorInfo3.Name, sensorInfo3.ID)
 	}
 
 	// Verify lowercase version is not in map (should be normalized)
-	if scanner.sensorMACs["a4:c1:38:00:00:03"] {
+	if _, ok := scanner.sensorMACs["a4:c1:38:00:00:03"]; ok {
 		t.Error("Did not expect lowercase MAC to be in sensor map")
 	}
 }
@@ -70,7 +79,7 @@ func TestNewScanner_EmptyMACList(t *testing.T) {
 
 	ringBuffer := buffer.New(100, logger)
 
-	scanner := NewScanner([]string{}, ringBuffer, logger)
+	scanner := New([]SensorConfig{}, ringBuffer, logger)
 
 	if scanner == nil {
 		t.Fatal("Expected scanner to be created, got nil")
@@ -88,27 +97,27 @@ func TestNewScanner_DuplicateMACs(t *testing.T) {
 	ringBuffer := buffer.New(100, logger)
 
 	// Include duplicates and case variations
-	sensorMACs := []string{
-		"A4:C1:38:00:00:01",
-		"A4:C1:38:00:00:01", // exact duplicate
-		"a4:c1:38:00:00:01", // case variation
-		"A4:C1:38:00:00:02",
+	sensors := []SensorConfig{
+		{Name: "Sensor1", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
+		{Name: "Sensor1Dup", ID: 2, MACAddress: "A4:C1:38:00:00:01"}, // exact duplicate MAC
+		{Name: "Sensor1Lower", ID: 3, MACAddress: "a4:c1:38:00:00:01"}, // case variation
+		{Name: "Sensor2", ID: 4, MACAddress: "A4:C1:38:00:00:02"},
 	}
 
-	scanner := NewScanner(sensorMACs, ringBuffer, logger)
+	scanner := New(sensors, ringBuffer, logger)
 
-	// Should only have 2 unique MACs (duplicates removed)
+	// Should only have 2 unique MACs (duplicates removed, last one wins)
 	expectedCount := 2
 	if len(scanner.sensorMACs) != expectedCount {
 		t.Errorf("Expected %d unique sensor MACs, got %d", expectedCount, len(scanner.sensorMACs))
 	}
 
-	// Verify both unique MACs are present
-	if !scanner.sensorMACs["A4:C1:38:00:00:01"] {
+	// Verify both unique MACs are present (last value for duplicate MAC wins)
+	if _, ok := scanner.sensorMACs["A4:C1:38:00:00:01"]; !ok {
 		t.Error("Expected A4:C1:38:00:00:01 to be in sensor map")
 	}
 
-	if !scanner.sensorMACs["A4:C1:38:00:00:02"] {
+	if _, ok := scanner.sensorMACs["A4:C1:38:00:00:02"]; !ok {
 		t.Error("Expected A4:C1:38:00:00:02 to be in sensor map")
 	}
 }
@@ -119,24 +128,24 @@ func TestNewScanner_MixedCaseMACs(t *testing.T) {
 
 	ringBuffer := buffer.New(100, logger)
 
-	sensorMACs := []string{
-		"a4:c1:38:00:00:01", // all lowercase
-		"A4:C1:38:00:00:02", // all uppercase
-		"A4:c1:38:00:00:03", // mixed case
+	sensors := []SensorConfig{
+		{Name: "Sensor1", ID: 1, MACAddress: "a4:c1:38:00:00:01"}, // all lowercase
+		{Name: "Sensor2", ID: 2, MACAddress: "A4:C1:38:00:00:02"}, // all uppercase
+		{Name: "Sensor3", ID: 3, MACAddress: "A4:c1:38:00:00:03"}, // mixed case
 	}
 
-	scanner := NewScanner(sensorMACs, ringBuffer, logger)
+	scanner := New(sensors, ringBuffer, logger)
 
 	// All should be normalized to uppercase
-	if !scanner.sensorMACs["A4:C1:38:00:00:01"] {
+	if _, ok := scanner.sensorMACs["A4:C1:38:00:00:01"]; !ok {
 		t.Error("Expected A4:C1:38:00:00:01 (normalized) to be in sensor map")
 	}
 
-	if !scanner.sensorMACs["A4:C1:38:00:00:02"] {
+	if _, ok := scanner.sensorMACs["A4:C1:38:00:00:02"]; !ok {
 		t.Error("Expected A4:C1:38:00:00:02 to be in sensor map")
 	}
 
-	if !scanner.sensorMACs["A4:C1:38:00:00:03"] {
+	if _, ok := scanner.sensorMACs["A4:C1:38:00:00:03"]; !ok {
 		t.Error("Expected A4:C1:38:00:00:03 (normalized) to be in sensor map")
 	}
 }
@@ -147,15 +156,19 @@ func TestNewScanner_LargeMACList(t *testing.T) {
 
 	ringBuffer := buffer.New(100, logger)
 
-	// Create a large list of sensor MACs
-	var sensorMACs []string
+	// Create a large list of sensor configs
+	var sensors []SensorConfig
 	for i := 0; i < 100; i++ {
 		// Generate unique MACs by varying the last byte
 		mac := fmt.Sprintf("A4:C1:38:00:%02X:%02X", i/256, i%256)
-		sensorMACs = append(sensorMACs, mac)
+		sensors = append(sensors, SensorConfig{
+			Name:       fmt.Sprintf("Sensor%d", i),
+			ID:         i,
+			MACAddress: mac,
+		})
 	}
 
-	scanner := NewScanner(sensorMACs, ringBuffer, logger)
+	scanner := New(sensors, ringBuffer, logger)
 
 	if scanner == nil {
 		t.Fatal("Expected scanner to be created, got nil")
@@ -177,9 +190,11 @@ func TestScanner_Structure(t *testing.T) {
 	defer logger.Sync()
 
 	ringBuffer := buffer.New(100, logger)
-	sensorMACs := []string{"A4:C1:38:00:00:01"}
+	sensors := []SensorConfig{
+		{Name: "Sensor1", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
+	}
 
-	scanner := NewScanner(sensorMACs, ringBuffer, logger)
+	scanner := New(sensors, ringBuffer, logger)
 
 	// Verify scanner has all required fields
 	if scanner.adapter == nil {
@@ -206,12 +221,12 @@ func TestScanner_MACFiltering(t *testing.T) {
 	ringBuffer := buffer.New(100, logger)
 
 	// Only allow specific MACs
-	allowedMACs := []string{
-		"A4:C1:38:00:00:01",
-		"A4:C1:38:00:00:02",
+	sensors := []SensorConfig{
+		{Name: "Sensor1", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
+		{Name: "Sensor2", ID: 2, MACAddress: "A4:C1:38:00:00:02"},
 	}
 
-	scanner := NewScanner(allowedMACs, ringBuffer, logger)
+	scanner := New(sensors, ringBuffer, logger)
 
 	// Test that allowed MACs are in the map
 	testCases := []struct {
@@ -228,7 +243,7 @@ func TestScanner_MACFiltering(t *testing.T) {
 
 	for _, tc := range testCases {
 		mac := strings.ToUpper(tc.mac)
-		result := scanner.sensorMACs[mac]
+		_, result := scanner.sensorMACs[mac]
 		if result != tc.expected {
 			t.Errorf("For MAC %s (normalized: %s), expected %v, got %v",
 				tc.mac, mac, tc.expected, result)
