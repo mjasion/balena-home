@@ -13,6 +13,7 @@ import (
 	"github.com/mjasion/balena-home/thermostats/buffer"
 	"github.com/mjasion/balena-home/thermostats/config"
 	"github.com/mjasion/balena-home/thermostats/metrics"
+	"github.com/mjasion/balena-home/thermostats/netatmo"
 	"github.com/mjasion/balena-home/thermostats/scanner"
 	"go.uber.org/zap"
 )
@@ -49,6 +50,9 @@ func main() {
 		cfg.Prometheus.URL,
 		cfg.Prometheus.Username,
 		cfg.Prometheus.Password,
+		ringBuffer,
+		cfg.Prometheus.PushIntervalSeconds,
+		cfg.Prometheus.BatchSize,
 		logger,
 	)
 	logger.Info("prometheus pusher initialized", zap.String("url", cfg.Prometheus.URL))
@@ -86,6 +90,32 @@ func main() {
 		}
 	}()
 
+	// Start Netatmo poller if enabled
+	if cfg.Netatmo.Enabled {
+		logger.Info("netatmo integration enabled, starting poller")
+
+		netatmoFetcher := netatmo.NewFetcher(
+			cfg.Netatmo.ClientID,
+			cfg.Netatmo.ClientSecret,
+			cfg.Netatmo.RefreshToken,
+		)
+
+		netatmoPoller := netatmo.NewPoller(
+			netatmoFetcher,
+			ringBuffer,
+			cfg.Netatmo.FetchInterval,
+			logger,
+		)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			netatmoPoller.Start(ctx)
+		}()
+	} else {
+		logger.Info("netatmo integration disabled")
+	}
+
 	// Wait for START_AT_EVEN_SECOND if configured
 	if cfg.Prometheus.StartAtEvenSecond {
 		now := time.Now()
@@ -98,46 +128,11 @@ func main() {
 		time.Sleep(waitDuration)
 	}
 
-	// Start Prometheus pusher goroutine
+	// Start Prometheus pusher
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ticker := time.NewTicker(time.Duration(cfg.Prometheus.PushIntervalSeconds) * time.Second)
-		defer ticker.Stop()
-
-		logger.Info("prometheus pusher started",
-			zap.Int("push_interval_seconds", cfg.Prometheus.PushIntervalSeconds),
-		)
-
-		for {
-			select {
-			case <-ctx.Done():
-				logger.Info("prometheus pusher stopping")
-				return
-			case <-ticker.C:
-				// Get all readings from buffer
-				readings := ringBuffer.GetAll()
-				if len(readings) > 0 {
-					logger.Debug("pushing metrics to prometheus",
-						zap.Int("reading_count", len(readings)),
-					)
-
-					err := pusher.Push(ctx, readings)
-					if err != nil {
-						logger.Error("failed to push metrics",
-							zap.Error(err),
-							zap.Int("reading_count", len(readings)),
-						)
-					} else {
-						// Clear buffer after successful push
-						ringBuffer.Clear()
-						logger.Debug("buffer cleared after successful push")
-					}
-				} else {
-					logger.Debug("no readings to push")
-				}
-			}
-		}
+		pusher.Start(ctx)
 	}()
 
 	// Wait for shutdown signal

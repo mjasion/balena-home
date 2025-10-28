@@ -13,6 +13,7 @@ import (
 // Config represents the application configuration
 type Config struct {
 	BLE        BLEConfig        `yaml:"ble"`
+	Netatmo    NetatmoConfig    `yaml:"netatmo"`
 	Prometheus PrometheusConfig `yaml:"prometheus"`
 	Logging    LoggingConfig    `yaml:"logging"`
 }
@@ -29,6 +30,15 @@ type SensorConfig struct {
 	MACAddress string `yaml:"macAddress"`
 }
 
+// NetatmoConfig contains Netatmo API configuration
+type NetatmoConfig struct {
+	Enabled       bool   `yaml:"enabled" env:"NETATMO_ENABLED" env-default:"false"`
+	ClientID      string `yaml:"clientId" env:"NETATMO_CLIENT_ID"`
+	ClientSecret  string `yaml:"clientSecret" env:"NETATMO_CLIENT_SECRET"`
+	RefreshToken  string `yaml:"refreshToken" env:"NETATMO_REFRESH_TOKEN"`
+	FetchInterval int    `yaml:"fetchIntervalSeconds" env:"NETATMO_FETCH_INTERVAL" env-default:"60"`
+}
+
 // PrometheusConfig contains Prometheus metrics push configuration
 type PrometheusConfig struct {
 	PushIntervalSeconds int    `yaml:"pushIntervalSeconds" env:"PUSH_INTERVAL_SECONDS" env-default:"15"`
@@ -37,6 +47,7 @@ type PrometheusConfig struct {
 	Password            string `yaml:"prometheusPassword" env:"PROMETHEUS_PASSWORD"`
 	StartAtEvenSecond   bool   `yaml:"startAtEvenSecond" env:"START_AT_EVEN_SECOND" env-default:"true"`
 	BufferSize          int    `yaml:"bufferSize" env:"BUFFER_SIZE" env-default:"1000"`
+	BatchSize           int    `yaml:"batchSize" env:"BATCH_SIZE" env-default:"1000"`
 }
 
 // LoggingConfig contains logging configuration
@@ -100,6 +111,22 @@ func (c *Config) Validate() error {
 		seenMACs[macUpper] = true
 	}
 
+	// Validate Netatmo configuration if enabled
+	if c.Netatmo.Enabled {
+		if c.Netatmo.ClientID == "" {
+			return fmt.Errorf("netatmo client ID is required when Netatmo is enabled")
+		}
+		if c.Netatmo.ClientSecret == "" {
+			return fmt.Errorf("netatmo client secret is required when Netatmo is enabled")
+		}
+		if c.Netatmo.RefreshToken == "" {
+			return fmt.Errorf("netatmo refresh token is required when Netatmo is enabled")
+		}
+		if c.Netatmo.FetchInterval < 1 {
+			return fmt.Errorf("netatmo fetch interval must be at least 1 second")
+		}
+	}
+
 	// Validate Prometheus URL
 	if c.Prometheus.URL == "" {
 		return fmt.Errorf("prometheus URL is required")
@@ -117,6 +144,11 @@ func (c *Config) Validate() error {
 	// Validate buffer size
 	if c.Prometheus.BufferSize < 1 {
 		return fmt.Errorf("buffer size must be at least 1")
+	}
+
+	// Validate batch size
+	if c.Prometheus.BatchSize < 1 {
+		return fmt.Errorf("batch size must be at least 1")
 	}
 
 	// Validate log format
@@ -204,12 +236,16 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 	logger.Info("configuration loaded",
 		zap.Int("sensor_count", len(c.BLE.Sensors)),
 		zap.Strings("sensors", sensorInfo),
+		zap.Bool("netatmo_enabled", c.Netatmo.Enabled),
+		zap.Bool("netatmo_configured", c.Netatmo.ClientID != "" && c.Netatmo.RefreshToken != ""),
+		zap.Int("netatmo_fetch_interval_seconds", c.Netatmo.FetchInterval),
 		zap.Int("push_interval_seconds", c.Prometheus.PushIntervalSeconds),
 		zap.String("prometheus_url", c.Prometheus.URL),
 		zap.String("prometheus_username", c.Prometheus.Username),
 		zap.Bool("prometheus_password_set", c.Prometheus.Password != ""),
 		zap.Bool("start_at_even_second", c.Prometheus.StartAtEvenSecond),
 		zap.Int("buffer_size", c.Prometheus.BufferSize),
+		zap.Int("batch_size", c.Prometheus.BatchSize),
 		zap.String("log_format", c.Logging.Format),
 		zap.String("log_level", c.Logging.Level),
 	)

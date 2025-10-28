@@ -13,9 +13,12 @@ func TestRingBuffer_AddAndGet(t *testing.T) {
 
 	// Add some readings
 	for i := 0; i < 3; i++ {
-		reading := &SensorReading{
-			MAC:                "A4:C1:38:00:00:00",
-			TemperatureCelsius: float64(20 + i),
+		reading := &Reading{
+			Type: ReadingTypeBLE,
+			BLE: &SensorReading{
+				MAC:                "A4:C1:38:00:00:00",
+				TemperatureCelsius: float64(20 + i),
+			},
 		}
 		rb.Add(reading)
 	}
@@ -34,8 +37,8 @@ func TestRingBuffer_AddAndGet(t *testing.T) {
 	// Verify readings are in correct order
 	for i, reading := range readings {
 		expectedTemp := float64(20 + i)
-		if reading.TemperatureCelsius != expectedTemp {
-			t.Errorf("reading %d: expected temp %.1f, got %.1f", i, expectedTemp, reading.TemperatureCelsius)
+		if reading.BLE.TemperatureCelsius != expectedTemp {
+			t.Errorf("reading %d: expected temp %.1f, got %.1f", i, expectedTemp, reading.BLE.TemperatureCelsius)
 		}
 	}
 }
@@ -46,9 +49,12 @@ func TestRingBuffer_Overflow(t *testing.T) {
 
 	// Add more readings than capacity
 	for i := 0; i < 5; i++ {
-		reading := &SensorReading{
-			MAC:                "A4:C1:38:00:00:00",
-			TemperatureCelsius: float64(20 + i),
+		reading := &Reading{
+			Type: ReadingTypeBLE,
+			BLE: &SensorReading{
+				MAC:                "A4:C1:38:00:00:00",
+				TemperatureCelsius: float64(20 + i),
+			},
 		}
 		rb.Add(reading)
 	}
@@ -67,37 +73,58 @@ func TestRingBuffer_Overflow(t *testing.T) {
 	// Verify we kept the newest readings (temp 22, 23, 24)
 	expectedTemps := []float64{22, 23, 24}
 	for i, reading := range readings {
-		if reading.TemperatureCelsius != expectedTemps[i] {
-			t.Errorf("reading %d: expected temp %.1f, got %.1f", i, expectedTemps[i], reading.TemperatureCelsius)
+		if reading.BLE.TemperatureCelsius != expectedTemps[i] {
+			t.Errorf("reading %d: expected temp %.1f, got %.1f", i, expectedTemps[i], reading.BLE.TemperatureCelsius)
 		}
 	}
 }
 
-func TestRingBuffer_Clear(t *testing.T) {
+func TestRingBuffer_GetAllAndClear(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(5, logger)
 
 	// Add some readings
 	for i := 0; i < 3; i++ {
-		reading := &SensorReading{
-			MAC:                "A4:C1:38:00:00:00",
-			TemperatureCelsius: float64(20 + i),
+		reading := &Reading{
+			Type: ReadingTypeBLE,
+			BLE: &SensorReading{
+				MAC:                "A4:C1:38:00:00:00",
+				TemperatureCelsius: float64(20 + i),
+			},
 		}
 		rb.Add(reading)
 	}
 
-	// Clear buffer
-	rb.Clear()
-
-	// Check size
-	if rb.Size() != 0 {
-		t.Errorf("expected size 0 after clear, got %d", rb.Size())
+	// Check size before
+	if rb.Size() != 3 {
+		t.Errorf("expected size 3 before GetAllAndClear, got %d", rb.Size())
 	}
 
-	// Get all readings (should be empty)
-	readings := rb.GetAll()
-	if len(readings) != 0 {
-		t.Errorf("expected 0 readings after clear, got %d", len(readings))
+	// Get all and clear atomically
+	readings := rb.GetAllAndClear()
+
+	// Check returned readings
+	if len(readings) != 3 {
+		t.Errorf("expected 3 readings from GetAllAndClear, got %d", len(readings))
+	}
+
+	// Verify readings are correct
+	for i, reading := range readings {
+		expectedTemp := float64(20 + i)
+		if reading.BLE.TemperatureCelsius != expectedTemp {
+			t.Errorf("reading %d: expected temp %.1f, got %.1f", i, expectedTemp, reading.BLE.TemperatureCelsius)
+		}
+	}
+
+	// Check size after - should be 0
+	if rb.Size() != 0 {
+		t.Errorf("expected size 0 after GetAllAndClear, got %d", rb.Size())
+	}
+
+	// Verify buffer is truly empty
+	readingsAfter := rb.GetAll()
+	if len(readingsAfter) != 0 {
+		t.Errorf("expected 0 readings after GetAllAndClear, got %d", len(readingsAfter))
 	}
 }
 
@@ -113,9 +140,12 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			for j := 0; j < 10; j++ {
-				reading := &SensorReading{
-					MAC:                "A4:C1:38:00:00:00",
-					TemperatureCelsius: float64(id*10 + j),
+				reading := &Reading{
+					Type: ReadingTypeBLE,
+					BLE: &SensorReading{
+						MAC:                "A4:C1:38:00:00:00",
+						TemperatureCelsius: float64(id*10 + j),
+					},
 				}
 				rb.Add(reading)
 			}

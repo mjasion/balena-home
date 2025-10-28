@@ -11,11 +11,29 @@ import (
 	"go.uber.org/zap"
 )
 
+// Helper function to wrap BLE sensor readings in Reading struct for tests
+func wrapBLEReadings(sensorReadings []*buffer.SensorReading) []*buffer.Reading {
+	readings := make([]*buffer.Reading, len(sensorReadings))
+	for i, sr := range sensorReadings {
+		readings[i] = &buffer.Reading{
+			Type: buffer.ReadingTypeBLE,
+			BLE:  sr,
+		}
+	}
+	return readings
+}
+
+// Helper function to create a test pusher
+func newTestPusher(url, username, password string, logger *zap.Logger) *Pusher {
+	buf := buffer.New(1000, logger)
+	return New(url, username, password, buf, 30, 1000, logger)
+}
+
 func TestNew(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New(
+	pusher := newTestPusher(
 		"https://example.com/api/push",
 		"test-user",
 		"test-password",
@@ -47,9 +65,9 @@ func TestPush_EmptyReadings(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New("https://example.com", "user", "pass", logger)
+	pusher := newTestPusher("https://example.com", "user", "pass", logger)
 
-	err := pusher.Push(context.Background(), []*buffer.SensorReading{})
+	err := pusher.Push(context.Background(), wrapBLEReadings([]*buffer.SensorReading{}))
 	if err != nil {
 		t.Errorf("Expected no error for empty readings, got: %v", err)
 	}
@@ -94,7 +112,7 @@ func TestPush_Success(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New(server.URL, "test-user", "test-password", logger)
+	pusher := newTestPusher(server.URL, "test-user", "test-password", logger)
 
 	// Create test readings
 	readings := []*buffer.SensorReading{
@@ -120,7 +138,7 @@ func TestPush_Success(t *testing.T) {
 		},
 	}
 
-	err := pusher.Push(context.Background(), readings)
+	err := pusher.Push(context.Background(), wrapBLEReadings(readings))
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -139,7 +157,7 @@ func TestPush_MultipleSensors(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New(server.URL, "user", "pass", logger)
+	pusher := newTestPusher(server.URL, "user", "pass", logger)
 
 	// Create readings from multiple sensors
 	readings := []*buffer.SensorReading{
@@ -175,7 +193,7 @@ func TestPush_MultipleSensors(t *testing.T) {
 		},
 	}
 
-	err := pusher.Push(context.Background(), readings)
+	err := pusher.Push(context.Background(), wrapBLEReadings(readings))
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -192,7 +210,7 @@ func TestPush_ServerError(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New(server.URL, "user", "pass", logger)
+	pusher := newTestPusher(server.URL, "user", "pass", logger)
 
 	readings := []*buffer.SensorReading{
 		{
@@ -202,7 +220,7 @@ func TestPush_ServerError(t *testing.T) {
 		},
 	}
 
-	err := pusher.Push(context.Background(), readings)
+	err := pusher.Push(context.Background(), wrapBLEReadings(readings))
 	if err == nil {
 		t.Fatal("Expected error for server error, got nil")
 	}
@@ -224,7 +242,7 @@ func TestPush_WithRetries(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New(server.URL, "user", "pass", logger)
+	pusher := newTestPusher(server.URL, "user", "pass", logger)
 
 	readings := []*buffer.SensorReading{
 		{
@@ -234,7 +252,7 @@ func TestPush_WithRetries(t *testing.T) {
 		},
 	}
 
-	err := pusher.Push(context.Background(), readings)
+	err := pusher.Push(context.Background(), wrapBLEReadings(readings))
 	if err != nil {
 		t.Fatalf("Expected success after retries, got: %v", err)
 	}
@@ -254,7 +272,7 @@ func TestPush_MaxRetriesExceeded(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New(server.URL, "user", "pass", logger)
+	pusher := newTestPusher(server.URL, "user", "pass", logger)
 
 	readings := []*buffer.SensorReading{
 		{
@@ -264,7 +282,7 @@ func TestPush_MaxRetriesExceeded(t *testing.T) {
 		},
 	}
 
-	err := pusher.Push(context.Background(), readings)
+	err := pusher.Push(context.Background(), wrapBLEReadings(readings))
 	if err == nil {
 		t.Fatal("Expected error after max retries, got nil")
 	}
@@ -281,7 +299,7 @@ func TestPush_ContextCancellation(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New(server.URL, "user", "pass", logger)
+	pusher := newTestPusher(server.URL, "user", "pass", logger)
 
 	readings := []*buffer.SensorReading{
 		{
@@ -295,7 +313,7 @@ func TestPush_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	err := pusher.Push(ctx, readings)
+	err := pusher.Push(ctx, wrapBLEReadings(readings))
 	if err == nil {
 		t.Fatal("Expected error for context cancellation, got nil")
 	}
@@ -305,7 +323,7 @@ func TestBuildWriteRequest(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New("https://example.com", "user", "pass", logger)
+	pusher := newTestPusher("https://example.com", "user", "pass", logger)
 
 	now := time.Now()
 	readings := []*buffer.SensorReading{
@@ -338,7 +356,7 @@ func TestBuildWriteRequest(t *testing.T) {
 		},
 	}
 
-	writeReq, err := pusher.buildWriteRequest(readings)
+	writeReq, err := pusher.buildWriteRequest(wrapBLEReadings(readings))
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -412,32 +430,11 @@ func TestBuildWriteRequest(t *testing.T) {
 	}
 }
 
-func TestCountUniqueSensors(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	defer logger.Sync()
-
-	pusher := New("https://example.com", "user", "pass", logger)
-
-	readings := []*buffer.SensorReading{
-		{MAC: "A4:C1:38:00:00:01"},
-		{MAC: "A4:C1:38:00:00:01"},
-		{MAC: "A4:C1:38:00:00:02"},
-		{MAC: "A4:C1:38:00:00:03"},
-		{MAC: "A4:C1:38:00:00:02"},
-	}
-
-	count := pusher.countUniqueSensors(readings)
-	expectedCount := 3
-	if count != expectedCount {
-		t.Errorf("Expected %d unique sensors, got %d", expectedCount, count)
-	}
-}
-
 func TestLastPushTime(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	pusher := New("https://example.com", "user", "pass", logger)
+	pusher := newTestPusher("https://example.com", "user", "pass", logger)
 
 	// Initial last push time should be recent
 	lastPush := pusher.LastPushTime()
@@ -464,7 +461,7 @@ func TestLastPushTime(t *testing.T) {
 	// Wait a bit to ensure time difference
 	time.Sleep(10 * time.Millisecond)
 
-	err := pusher.Push(context.Background(), readings)
+	err := pusher.Push(context.Background(), wrapBLEReadings(readings))
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -488,7 +485,7 @@ func TestPush_NoBasicAuth(t *testing.T) {
 	defer logger.Sync()
 
 	// Create pusher with empty credentials
-	pusher := New(server.URL, "", "", logger)
+	pusher := newTestPusher(server.URL, "", "", logger)
 
 	readings := []*buffer.SensorReading{
 		{
@@ -498,7 +495,7 @@ func TestPush_NoBasicAuth(t *testing.T) {
 		},
 	}
 
-	err := pusher.Push(context.Background(), readings)
+	err := pusher.Push(context.Background(), wrapBLEReadings(readings))
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}

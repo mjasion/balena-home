@@ -107,17 +107,20 @@ func (s *Scanner) Start(ctx context.Context) error {
 				}
 
 				// Add to buffer
-				bufReading := &buffer.SensorReading{
-					Timestamp:          reading.Timestamp,
-					MAC:                reading.MAC,
-					SensorName:         sensorInfo.Name,
-					SensorID:           sensorInfo.ID,
-					TemperatureCelsius: reading.TemperatureCelsius,
-					HumidityPercent:    reading.HumidityPercent,
-					BatteryPercent:     reading.BatteryPercent,
-					BatteryVoltageMV:   reading.BatteryVoltageMV,
-					FrameCounter:       reading.FrameCounter,
-					RSSI:               reading.RSSI,
+				bufReading := &buffer.Reading{
+					Type: buffer.ReadingTypeBLE,
+					BLE: &buffer.SensorReading{
+						Timestamp:          reading.Timestamp,
+						MAC:                reading.MAC,
+						SensorName:         sensorInfo.Name,
+						SensorID:           sensorInfo.ID,
+						TemperatureCelsius: reading.TemperatureCelsius,
+						HumidityPercent:    reading.HumidityPercent,
+						BatteryPercent:     reading.BatteryPercent,
+						BatteryVoltageMV:   reading.BatteryVoltageMV,
+						FrameCounter:       reading.FrameCounter,
+						RSSI:               reading.RSSI,
+					},
 				}
 				s.buffer.Add(bufReading)
 
