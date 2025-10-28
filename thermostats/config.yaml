@@ -54,7 +54,11 @@ prometheus:
   startAtEvenSecond: true
 
   # Ring buffer size (number of readings to buffer before push)
-  bufferSize: 10000
+  bufferSize: 100000
+
+  # Batch size for pushing metrics (number of readings per batch, default: 1000)
+  # Larger batches are more efficient but may hit size limits on the receiving end
+  batchSize: 1000
 
 # Logging configuration
 logging:

@@ -131,6 +131,7 @@ func TestValidate_MissingRequiredFields(t *testing.T) {
 					URL:                 "https://example.com",
 					Username:            "test",
 					BufferSize:          1000,
+				BatchSize:           1000,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
@@ -152,6 +153,7 @@ func TestValidate_MissingRequiredFields(t *testing.T) {
 					URL:                 "",
 					Username:            "test",
 					BufferSize:          1000,
+				BatchSize:           1000,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
@@ -173,6 +175,7 @@ func TestValidate_MissingRequiredFields(t *testing.T) {
 					URL:                 "https://example.com",
 					Username:            "",
 					BufferSize:          1000,
+				BatchSize:           1000,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
@@ -225,6 +228,7 @@ func TestValidate_InvalidMACAddress(t *testing.T) {
 					URL:                 "https://example.com",
 					Username:            "test",
 					BufferSize:          1000,
+				BatchSize:           1000,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
@@ -269,6 +273,7 @@ func TestValidate_PushInterval(t *testing.T) {
 					URL:                 "https://example.com",
 					Username:            "test",
 					BufferSize:          1000,
+				BatchSize:           1000,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
@@ -317,6 +322,7 @@ func TestValidate_BufferSize(t *testing.T) {
 					URL:                 "https://example.com",
 					Username:            "test",
 					BufferSize:          tt.bufferCapacity,
+				BatchSize:           1000,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
@@ -362,6 +368,7 @@ func TestValidate_LogFormat(t *testing.T) {
 					URL:                 "https://example.com",
 					Username:            "test",
 					BufferSize:          1000,
+				BatchSize:           1000,
 				},
 				Logging: LoggingConfig{
 					Format: tt.format,
@@ -409,6 +416,7 @@ func TestValidate_LogLevel(t *testing.T) {
 					URL:                 "https://example.com",
 					Username:            "test",
 					BufferSize:          1000,
+				BatchSize:           1000,
 				},
 				Logging: LoggingConfig{
 					Format: "console",
@@ -510,6 +518,7 @@ func TestPrintConfig(t *testing.T) {
 			Password:          "secret",
 			StartAtEvenSecond: true,
 			BufferSize:        1000,
+		BatchSize:         1000,
 		},
 		Logging: LoggingConfig{
 			Format: "console",

@@ -47,6 +47,7 @@ type PrometheusConfig struct {
 	Password            string `yaml:"prometheusPassword" env:"PROMETHEUS_PASSWORD"`
 	StartAtEvenSecond   bool   `yaml:"startAtEvenSecond" env:"START_AT_EVEN_SECOND" env-default:"true"`
 	BufferSize          int    `yaml:"bufferSize" env:"BUFFER_SIZE" env-default:"1000"`
+	BatchSize           int    `yaml:"batchSize" env:"BATCH_SIZE" env-default:"1000"`
 }
 
 // LoggingConfig contains logging configuration
@@ -145,6 +146,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("buffer size must be at least 1")
 	}
 
+	// Validate batch size
+	if c.Prometheus.BatchSize < 1 {
+		return fmt.Errorf("batch size must be at least 1")
+	}
+
 	// Validate log format
 	c.Logging.Format = strings.ToLower(c.Logging.Format)
 	if c.Logging.Format != "console" && c.Logging.Format != "json" {
@@ -239,6 +245,7 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.Bool("prometheus_password_set", c.Prometheus.Password != ""),
 		zap.Bool("start_at_even_second", c.Prometheus.StartAtEvenSecond),
 		zap.Int("buffer_size", c.Prometheus.BufferSize),
+		zap.Int("batch_size", c.Prometheus.BatchSize),
 		zap.String("log_format", c.Logging.Format),
 		zap.String("log_level", c.Logging.Level),
 	)

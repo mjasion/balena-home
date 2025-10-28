@@ -52,6 +52,7 @@ func main() {
 		cfg.Prometheus.Password,
 		ringBuffer,
 		cfg.Prometheus.PushIntervalSeconds,
+		cfg.Prometheus.BatchSize,
 		logger,
 	)
 	logger.Info("prometheus pusher initialized", zap.String("url", cfg.Prometheus.URL))

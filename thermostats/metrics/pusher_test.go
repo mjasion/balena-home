@@ -26,7 +26,7 @@ func wrapBLEReadings(sensorReadings []*buffer.SensorReading) []*buffer.Reading {
 // Helper function to create a test pusher
 func newTestPusher(url, username, password string, logger *zap.Logger) *Pusher {
 	buf := buffer.New(1000, logger)
-	return New(url, username, password, buf, 30, logger)
+	return New(url, username, password, buf, 30, 1000, logger)
 }
 
 func TestNew(t *testing.T) {

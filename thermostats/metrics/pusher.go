@@ -25,10 +25,11 @@ type Pusher struct {
 	lastPush     time.Time
 	buffer       *buffer.RingBuffer
 	pushInterval time.Duration
+	batchSize    int
 }
 
 // New creates a new Prometheus pusher
-func New(url, username, password string, buf *buffer.RingBuffer, pushIntervalSeconds int, logger *zap.Logger) *Pusher {
+func New(url, username, password string, buf *buffer.RingBuffer, pushIntervalSeconds, batchSize int, logger *zap.Logger) *Pusher {
 	return &Pusher{
 		url:          url,
 		username:     username,
@@ -40,6 +41,7 @@ func New(url, username, password string, buf *buffer.RingBuffer, pushIntervalSec
 		lastPush:     time.Now(),
 		buffer:       buf,
 		pushInterval: time.Duration(pushIntervalSeconds) * time.Second,
+		batchSize:    batchSize,
 	}
 }
 
@@ -50,6 +52,7 @@ func (p *Pusher) Start(ctx context.Context) {
 
 	p.logger.Info("prometheus pusher started",
 		zap.Duration("push_interval", p.pushInterval),
+		zap.Int("batch_size", p.batchSize),
 	)
 
 	for {
@@ -60,24 +63,48 @@ func (p *Pusher) Start(ctx context.Context) {
 		case <-ticker.C:
 			// Get all readings and clear buffer atomically
 			readings := p.buffer.GetAllAndClear()
-			if len(readings) > 0 {
-				p.logger.Debug("pushing metrics to prometheus",
-					zap.Int("reading_count", len(readings)),
+			if len(readings) == 0 {
+				p.logger.Debug("no readings to push")
+				continue
+			}
+
+			p.logger.Debug("pushing metrics to prometheus",
+				zap.Int("total_readings", len(readings)),
+				zap.Int("batch_size", p.batchSize),
+			)
+
+			// Process readings in batches
+			totalBatches := (len(readings) + p.batchSize - 1) / p.batchSize
+			for batchNum := 0; batchNum < totalBatches; batchNum++ {
+				start := batchNum * p.batchSize
+				end := start + p.batchSize
+				if end > len(readings) {
+					end = len(readings)
+				}
+				batch := readings[start:end]
+
+				p.logger.Debug("pushing batch",
+					zap.Int("batch_number", batchNum+1),
+					zap.Int("total_batches", totalBatches),
+					zap.Int("batch_readings", len(batch)),
 				)
 
-				err := p.Push(ctx, readings)
+				err := p.Push(ctx, batch)
 				if err != nil {
-					p.logger.Error("failed to push metrics, re-adding to buffer for retry",
+					p.logger.Error("failed to push batch, re-adding remaining readings to buffer",
 						zap.Error(err),
-						zap.Int("reading_count", len(readings)),
+						zap.Int("batch_number", batchNum+1),
+						zap.Int("failed_readings", len(readings)-start),
 					)
-					// Re-add readings to buffer for next attempt
-					p.buffer.AddMultiple(readings)
-				} else {
-					p.logger.Debug("successfully pushed metrics")
+					// Re-add the failed batch and all remaining batches
+					p.buffer.AddMultiple(readings[start:])
+					break
 				}
-			} else {
-				p.logger.Debug("no readings to push")
+
+				p.logger.Debug("successfully pushed batch",
+					zap.Int("batch_number", batchNum+1),
+					zap.Int("batch_readings", len(batch)),
+				)
 			}
 		}
 	}
