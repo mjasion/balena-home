@@ -167,3 +167,33 @@ func (rb *RingBuffer) Clear() {
 	rb.head = 0
 	rb.data = make([]*Reading, rb.capacity)
 }
+
+// AddMultiple adds multiple readings to the buffer at once
+// Useful for re-adding readings after a failed push attempt
+func (rb *RingBuffer) AddMultiple(readings []*Reading) {
+	if len(readings) == 0 {
+		return
+	}
+
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+
+	for _, reading := range readings {
+		// Check if we're about to overwrite data
+		if rb.size == rb.capacity {
+			rb.logger.Warn("ring buffer full during AddMultiple, overwriting oldest data",
+				zap.Int("capacity", rb.capacity),
+				zap.String("overwritten_type", string(rb.data[rb.head].Type)),
+			)
+		}
+
+		// Add the reading
+		rb.data[rb.head] = reading
+		rb.head = (rb.head + 1) % rb.capacity
+
+		// Update size
+		if rb.size < rb.capacity {
+			rb.size++
+		}
+	}
+}
