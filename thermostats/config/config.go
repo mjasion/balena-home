@@ -13,6 +13,7 @@ import (
 // Config represents the application configuration
 type Config struct {
 	BLE        BLEConfig        `yaml:"ble"`
+	Netatmo    NetatmoConfig    `yaml:"netatmo"`
 	Prometheus PrometheusConfig `yaml:"prometheus"`
 	Logging    LoggingConfig    `yaml:"logging"`
 }
@@ -27,6 +28,15 @@ type SensorConfig struct {
 	Name       string `yaml:"name"`
 	ID         int    `yaml:"id"`
 	MACAddress string `yaml:"macAddress"`
+}
+
+// NetatmoConfig contains Netatmo API configuration
+type NetatmoConfig struct {
+	Enabled       bool   `yaml:"enabled" env:"NETATMO_ENABLED" env-default:"false"`
+	ClientID      string `yaml:"clientId" env:"NETATMO_CLIENT_ID"`
+	ClientSecret  string `yaml:"clientSecret" env:"NETATMO_CLIENT_SECRET"`
+	RefreshToken  string `yaml:"refreshToken" env:"NETATMO_REFRESH_TOKEN"`
+	FetchInterval int    `yaml:"fetchIntervalSeconds" env:"NETATMO_FETCH_INTERVAL" env-default:"60"`
 }
 
 // PrometheusConfig contains Prometheus metrics push configuration
@@ -98,6 +108,22 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("sensor %s: duplicate MAC address %s", sensor.Name, sensor.MACAddress)
 		}
 		seenMACs[macUpper] = true
+	}
+
+	// Validate Netatmo configuration if enabled
+	if c.Netatmo.Enabled {
+		if c.Netatmo.ClientID == "" {
+			return fmt.Errorf("netatmo client ID is required when Netatmo is enabled")
+		}
+		if c.Netatmo.ClientSecret == "" {
+			return fmt.Errorf("netatmo client secret is required when Netatmo is enabled")
+		}
+		if c.Netatmo.RefreshToken == "" {
+			return fmt.Errorf("netatmo refresh token is required when Netatmo is enabled")
+		}
+		if c.Netatmo.FetchInterval < 1 {
+			return fmt.Errorf("netatmo fetch interval must be at least 1 second")
+		}
 	}
 
 	// Validate Prometheus URL
@@ -204,6 +230,9 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 	logger.Info("configuration loaded",
 		zap.Int("sensor_count", len(c.BLE.Sensors)),
 		zap.Strings("sensors", sensorInfo),
+		zap.Bool("netatmo_enabled", c.Netatmo.Enabled),
+		zap.Bool("netatmo_configured", c.Netatmo.ClientID != "" && c.Netatmo.RefreshToken != ""),
+		zap.Int("netatmo_fetch_interval_seconds", c.Netatmo.FetchInterval),
 		zap.Int("push_interval_seconds", c.Prometheus.PushIntervalSeconds),
 		zap.String("prometheus_url", c.Prometheus.URL),
 		zap.String("prometheus_username", c.Prometheus.Username),

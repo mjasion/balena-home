@@ -17,30 +17,74 @@ import (
 
 // Pusher handles pushing metrics to Prometheus remote_write endpoint
 type Pusher struct {
-	url      string
-	username string
-	password string
-	client   *http.Client
-	logger   *zap.Logger
-	lastPush time.Time
+	url          string
+	username     string
+	password     string
+	client       *http.Client
+	logger       *zap.Logger
+	lastPush     time.Time
+	buffer       *buffer.RingBuffer
+	pushInterval time.Duration
 }
 
 // New creates a new Prometheus pusher
-func New(url, username, password string, logger *zap.Logger) *Pusher {
+func New(url, username, password string, buf *buffer.RingBuffer, pushIntervalSeconds int, logger *zap.Logger) *Pusher {
 	return &Pusher{
-		url:      url,
-		username: username,
-		password: password,
+		url:          url,
+		username:     username,
+		password:     password,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		logger:   logger,
-		lastPush: time.Now(),
+		logger:       logger,
+		lastPush:     time.Now(),
+		buffer:       buf,
+		pushInterval: time.Duration(pushIntervalSeconds) * time.Second,
+	}
+}
+
+// Start begins the periodic metrics pushing in a goroutine
+func (p *Pusher) Start(ctx context.Context) {
+	ticker := time.NewTicker(p.pushInterval)
+	defer ticker.Stop()
+
+	p.logger.Info("prometheus pusher started",
+		zap.Duration("push_interval", p.pushInterval),
+	)
+
+	for {
+		select {
+		case <-ctx.Done():
+			p.logger.Info("prometheus pusher stopping")
+			return
+		case <-ticker.C:
+			// Get all readings from buffer
+			readings := p.buffer.GetAll()
+			if len(readings) > 0 {
+				p.logger.Debug("pushing metrics to prometheus",
+					zap.Int("reading_count", len(readings)),
+				)
+
+				err := p.Push(ctx, readings)
+				if err != nil {
+					p.logger.Error("failed to push metrics",
+						zap.Error(err),
+						zap.Int("reading_count", len(readings)),
+					)
+				} else {
+					// Clear buffer after successful push
+					p.buffer.Clear()
+					p.logger.Debug("buffer cleared after successful push")
+				}
+			} else {
+				p.logger.Debug("no readings to push")
+			}
+		}
 	}
 }
 
 // Push pushes sensor readings to Prometheus
-func (p *Pusher) Push(ctx context.Context, readings []*buffer.SensorReading) error {
+func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 	if len(readings) == 0 {
 		p.logger.Debug("no readings to push")
 		return nil
@@ -58,9 +102,21 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.SensorReading) err
 		err := p.pushOnce(ctx, writeReq)
 		if err == nil {
 			p.lastPush = time.Now()
+
+			bleCount := 0
+			netatmoCount := 0
+			for _, r := range readings {
+				if r.Type == buffer.ReadingTypeBLE {
+					bleCount++
+				} else if r.Type == buffer.ReadingTypeNetatmo {
+					netatmoCount++
+				}
+			}
+
 			p.logger.Info("successfully pushed metrics",
-				zap.Int("sensor_count", p.countUniqueSensors(readings)),
-				zap.Int("data_points", len(readings)),
+				zap.Int("ble_data_points", bleCount),
+				zap.Int("netatmo_data_points", netatmoCount),
+				zap.Int("total_data_points", len(readings)),
 				zap.Int("attempt", attempt),
 			)
 			return nil
@@ -87,7 +143,47 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.SensorReading) err
 }
 
 // buildWriteRequest converts sensor readings to Prometheus WriteRequest
-func (p *Pusher) buildWriteRequest(readings []*buffer.SensorReading) (*prompb.WriteRequest, error) {
+func (p *Pusher) buildWriteRequest(readings []*buffer.Reading) (*prompb.WriteRequest, error) {
+	var timeSeries []prompb.TimeSeries
+
+	// Separate BLE and Netatmo readings
+	var bleReadings []*buffer.SensorReading
+	var netatmoReadings []*buffer.ThermostatReading
+
+	for _, reading := range readings {
+		switch reading.Type {
+		case buffer.ReadingTypeBLE:
+			if reading.BLE != nil {
+				bleReadings = append(bleReadings, reading.BLE)
+			}
+		case buffer.ReadingTypeNetatmo:
+			if reading.Thermostat != nil {
+				netatmoReadings = append(netatmoReadings, reading.Thermostat)
+			}
+		}
+	}
+
+	// Process BLE readings
+	bleSeries, err := p.buildBLETimeSeries(bleReadings)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build BLE time series: %w", err)
+	}
+	timeSeries = append(timeSeries, bleSeries...)
+
+	// Process Netatmo readings
+	netatmoSeries, err := p.buildNetatmoTimeSeries(netatmoReadings)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Netatmo time series: %w", err)
+	}
+	timeSeries = append(timeSeries, netatmoSeries...)
+
+	return &prompb.WriteRequest{
+		Timeseries: timeSeries,
+	}, nil
+}
+
+// buildBLETimeSeries builds time series for BLE sensor readings
+func (p *Pusher) buildBLETimeSeries(readings []*buffer.SensorReading) ([]prompb.TimeSeries, error) {
 	// Group readings by sensor
 	type sensorKey struct {
 		name string
@@ -191,9 +287,122 @@ func (p *Pusher) buildWriteRequest(readings []*buffer.SensorReading) (*prompb.Wr
 		})
 	}
 
-	return &prompb.WriteRequest{
-		Timeseries: timeSeries,
-	}, nil
+	return timeSeries, nil
+}
+
+// buildNetatmoTimeSeries builds time series for Netatmo thermostat readings
+func (p *Pusher) buildNetatmoTimeSeries(readings []*buffer.ThermostatReading) ([]prompb.TimeSeries, error) {
+	// Group readings by room
+	type roomKey struct {
+		homeID   string
+		homeName string
+		roomID   string
+		roomName string
+	}
+	roomReadings := make(map[roomKey][]*buffer.ThermostatReading)
+	for _, reading := range readings {
+		key := roomKey{
+			homeID:   reading.HomeID,
+			homeName: reading.HomeName,
+			roomID:   reading.RoomID,
+			roomName: reading.RoomName,
+		}
+		roomReadings[key] = append(roomReadings[key], reading)
+	}
+
+	// Build time series for each room and metric
+	var timeSeries []prompb.TimeSeries
+	for key, roomData := range roomReadings {
+		// Create base labels for this room
+		baseLabels := []prompb.Label{
+			{
+				Name:  "home_id",
+				Value: key.homeID,
+			},
+			{
+				Name:  "room_id",
+				Value: key.roomID,
+			},
+			{
+				Name:  "room_name",
+				Value: key.roomName,
+			},
+		}
+
+		// Prepare samples
+		measuredTempSamples := make([]prompb.Sample, 0, len(roomData))
+		setpointTempSamples := make([]prompb.Sample, 0, len(roomData))
+		heatingPowerSamples := make([]prompb.Sample, 0, len(roomData))
+
+		for _, reading := range roomData {
+			// Round timestamp to nearest 10 seconds, then convert to milliseconds
+			ts, ok := reading.Timestamp.(time.Time)
+			if !ok {
+				p.logger.Warn("invalid timestamp type in netatmo reading",
+					zap.String("room_name", key.roomName),
+				)
+				continue
+			}
+			roundedTime := roundToTenSeconds(ts)
+			timestampMs := roundedTime.UnixMilli()
+
+			// Add measured temperature sample
+			measuredTempSamples = append(measuredTempSamples, prompb.Sample{
+				Value:     reading.MeasuredTemperature,
+				Timestamp: timestampMs,
+			})
+
+			// Add setpoint temperature sample
+			setpointTempSamples = append(setpointTempSamples, prompb.Sample{
+				Value:     reading.SetpointTemperature,
+				Timestamp: timestampMs,
+			})
+
+			// Add heating power request sample
+			heatingPowerSamples = append(heatingPowerSamples, prompb.Sample{
+				Value:     float64(reading.HeatingPowerRequest),
+				Timestamp: timestampMs,
+			})
+		}
+
+		// Add measured temperature time series
+		measuredTempLabels := append([]prompb.Label{
+			{
+				Name:  "__name__",
+				Value: "netatmo_measured_temperature_celsius",
+			},
+		}, baseLabels...)
+		timeSeries = append(timeSeries, prompb.TimeSeries{
+			Labels:  measuredTempLabels,
+			Samples: measuredTempSamples,
+		})
+
+		// Add setpoint temperature time series
+		setpointTempLabels := append([]prompb.Label{
+			{
+				Name:  "__name__",
+				Value: "netatmo_setpoint_temperature_celsius",
+			},
+		}, baseLabels...)
+		timeSeries = append(timeSeries, prompb.TimeSeries{
+			Labels:  setpointTempLabels,
+			Samples: setpointTempSamples,
+		})
+
+		// Add heating power request time series
+		heatingPowerLabels := append([]prompb.Label{
+			{
+				Name:  "__name__",
+				Value: "netatmo_heating_power_request",
+			},
+		}, baseLabels...)
+		timeSeries = append(timeSeries, prompb.TimeSeries{
+			Labels:  heatingPowerLabels,
+			Samples: heatingPowerSamples,
+		})
+	}
+
+	return timeSeries, nil
 }
 
 // pushOnce attempts to push the write request once
@@ -237,15 +446,6 @@ func (p *Pusher) pushOnce(ctx context.Context, writeReq *prompb.WriteRequest) er
 	}
 
 	return nil
-}
-
-// countUniqueSensors counts the number of unique sensor MACs in the readings
-func (p *Pusher) countUniqueSensors(readings []*buffer.SensorReading) int {
-	sensors := make(map[string]bool)
-	for _, reading := range readings {
-		sensors[reading.MAC] = true
-	}
-	return len(sensors)
 }
 
 // LastPushTime returns the time of the last successful push

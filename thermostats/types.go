@@ -4,7 +4,15 @@ import (
 	"time"
 )
 
-// SensorReading represents a single temperature sensor reading
+// ReadingType identifies the type of reading
+type ReadingType string
+
+const (
+	ReadingTypeBLE     ReadingType = "ble"
+	ReadingTypeNetatmo ReadingType = "netatmo"
+)
+
+// SensorReading represents a single temperature sensor reading from BLE sensors
 type SensorReading struct {
 	Timestamp          time.Time `json:"timestamp"`
 	MAC                string    `json:"mac"`
@@ -14,4 +22,26 @@ type SensorReading struct {
 	BatteryVoltageMV   int       `json:"battery_voltage_mv"`
 	FrameCounter       int       `json:"frame_counter"`
 	RSSI               int16     `json:"rssi_dbm"`
+}
+
+// ThermostatReading represents a thermostat reading from Netatmo
+type ThermostatReading struct {
+	Timestamp           time.Time `json:"timestamp"`
+	HomeID              string    `json:"home_id"`
+	HomeName            string    `json:"home_name"`
+	RoomID              string    `json:"room_id"`
+	RoomName            string    `json:"room_name"`
+	MeasuredTemperature float64   `json:"measured_temperature"`
+	SetpointTemperature float64   `json:"setpoint_temperature"`
+	SetpointMode        string    `json:"setpoint_mode"`
+	HeatingPowerRequest int       `json:"heating_power_request"`
+	OpenWindow          bool      `json:"open_window"`
+	Reachable           bool      `json:"reachable"`
+}
+
+// Reading is a union type that can hold either BLE sensor or Netatmo thermostat readings
+type Reading struct {
+	Type       ReadingType
+	BLE        *SensorReading
+	Thermostat *ThermostatReading
 }

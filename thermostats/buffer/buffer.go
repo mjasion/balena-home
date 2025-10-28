@@ -6,7 +6,15 @@ import (
 	"go.uber.org/zap"
 )
 
-// SensorReading represents a single temperature sensor reading
+// ReadingType identifies the type of reading
+type ReadingType string
+
+const (
+	ReadingTypeBLE     ReadingType = "ble"
+	ReadingTypeNetatmo ReadingType = "netatmo"
+)
+
+// SensorReading represents a single temperature sensor reading from BLE
 // This is duplicated here to avoid circular imports
 type SensorReading struct {
 	Timestamp          interface{} // time.Time
@@ -21,9 +29,31 @@ type SensorReading struct {
 	RSSI               int16
 }
 
+// ThermostatReading represents a thermostat reading from Netatmo
+type ThermostatReading struct {
+	Timestamp           interface{} // time.Time
+	HomeID              string
+	HomeName            string
+	RoomID              string
+	RoomName            string
+	MeasuredTemperature float64
+	SetpointTemperature float64
+	SetpointMode        string
+	HeatingPowerRequest int
+	OpenWindow          bool
+	Reachable           bool
+}
+
+// Reading is a union type that can hold either BLE sensor or Netatmo thermostat readings
+type Reading struct {
+	Type       ReadingType
+	BLE        *SensorReading
+	Thermostat *ThermostatReading
+}
+
 // RingBuffer is a thread-safe circular buffer for sensor readings
 type RingBuffer struct {
-	data     []*SensorReading
+	data     []*Reading
 	capacity int
 	size     int
 	head     int
@@ -34,7 +64,7 @@ type RingBuffer struct {
 // New creates a new ring buffer with the specified capacity
 func New(capacity int, logger *zap.Logger) *RingBuffer {
 	return &RingBuffer{
-		data:     make([]*SensorReading, capacity),
+		data:     make([]*Reading, capacity),
 		capacity: capacity,
 		size:     0,
 		head:     0,
@@ -42,17 +72,18 @@ func New(capacity int, logger *zap.Logger) *RingBuffer {
 	}
 }
 
-// Add adds a new sensor reading to the buffer
+// Add adds a new reading to the buffer
 // If the buffer is full, it overwrites the oldest entry
-func (rb *RingBuffer) Add(reading *SensorReading) {
+func (rb *RingBuffer) Add(reading *Reading) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
 	// Check if we're about to overwrite data
 	if rb.size == rb.capacity {
+		overwrittenType := rb.data[rb.head].Type
 		rb.logger.Warn("ring buffer full, overwriting oldest data",
 			zap.Int("capacity", rb.capacity),
-			zap.String("overwritten_mac", rb.data[rb.head].MAC),
+			zap.String("overwritten_type", string(overwrittenType)),
 		)
 	}
 
@@ -68,7 +99,7 @@ func (rb *RingBuffer) Add(reading *SensorReading) {
 
 // GetAll returns all buffered readings
 // The returned slice is a copy, so it's safe to use after the call
-func (rb *RingBuffer) GetAll() []*SensorReading {
+func (rb *RingBuffer) GetAll() []*Reading {
 	rb.mu.RLock()
 	defer rb.mu.RUnlock()
 
@@ -76,7 +107,7 @@ func (rb *RingBuffer) GetAll() []*SensorReading {
 		return nil
 	}
 
-	result := make([]*SensorReading, rb.size)
+	result := make([]*Reading, rb.size)
 
 	if rb.size < rb.capacity {
 		// Buffer is not full yet, readings are from 0 to head-1
@@ -104,5 +135,5 @@ func (rb *RingBuffer) Clear() {
 
 	rb.size = 0
 	rb.head = 0
-	rb.data = make([]*SensorReading, rb.capacity)
+	rb.data = make([]*Reading, rb.capacity)
 }

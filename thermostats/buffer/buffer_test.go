@@ -13,9 +13,12 @@ func TestRingBuffer_AddAndGet(t *testing.T) {
 
 	// Add some readings
 	for i := 0; i < 3; i++ {
-		reading := &SensorReading{
-			MAC:                "A4:C1:38:00:00:00",
-			TemperatureCelsius: float64(20 + i),
+		reading := &Reading{
+			Type: ReadingTypeBLE,
+			BLE: &SensorReading{
+				MAC:                "A4:C1:38:00:00:00",
+				TemperatureCelsius: float64(20 + i),
+			},
 		}
 		rb.Add(reading)
 	}
@@ -34,8 +37,8 @@ func TestRingBuffer_AddAndGet(t *testing.T) {
 	// Verify readings are in correct order
 	for i, reading := range readings {
 		expectedTemp := float64(20 + i)
-		if reading.TemperatureCelsius != expectedTemp {
-			t.Errorf("reading %d: expected temp %.1f, got %.1f", i, expectedTemp, reading.TemperatureCelsius)
+		if reading.BLE.TemperatureCelsius != expectedTemp {
+			t.Errorf("reading %d: expected temp %.1f, got %.1f", i, expectedTemp, reading.BLE.TemperatureCelsius)
 		}
 	}
 }
@@ -46,9 +49,12 @@ func TestRingBuffer_Overflow(t *testing.T) {
 
 	// Add more readings than capacity
 	for i := 0; i < 5; i++ {
-		reading := &SensorReading{
-			MAC:                "A4:C1:38:00:00:00",
-			TemperatureCelsius: float64(20 + i),
+		reading := &Reading{
+			Type: ReadingTypeBLE,
+			BLE: &SensorReading{
+				MAC:                "A4:C1:38:00:00:00",
+				TemperatureCelsius: float64(20 + i),
+			},
 		}
 		rb.Add(reading)
 	}
@@ -67,8 +73,8 @@ func TestRingBuffer_Overflow(t *testing.T) {
 	// Verify we kept the newest readings (temp 22, 23, 24)
 	expectedTemps := []float64{22, 23, 24}
 	for i, reading := range readings {
-		if reading.TemperatureCelsius != expectedTemps[i] {
-			t.Errorf("reading %d: expected temp %.1f, got %.1f", i, expectedTemps[i], reading.TemperatureCelsius)
+		if reading.BLE.TemperatureCelsius != expectedTemps[i] {
+			t.Errorf("reading %d: expected temp %.1f, got %.1f", i, expectedTemps[i], reading.BLE.TemperatureCelsius)
 		}
 	}
 }
@@ -79,9 +85,12 @@ func TestRingBuffer_Clear(t *testing.T) {
 
 	// Add some readings
 	for i := 0; i < 3; i++ {
-		reading := &SensorReading{
-			MAC:                "A4:C1:38:00:00:00",
-			TemperatureCelsius: float64(20 + i),
+		reading := &Reading{
+			Type: ReadingTypeBLE,
+			BLE: &SensorReading{
+				MAC:                "A4:C1:38:00:00:00",
+				TemperatureCelsius: float64(20 + i),
+			},
 		}
 		rb.Add(reading)
 	}
@@ -113,9 +122,12 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			for j := 0; j < 10; j++ {
-				reading := &SensorReading{
-					MAC:                "A4:C1:38:00:00:00",
-					TemperatureCelsius: float64(id*10 + j),
+				reading := &Reading{
+					Type: ReadingTypeBLE,
+					BLE: &SensorReading{
+						MAC:                "A4:C1:38:00:00:00",
+						TemperatureCelsius: float64(id*10 + j),
+					},
 				}
 				rb.Add(reading)
 			}

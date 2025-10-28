@@ -12,6 +12,22 @@ ble:
       id: 2
       macAddress: A4:C1:38:26:E2:4C
 
+# Netatmo thermostat integration
+netatmo:
+  # Enable Netatmo thermostat data collection
+  enabled: false
+
+  # Netatmo OAuth2 credentials
+  # Get these from https://dev.netatmo.com/apps
+  # IMPORTANT: Use environment variables for sensitive data
+  clientId: ""  # or use NETATMO_CLIENT_ID env var
+  clientSecret: ""  # or use NETATMO_CLIENT_SECRET env var
+  refreshToken: ""  # or use NETATMO_REFRESH_TOKEN env var
+
+  # Interval between Netatmo API fetches in seconds (minimum: 1, recommended: 60)
+  # Note: Netatmo rate limits apply - don't set too low
+  fetchIntervalSeconds: 60
+
 # Prometheus metrics push configuration
 prometheus:
   # Interval between metric pushes in seconds (minimum: 1)
