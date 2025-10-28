@@ -158,16 +158,6 @@ func (rb *RingBuffer) Size() int {
 	return rb.size
 }
 
-// Clear removes all readings from the buffer
-func (rb *RingBuffer) Clear() {
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
-
-	rb.size = 0
-	rb.head = 0
-	rb.data = make([]*Reading, rb.capacity)
-}
-
 // AddMultiple adds multiple readings to the buffer at once
 // Useful for re-adding readings after a failed push attempt
 func (rb *RingBuffer) AddMultiple(readings []*Reading) {

@@ -79,37 +79,6 @@ func TestRingBuffer_Overflow(t *testing.T) {
 	}
 }
 
-func TestRingBuffer_Clear(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	rb := New(5, logger)
-
-	// Add some readings
-	for i := 0; i < 3; i++ {
-		reading := &Reading{
-			Type: ReadingTypeBLE,
-			BLE: &SensorReading{
-				MAC:                "A4:C1:38:00:00:00",
-				TemperatureCelsius: float64(20 + i),
-			},
-		}
-		rb.Add(reading)
-	}
-
-	// Clear buffer
-	rb.Clear()
-
-	// Check size
-	if rb.Size() != 0 {
-		t.Errorf("expected size 0 after clear, got %d", rb.Size())
-	}
-
-	// Get all readings (should be empty)
-	readings := rb.GetAll()
-	if len(readings) != 0 {
-		t.Errorf("expected 0 readings after clear, got %d", len(readings))
-	}
-}
-
 func TestRingBuffer_GetAllAndClear(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(5, logger)
