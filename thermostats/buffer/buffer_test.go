@@ -110,6 +110,55 @@ func TestRingBuffer_Clear(t *testing.T) {
 	}
 }
 
+func TestRingBuffer_GetAllAndClear(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	rb := New(5, logger)
+
+	// Add some readings
+	for i := 0; i < 3; i++ {
+		reading := &Reading{
+			Type: ReadingTypeBLE,
+			BLE: &SensorReading{
+				MAC:                "A4:C1:38:00:00:00",
+				TemperatureCelsius: float64(20 + i),
+			},
+		}
+		rb.Add(reading)
+	}
+
+	// Check size before
+	if rb.Size() != 3 {
+		t.Errorf("expected size 3 before GetAllAndClear, got %d", rb.Size())
+	}
+
+	// Get all and clear atomically
+	readings := rb.GetAllAndClear()
+
+	// Check returned readings
+	if len(readings) != 3 {
+		t.Errorf("expected 3 readings from GetAllAndClear, got %d", len(readings))
+	}
+
+	// Verify readings are correct
+	for i, reading := range readings {
+		expectedTemp := float64(20 + i)
+		if reading.BLE.TemperatureCelsius != expectedTemp {
+			t.Errorf("reading %d: expected temp %.1f, got %.1f", i, expectedTemp, reading.BLE.TemperatureCelsius)
+		}
+	}
+
+	// Check size after - should be 0
+	if rb.Size() != 0 {
+		t.Errorf("expected size 0 after GetAllAndClear, got %d", rb.Size())
+	}
+
+	// Verify buffer is truly empty
+	readingsAfter := rb.GetAll()
+	if len(readingsAfter) != 0 {
+		t.Errorf("expected 0 readings after GetAllAndClear, got %d", len(readingsAfter))
+	}
+}
+
 func TestRingBuffer_Concurrent(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(100, logger)

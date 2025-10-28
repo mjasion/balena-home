@@ -121,6 +121,36 @@ func (rb *RingBuffer) GetAll() []*Reading {
 	return result
 }
 
+// GetAllAndClear atomically returns all buffered readings and clears the buffer
+// This prevents race conditions where data is added between GetAll() and Clear()
+// The returned slice is a copy, so it's safe to use after the call
+func (rb *RingBuffer) GetAllAndClear() []*Reading {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+
+	if rb.size == 0 {
+		return nil
+	}
+
+	result := make([]*Reading, rb.size)
+
+	if rb.size < rb.capacity {
+		// Buffer is not full yet, readings are from 0 to head-1
+		copy(result, rb.data[:rb.size])
+	} else {
+		// Buffer is full, readings are from head to end, then 0 to head-1
+		n := copy(result, rb.data[rb.head:])
+		copy(result[n:], rb.data[:rb.head])
+	}
+
+	// Clear the buffer atomically
+	rb.size = 0
+	rb.head = 0
+	rb.data = make([]*Reading, rb.capacity)
+
+	return result
+}
+
 // Size returns the current number of readings in the buffer
 func (rb *RingBuffer) Size() int {
 	rb.mu.RLock()

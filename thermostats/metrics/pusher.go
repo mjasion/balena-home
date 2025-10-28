@@ -58,8 +58,8 @@ func (p *Pusher) Start(ctx context.Context) {
 			p.logger.Info("prometheus pusher stopping")
 			return
 		case <-ticker.C:
-			// Get all readings from buffer
-			readings := p.buffer.GetAll()
+			// Get all readings from buffer and clear it atomically
+			readings := p.buffer.GetAllAndClear()
 			if len(readings) > 0 {
 				p.logger.Debug("pushing metrics to prometheus",
 					zap.Int("reading_count", len(readings)),
@@ -71,10 +71,9 @@ func (p *Pusher) Start(ctx context.Context) {
 						zap.Error(err),
 						zap.Int("reading_count", len(readings)),
 					)
+					// Note: On failure, data is lost. Consider re-adding to buffer in production
 				} else {
-					// Clear buffer after successful push
-					p.buffer.Clear()
-					p.logger.Debug("buffer cleared after successful push")
+					p.logger.Debug("successfully pushed and cleared buffer")
 				}
 			} else {
 				p.logger.Debug("no readings to push")
