@@ -42,4 +42,12 @@ services:
       - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/host/run/dbus/system_bus_socket
     labels:
       io.balena.features.dbus: '1'
+  alloy:
+    build: alloy
+    container_name: grafana-alloy
+    restart: unless-stopped
+    ports:
+      - "12345:12345"
+    labels:
+      io.balena.features.balena-socket: '1'
 

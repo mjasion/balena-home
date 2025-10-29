@@ -1,0 +1,53 @@
+// Grafana Alloy configuration for collecting logs from all Docker containers in balena-home
+
+// Discover Docker containers
+discovery.docker "containers" {
+  host = sys.env("DOCKER_HOST")
+}
+
+// Relabel to add service label based on container name
+discovery.relabel "add_service_label" {
+  targets = discovery.docker.containers.targets
+
+  // Remove leading slash from container name and set as service label
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?(.+)"
+    target_label  = "service"
+    replacement   = "$1"
+  }
+
+  // Also set container label for backwards compatibility
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?(.+)"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+
+  // Add environment label
+  rule {
+    target_label = "environment"
+    replacement  = "balena-home"
+  }
+}
+
+// Collect logs from all Docker containers
+loki.source.docker "default" {
+  host       = sys.env("DOCKER_HOST")
+  targets    = discovery.relabel.add_service_label.output
+  forward_to = [loki.write.default.receiver]
+}
+
+// Write logs to Loki
+loki.write "default" {
+  endpoint {
+    url = sys.env("LOKI_URL")
+
+    // Grafana Cloud requires authentication
+    basic_auth {
+      username = sys.env("LOKI_USERNAME")
+      password = sys.env("LOKI_PASSWORD")
+    }
+  }
+}
