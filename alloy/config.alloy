@@ -9,7 +9,7 @@ discovery.docker "containers" {
 discovery.relabel "add_service_label" {
   targets = discovery.docker.containers.targets
 
-  // Remove leading slash from container name and set as service label
+  // Remove leading slash from container name and set as service label (default)
   rule {
     source_labels = ["__meta_docker_container_name"]
     regex         = "/?(.+)"
@@ -17,7 +17,16 @@ discovery.relabel "add_service_label" {
     replacement   = "$1"
   }
 
-  // Also set container label for backwards compatibility
+  // Normalize service name: drop numeric suffixes added by Balena
+  // Examples: pstryk_metric_12870316_3735864... -> pstryk_metric
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?(.*?)_\\d+.*"
+    target_label  = "service"
+    replacement   = "$1"
+  }
+
+  // Also set container label for backwards compatibility (full name)
   rule {
     source_labels = ["__meta_docker_container_name"]
     regex         = "/?(.+)"
