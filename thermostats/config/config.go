@@ -2,10 +2,12 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
 	"github.com/ilyakaznacheev/cleanenv"
+	"github.com/jsternberg/zap-logfmt"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -153,8 +155,8 @@ func (c *Config) Validate() error {
 
 	// Validate log format
 	c.Logging.Format = strings.ToLower(c.Logging.Format)
-	if c.Logging.Format != "console" && c.Logging.Format != "json" {
-		return fmt.Errorf("log format must be 'console' or 'json', got: %s", c.Logging.Format)
+	if c.Logging.Format != "console" && c.Logging.Format != "json" && c.Logging.Format != "logfmt" {
+		return fmt.Errorf("log format must be 'console', 'json', or 'logfmt', got: %s", c.Logging.Format)
 	}
 
 	// Validate log level
@@ -184,7 +186,32 @@ func (c *Config) InitLogger() (*zap.Logger, error) {
 		level = zapcore.InfoLevel
 	}
 
-	// Create encoder config
+	// Handle logfmt format
+	if c.Logging.Format == "logfmt" {
+		encoderConfig := zapcore.EncoderConfig{
+			TimeKey:        "ts",
+			LevelKey:       "level",
+			NameKey:        "logger",
+			CallerKey:      "caller",
+			MessageKey:     "msg",
+			StacktraceKey:  "stacktrace",
+			LineEnding:     zapcore.DefaultLineEnding,
+			EncodeLevel:    zapcore.LowercaseLevelEncoder,
+			EncodeTime:     zapcore.ISO8601TimeEncoder,
+			EncodeDuration: zapcore.StringDurationEncoder,
+			EncodeCaller:   zapcore.ShortCallerEncoder,
+		}
+
+		core := zapcore.NewCore(
+			zaplogfmt.NewEncoder(encoderConfig),
+			zapcore.AddSync(os.Stdout),
+			level,
+		)
+
+		return zap.New(core), nil
+	}
+
+	// Create encoder config for json and console
 	encoderConfig := zap.NewProductionEncoderConfig()
 	encoderConfig.TimeKey = "ts"
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder

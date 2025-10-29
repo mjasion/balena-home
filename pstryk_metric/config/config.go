@@ -3,9 +3,11 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/ilyakaznacheev/cleanenv"
+	"github.com/jsternberg/zap-logfmt"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -36,7 +38,7 @@ type Config struct {
 	HealthCheckPort int `yaml:"healthCheckPort" env:"HEALTH_CHECK_PORT" env-default:"8080"`
 
 	// Logging configuration
-	LogFormat string `yaml:"logFormat" env:"LOG_FORMAT" env-default:"json"`
+	LogFormat string `yaml:"logFormat" env:"LOG_FORMAT" env-default:"console"`
 	LogLevel  string `yaml:"logLevel" env:"LOG_LEVEL" env-default:"info"`
 }
 
@@ -96,8 +98,8 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate log format
-	if c.LogFormat != "json" && c.LogFormat != "console" {
-		return fmt.Errorf("logFormat must be 'json' or 'console', got '%s'", c.LogFormat)
+	if c.LogFormat != "json" && c.LogFormat != "console" && c.LogFormat != "logfmt" {
+		return fmt.Errorf("logFormat must be 'json', 'console', or 'logfmt', got '%s'", c.LogFormat)
 	}
 
 	// Validate log level
@@ -135,8 +137,6 @@ func (c *Config) Redacted() map[string]interface{} {
 
 // NewLogger creates a zap logger based on the configuration
 func (c *Config) NewLogger() (*zap.Logger, error) {
-	var zapConfig zap.Config
-
 	// Set log level
 	var level zapcore.Level
 	switch strings.ToLower(c.LogLevel) {
@@ -152,7 +152,33 @@ func (c *Config) NewLogger() (*zap.Logger, error) {
 		level = zapcore.InfoLevel
 	}
 
-	// Set format
+	// Handle logfmt format separately
+	if c.LogFormat == "logfmt" {
+		encoderConfig := zapcore.EncoderConfig{
+			TimeKey:        "ts",
+			LevelKey:       "level",
+			NameKey:        "logger",
+			CallerKey:      "caller",
+			MessageKey:     "msg",
+			StacktraceKey:  "stacktrace",
+			LineEnding:     zapcore.DefaultLineEnding,
+			EncodeLevel:    zapcore.LowercaseLevelEncoder,
+			EncodeTime:     zapcore.ISO8601TimeEncoder,
+			EncodeDuration: zapcore.StringDurationEncoder,
+			EncodeCaller:   zapcore.ShortCallerEncoder,
+		}
+
+		core := zapcore.NewCore(
+			zaplogfmt.NewEncoder(encoderConfig),
+			zapcore.AddSync(os.Stdout),
+			level,
+		)
+
+		return zap.New(core), nil
+	}
+
+	// Handle json and console formats
+	var zapConfig zap.Config
 	if c.LogFormat == "json" {
 		zapConfig = zap.NewProductionConfig()
 	} else {

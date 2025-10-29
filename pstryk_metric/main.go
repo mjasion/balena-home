@@ -37,6 +37,10 @@ func main() {
 	logger.Info("Configuration loaded successfully", zap.Any("config", cfg.Redacted()))
 
 	// Initialize components
+	logger.Info("Initializing components",
+		zap.String("scrapeURL", cfg.ScrapeURL),
+		zap.Float64("scrapeTimeoutSeconds", cfg.ScrapeTimeoutSeconds),
+		zap.Int("bufferSize", cfg.BufferSize))
 	scr := scraper.New(cfg.ScrapeURL, time.Duration(cfg.ScrapeTimeoutSeconds*float64(time.Second)), logger)
 	buf := buffer.New(cfg.BufferSize, logger)
 	pusher := metrics.New(cfg.PrometheusURL, cfg.PrometheusUsername, cfg.PrometheusPassword, cfg.MetricName, logger)
@@ -47,6 +51,8 @@ func main() {
 		cfg.HealthCheckPort,
 		logger,
 	)
+	logger.Info("Components initialized successfully",
+		zap.Int("healthCheckPort", cfg.HealthCheckPort))
 
 	// Start health check server in background
 	go func() {
@@ -129,7 +135,7 @@ func handleScrape(ctx context.Context, scr *scraper.Scraper, buf *buffer.RingBuf
 	if err != nil {
 		logger.Error("Scrape failed", zap.Duration("duration", duration), zap.Error(err))
 	} else {
-		logger.Debug("Scrape successful",
+		logger.Info("Scrape successful",
 			zap.Duration("duration", duration),
 			zap.Int("readingCount", len(result.Readings)))
 		buf.Add(result)
@@ -150,6 +156,8 @@ func handlePush(ctx context.Context, pusher *metrics.Pusher, buf *buffer.RingBuf
 	if err != nil {
 		logger.Error("Push failed", zap.Error(err))
 	} else {
+		logger.Info("Push operation completed, clearing buffer",
+			zap.Int("clearedResults", len(results)))
 		buf.Clear()
 	}
 }

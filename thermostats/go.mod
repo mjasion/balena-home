@@ -18,6 +18,7 @@ require (
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
+	github.com/jsternberg/zap-logfmt v1.3.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect

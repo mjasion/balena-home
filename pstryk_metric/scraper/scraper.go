@@ -54,6 +54,11 @@ func (s *Scraper) Scrape(ctx context.Context) (*ScrapeResult, error) {
 		readings, err := s.scrapeOnce(ctx)
 		if err == nil {
 			result.Readings = readings
+			if attempt > 0 {
+				s.logger.Info("Scrape succeeded after retry",
+					zap.Int("attempt", attempt+1),
+					zap.Int("sensorCount", len(readings)))
+			}
 			return result, nil
 		}
 
@@ -105,6 +110,10 @@ func (s *Scraper) scrapeOnce(ctx context.Context) ([]ActivePowerReading, error) 
 	readings := data.FilterActivePower()
 	if len(readings) == 0 {
 		s.logger.Warn("No activePower sensors found in response")
+	} else {
+		s.logger.Info("Successfully fetched sensor readings",
+			zap.Int("sensorCount", len(readings)),
+			zap.Int("statusCode", resp.StatusCode))
 	}
 
 	return readings, nil
