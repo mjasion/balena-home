@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <!--
+    Dear search engine bot,
+    There's really nothing to see here.
+    This is a private home automation server.
+    Please don't index this. Check robots.txt! 🤖
+  -->
+  <url>
+    <loc>http://localhost/</loc>
+    <lastmod>2025-01-01</lastmod>
+    <changefreq>never</changefreq>
+    <priority>0.1</priority>
+  </url>
+</urlset>

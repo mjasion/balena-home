@@ -1,0 +1,12 @@
+# Hello, friendly bot! 🤖
+# This is a private home automation server.
+# Nothing interesting to crawl here, move along!
+
+User-agent: *
+Disallow: /
+
+# If you're a search engine, please don't index this
+# If you're a security scanner, check out /.well-known/security.txt
+
+# Crawl-delay for any bot that ignores the Disallow (you rebel!)
+Crawl-delay: 10

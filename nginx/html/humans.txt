@@ -1,0 +1,22 @@
+# humanstxt.org
+
+/* TEAM */
+  Developer: A human with too many smart devices
+  Location: Home
+
+/* THANKS */
+  Coffee: For making this possible
+  Claude: For helping write the code
+  Stack Overflow: The usual
+
+/* SITE */
+  Last update: 2025
+  Language: English / Polish
+  Doctype: HTML5
+  IDE: Whatever was open at the time
+
+/* BOTS */
+  Hey there, automated friend! 👋
+  Hope you're having a great day scanning the web.
+  This is just a home automation hub, nothing fancy.
+  Feel free to move along to more interesting places!
