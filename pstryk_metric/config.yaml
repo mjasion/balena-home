@@ -48,7 +48,7 @@ logging:
 # OpenTelemetry tracing and metrics configuration
 opentelemetry:
   # Enable OpenTelemetry instrumentation
-  enabled: false
+  enabled: true
 
   # Service name for traces and metrics (identifies this service in Grafana)
   serviceName: "pstryk-metric"

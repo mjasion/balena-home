@@ -20,7 +20,7 @@ type OpenTelemetryConfig struct {
 type OTelTracesConfig struct {
 	Enabled       bool              `yaml:"enabled" env:"OTEL_TRACES_ENABLED" env-default:"true"`
 	Endpoint      string            `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"`
-	Headers       map[string]string `yaml:"headers"`
+	Headers       map[string]string `yaml:"headers" env:"OTEL_EXPORTER_OTLP_TRACES_HEADERS"`
 	SamplingRatio float64           `yaml:"samplingRatio" env:"OTEL_TRACES_SAMPLING_RATIO" env-default:"1.0"`
 	Batch         OTelBatchConfig   `yaml:"batch"`
 }
