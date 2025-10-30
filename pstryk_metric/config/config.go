@@ -38,8 +38,52 @@ type Config struct {
 	HealthCheckPort int `yaml:"healthCheckPort" env:"HEALTH_CHECK_PORT" env-default:"8080"`
 
 	// Logging configuration
-	LogFormat string `yaml:"logFormat" env:"LOG_FORMAT" env-default:"console"`
-	LogLevel  string `yaml:"logLevel" env:"LOG_LEVEL" env-default:"info"`
+	Logging LoggingConfig `yaml:"logging"`
+
+	// OpenTelemetry configuration
+	OpenTelemetry OpenTelemetryConfig `yaml:"opentelemetry"`
+}
+
+// LoggingConfig contains logging configuration
+type LoggingConfig struct {
+	Format string `yaml:"logFormat" env:"LOG_FORMAT" env-default:"console"`
+	Level  string `yaml:"logLevel" env:"LOG_LEVEL" env-default:"info"`
+}
+
+// OpenTelemetryConfig contains OpenTelemetry configuration
+type OpenTelemetryConfig struct {
+	Enabled            bool                  `yaml:"enabled" env:"OTEL_ENABLED" env-default:"false"`
+	ServiceName        string                `yaml:"serviceName" env:"OTEL_SERVICE_NAME" env-default:"pstryk-metric"`
+	ServiceVersion     string                `yaml:"serviceVersion" env:"OTEL_SERVICE_VERSION" env-default:"1.0.0"`
+	Environment        string                `yaml:"environment" env:"OTEL_ENVIRONMENT" env-default:"production"`
+	Traces             OTelTracesConfig      `yaml:"traces"`
+	Metrics            OTelMetricsConfig     `yaml:"metrics"`
+	ResourceAttributes map[string]string     `yaml:"resourceAttributes"`
+}
+
+// OTelTracesConfig contains OpenTelemetry traces configuration
+type OTelTracesConfig struct {
+	Enabled       bool              `yaml:"enabled" env:"OTEL_TRACES_ENABLED" env-default:"true"`
+	Endpoint      string            `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"`
+	Headers       map[string]string `yaml:"headers"`
+	SamplingRatio float64           `yaml:"samplingRatio" env:"OTEL_TRACES_SAMPLING_RATIO" env-default:"1.0"`
+	Batch         OTelBatchConfig   `yaml:"batch"`
+}
+
+// OTelMetricsConfig contains OpenTelemetry metrics configuration
+type OTelMetricsConfig struct {
+	Enabled              bool              `yaml:"enabled" env:"OTEL_METRICS_ENABLED" env-default:"true"`
+	Endpoint             string            `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"`
+	Headers              map[string]string `yaml:"headers"`
+	IntervalMillis       int               `yaml:"intervalMillis" env:"OTEL_METRICS_INTERVAL" env-default:"30000"`
+	EnableRuntimeMetrics bool              `yaml:"enableRuntimeMetrics" env:"OTEL_ENABLE_RUNTIME_METRICS" env-default:"true"`
+}
+
+// OTelBatchConfig contains batch processor configuration for traces
+type OTelBatchConfig struct {
+	ScheduleDelayMillis int `yaml:"scheduleDelayMillis" env:"OTEL_BSP_SCHEDULE_DELAY" env-default:"5000"`
+	MaxQueueSize        int `yaml:"maxQueueSize" env:"OTEL_BSP_MAX_QUEUE_SIZE" env-default:"2048"`
+	MaxExportBatchSize  int `yaml:"maxExportBatchSize" env:"OTEL_BSP_MAX_EXPORT_BATCH_SIZE" env-default:"512"`
 }
 
 // Load reads configuration from the specified file path and applies environment variable overrides
@@ -98,19 +142,70 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate log format
-	if c.LogFormat != "json" && c.LogFormat != "console" && c.LogFormat != "logfmt" {
-		return fmt.Errorf("logFormat must be 'json', 'console', or 'logfmt', got '%s'", c.LogFormat)
+	c.Logging.Format = strings.ToLower(c.Logging.Format)
+	if c.Logging.Format != "json" && c.Logging.Format != "console" && c.Logging.Format != "logfmt" {
+		return fmt.Errorf("logFormat must be 'json', 'console', or 'logfmt', got '%s'", c.Logging.Format)
 	}
 
 	// Validate log level
+	c.Logging.Level = strings.ToLower(c.Logging.Level)
 	validLevels := map[string]bool{
 		"debug": true,
 		"info":  true,
 		"warn":  true,
 		"error": true,
 	}
-	if !validLevels[strings.ToLower(c.LogLevel)] {
-		return fmt.Errorf("logLevel must be one of: debug, info, warn, error, got '%s'", c.LogLevel)
+	if !validLevels[c.Logging.Level] {
+		return fmt.Errorf("logLevel must be one of: debug, info, warn, error, got '%s'", c.Logging.Level)
+	}
+
+	// Validate OpenTelemetry configuration if enabled
+	if c.OpenTelemetry.Enabled {
+		// Validate service name
+		if c.OpenTelemetry.ServiceName == "" {
+			return fmt.Errorf("opentelemetry service name is required when OpenTelemetry is enabled")
+		}
+
+		// Validate traces configuration
+		if c.OpenTelemetry.Traces.Enabled {
+			if c.OpenTelemetry.Traces.Endpoint == "" {
+				// Check environment variable fallback
+				if os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") == "" && os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+					return fmt.Errorf("opentelemetry traces endpoint is required when traces are enabled")
+				}
+			}
+
+			// Validate sampling ratio
+			if c.OpenTelemetry.Traces.SamplingRatio < 0 || c.OpenTelemetry.Traces.SamplingRatio > 1 {
+				return fmt.Errorf("opentelemetry traces sampling ratio must be between 0 and 1, got: %f", c.OpenTelemetry.Traces.SamplingRatio)
+			}
+
+			// Validate batch configuration
+			if c.OpenTelemetry.Traces.Batch.ScheduleDelayMillis < 0 {
+				return fmt.Errorf("opentelemetry traces batch schedule delay must be >= 0")
+			}
+			if c.OpenTelemetry.Traces.Batch.MaxQueueSize < 1 {
+				return fmt.Errorf("opentelemetry traces batch max queue size must be >= 1")
+			}
+			if c.OpenTelemetry.Traces.Batch.MaxExportBatchSize < 1 {
+				return fmt.Errorf("opentelemetry traces batch max export batch size must be >= 1")
+			}
+		}
+
+		// Validate metrics configuration
+		if c.OpenTelemetry.Metrics.Enabled {
+			if c.OpenTelemetry.Metrics.Endpoint == "" {
+				// Check environment variable fallback
+				if os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" && os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+					return fmt.Errorf("opentelemetry metrics endpoint is required when metrics are enabled")
+				}
+			}
+
+			// Validate interval
+			if c.OpenTelemetry.Metrics.IntervalMillis < 1000 {
+				return fmt.Errorf("opentelemetry metrics interval must be at least 1000ms (1 second)")
+			}
+		}
 	}
 
 	return nil
@@ -130,8 +225,27 @@ func (c *Config) Redacted() map[string]interface{} {
 		"startAtEvenSecond":     c.StartAtEvenSecond,
 		"bufferSize":            c.BufferSize,
 		"healthCheckPort":       c.HealthCheckPort,
-		"logFormat":             c.LogFormat,
-		"logLevel":              c.LogLevel,
+		"logging": map[string]interface{}{
+			"logFormat": c.Logging.Format,
+			"logLevel":  c.Logging.Level,
+		},
+		"opentelemetry": map[string]interface{}{
+			"enabled":        c.OpenTelemetry.Enabled,
+			"serviceName":    c.OpenTelemetry.ServiceName,
+			"serviceVersion": c.OpenTelemetry.ServiceVersion,
+			"environment":    c.OpenTelemetry.Environment,
+			"traces": map[string]interface{}{
+				"enabled":       c.OpenTelemetry.Traces.Enabled,
+				"endpointSet":   c.OpenTelemetry.Traces.Endpoint != "",
+				"samplingRatio": c.OpenTelemetry.Traces.SamplingRatio,
+			},
+			"metrics": map[string]interface{}{
+				"enabled":              c.OpenTelemetry.Metrics.Enabled,
+				"endpointSet":          c.OpenTelemetry.Metrics.Endpoint != "",
+				"intervalMillis":       c.OpenTelemetry.Metrics.IntervalMillis,
+				"enableRuntimeMetrics": c.OpenTelemetry.Metrics.EnableRuntimeMetrics,
+			},
+		},
 	}
 }
 
@@ -139,7 +253,7 @@ func (c *Config) Redacted() map[string]interface{} {
 func (c *Config) NewLogger() (*zap.Logger, error) {
 	// Set log level
 	var level zapcore.Level
-	switch strings.ToLower(c.LogLevel) {
+	switch strings.ToLower(c.Logging.Level) {
 	case "debug":
 		level = zapcore.DebugLevel
 	case "info":
@@ -153,7 +267,7 @@ func (c *Config) NewLogger() (*zap.Logger, error) {
 	}
 
 	// Handle logfmt format separately
-	if c.LogFormat == "logfmt" {
+	if c.Logging.Format == "logfmt" {
 		encoderConfig := zapcore.EncoderConfig{
 			TimeKey:        "ts",
 			LevelKey:       "level",
@@ -179,7 +293,7 @@ func (c *Config) NewLogger() (*zap.Logger, error) {
 
 	// Handle json and console formats
 	var zapConfig zap.Config
-	if c.LogFormat == "json" {
+	if c.Logging.Format == "json" {
 		zapConfig = zap.NewProductionConfig()
 	} else {
 		zapConfig = zap.NewDevelopmentConfig()
@@ -188,6 +302,36 @@ func (c *Config) NewLogger() (*zap.Logger, error) {
 	zapConfig.Level = zap.NewAtomicLevelAt(level)
 
 	return zapConfig.Build()
+}
+
+// PrintConfig prints the configuration (masking sensitive fields)
+func (c *Config) PrintConfig(logger *zap.Logger) {
+	logger.Info("configuration loaded",
+		zap.String("scrape_url", c.ScrapeURL),
+		zap.Int("scrape_interval_seconds", c.ScrapeIntervalSeconds),
+		zap.Float64("scrape_timeout_seconds", c.ScrapeTimeoutSeconds),
+		zap.Int("push_interval_seconds", c.PushIntervalSeconds),
+		zap.String("prometheus_url", c.PrometheusURL),
+		zap.String("prometheus_username", c.PrometheusUsername),
+		zap.Bool("prometheus_password_set", c.PrometheusPassword != ""),
+		zap.String("metric_name", c.MetricName),
+		zap.Bool("start_at_even_second", c.StartAtEvenSecond),
+		zap.Int("buffer_size", c.BufferSize),
+		zap.Int("health_check_port", c.HealthCheckPort),
+		zap.Bool("otel_enabled", c.OpenTelemetry.Enabled),
+		zap.String("otel_service_name", c.OpenTelemetry.ServiceName),
+		zap.String("otel_service_version", c.OpenTelemetry.ServiceVersion),
+		zap.String("otel_environment", c.OpenTelemetry.Environment),
+		zap.Bool("otel_traces_enabled", c.OpenTelemetry.Traces.Enabled),
+		zap.Bool("otel_traces_endpoint_set", c.OpenTelemetry.Traces.Endpoint != ""),
+		zap.Float64("otel_traces_sampling_ratio", c.OpenTelemetry.Traces.SamplingRatio),
+		zap.Bool("otel_metrics_enabled", c.OpenTelemetry.Metrics.Enabled),
+		zap.Bool("otel_metrics_endpoint_set", c.OpenTelemetry.Metrics.Endpoint != ""),
+		zap.Int("otel_metrics_interval_ms", c.OpenTelemetry.Metrics.IntervalMillis),
+		zap.Bool("otel_runtime_metrics_enabled", c.OpenTelemetry.Metrics.EnableRuntimeMetrics),
+		zap.String("log_format", c.Logging.Format),
+		zap.String("log_level", c.Logging.Level),
+	)
 }
 
 // redactURL removes credentials from URLs for logging

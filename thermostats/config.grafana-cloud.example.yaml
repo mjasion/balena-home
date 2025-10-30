@@ -1,0 +1,154 @@
+# Example configuration for Grafana Cloud OpenTelemetry integration
+# Copy this file to config.yaml and fill in your credentials
+
+# BLE scanning configuration (same as regular config.yaml)
+ble:
+  sensors:
+    - name: Sypialnia
+      id: 1
+      macAddress: A4:C1:38:ED:C0:21
+    - name: Salon
+      id: 2
+      macAddress: A4:C1:38:26:E2:4C
+    - name: Łazienka
+      id: 3
+      macAddress: A4:C1:38:F1:2D:0D
+    - name: Balkon
+      id: 4
+      macAddress: A4:C1:38:3E:5F:D1
+
+# Netatmo thermostat integration
+netatmo:
+  enabled: true
+  # Use environment variables: NETATMO_CLIENT_ID, NETATMO_CLIENT_SECRET, NETATMO_REFRESH_TOKEN
+  clientId: ""
+  clientSecret: ""
+  refreshToken: ""
+  fetchIntervalSeconds: 60
+
+# Prometheus metrics push configuration
+prometheus:
+  pushIntervalSeconds: 30
+  # Grafana Cloud Prometheus endpoint
+  prometheusUrl: "https://prometheus-prod-XX-YY-ZZ.grafana.net/api/prom/push"
+  # Grafana Cloud instance ID
+  prometheusUsername: "YOUR_INSTANCE_ID"
+  # Use PROMETHEUS_PASSWORD environment variable for API key
+  prometheusPassword: ""
+  startAtEvenSecond: true
+  bufferSize: 100000
+  batchSize: 1000
+
+# OpenTelemetry configuration for Grafana Cloud
+opentelemetry:
+  # Enable OpenTelemetry instrumentation
+  enabled: true
+
+  # Service identification
+  serviceName: "thermostats-ble"
+  serviceVersion: "1.0.0"
+  environment: "production"
+
+  # Traces configuration (Grafana Cloud Tempo)
+  traces:
+    enabled: true
+
+    # Grafana Cloud OTLP endpoint for traces
+    # Format: https://otlp-gateway-{region}.grafana.net/otlp
+    # Example regions: prod-us-central-0, prod-eu-west-0, prod-ap-southeast-0
+    # Set via: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT environment variable
+    endpoint: "https://otlp-gateway-prod-us-central-0.grafana.net/otlp"
+
+    # Authentication headers
+    # Use OTEL_EXPORTER_OTLP_TRACES_HEADERS environment variable
+    # Format: "Authorization=Basic <base64(instanceId:grafanaCloudAccessToken)>"
+    #
+    # To generate the base64 token:
+    # echo -n "YOUR_INSTANCE_ID:YOUR_GRAFANA_CLOUD_ACCESS_TOKEN" | base64
+    #
+    # Example:
+    # export OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Basic eW91cl9pbnN0YW5jZV9pZDp5b3VyX3Rva2Vu"
+    headers: {}
+
+    # Sampling ratio (1.0 = 100%, 0.1 = 10%)
+    # For high-volume services, consider reducing to 0.1 or 0.01
+    samplingRatio: 1.0
+
+    # Batch processor configuration
+    batch:
+      scheduleDelayMillis: 5000
+      maxQueueSize: 2048
+      maxExportBatchSize: 512
+
+  # Metrics configuration (Grafana Cloud Prometheus via OTLP)
+  metrics:
+    enabled: true
+
+    # Grafana Cloud OTLP endpoint for metrics
+    # Typically the same as traces endpoint
+    # Set via: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT environment variable
+    endpoint: "https://otlp-gateway-prod-us-central-0.grafana.net/otlp"
+
+    # Authentication headers (same format as traces)
+    # Use OTEL_EXPORTER_OTLP_METRICS_HEADERS environment variable
+    headers: {}
+
+    # Metric collection and export interval (30 seconds)
+    intervalMillis: 30000
+
+    # Enable Go runtime metrics (goroutines, memory, GC)
+    enableRuntimeMetrics: true
+
+  # Resource attributes (additional metadata for all traces/metrics)
+  resourceAttributes:
+    deployment.datacenter: "home"
+    host.type: "raspberry-pi"
+    # Add any custom attributes here
+
+# Logging configuration
+logging:
+  # Use "json" for production to integrate with log aggregation
+  logFormat: "json"
+  logLevel: "info"
+
+# ------------------------------------------------------------------------------
+# Grafana Cloud Setup Instructions
+# ------------------------------------------------------------------------------
+#
+# 1. Create a Grafana Cloud account at https://grafana.com/
+#
+# 2. Get your credentials from the Grafana Cloud portal:
+#    - Stack URL: https://grafana.com/orgs/YOUR_ORG/stacks
+#    - Instance ID: Found in stack settings
+#    - Access Token: Generate from "Access Policies" section
+#
+# 3. Determine your OTLP endpoint based on your region:
+#    - US Central: https://otlp-gateway-prod-us-central-0.grafana.net/otlp
+#    - EU West: https://otlp-gateway-prod-eu-west-0.grafana.net/otlp
+#    - AP Southeast: https://otlp-gateway-prod-ap-southeast-0.grafana.net/otlp
+#
+# 4. Generate authentication token:
+#    echo -n "YOUR_INSTANCE_ID:YOUR_ACCESS_TOKEN" | base64
+#
+# 5. Set environment variables:
+#    export OTEL_EXPORTER_OTLP_ENDPOINT="https://otlp-gateway-prod-us-central-0.grafana.net/otlp"
+#    export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic YOUR_BASE64_TOKEN"
+#
+# 6. Run the service:
+#    ./thermostats -c config.grafana-cloud.yaml
+#
+# 7. View traces in Grafana:
+#    - Navigate to your Grafana Cloud instance
+#    - Go to Explore -> Select Tempo data source
+#    - Search for service.name="thermostats-ble"
+#
+# 8. View metrics in Grafana:
+#    - Navigate to Explore -> Select Prometheus data source
+#    - Query: {service_name="thermostats-ble"}
+#
+# 9. Create dashboards:
+#    - Traces: Use TraceQL queries in Tempo
+#    - Metrics: Use PromQL queries in Prometheus
+#    - Correlate traces and metrics using exemplars
+#
+# ------------------------------------------------------------------------------

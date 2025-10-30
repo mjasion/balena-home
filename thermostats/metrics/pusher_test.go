@@ -356,7 +356,7 @@ func TestBuildWriteRequest(t *testing.T) {
 		},
 	}
 
-	writeReq, err := pusher.buildWriteRequest(wrapBLEReadings(readings))
+	writeReq, err := pusher.buildWriteRequest(context.Background(), wrapBLEReadings(readings))
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}

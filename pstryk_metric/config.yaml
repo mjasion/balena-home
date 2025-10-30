@@ -38,9 +38,75 @@ bufferSize: 5000
 
 # Logging configuration
 logging:
-  # Log format: "console" (human-readable) or "json" (structured)
-  # Use "console" for development, "json" for production
+  # Log format: "console" (human-readable), "json" (structured), or "logfmt"
+  # Use "console" for development, "json" or "logfmt" for production
   logFormat: "console"
 
   # Log level: "debug", "info", "warn", "error"
   logLevel: "info"
+
+# OpenTelemetry tracing and metrics configuration
+opentelemetry:
+  # Enable OpenTelemetry instrumentation
+  enabled: false
+
+  # Service name for traces and metrics (identifies this service in Grafana)
+  serviceName: "pstryk-metric"
+
+  # Service version (appears in traces and metrics)
+  serviceVersion: "1.0.0"
+
+  # Deployment environment (e.g., production, staging, development)
+  environment: "production"
+
+  # OTLP trace exporter configuration
+  traces:
+    # Enable trace collection and export
+    enabled: true
+
+    # OTLP endpoint for traces (Grafana Cloud Tempo endpoint)
+    # Format: https://otlp-gateway-{region}.grafana.net/otlp
+    # or use OTEL_EXPORTER_OTLP_TRACES_ENDPOINT env var
+    endpoint: ""
+
+    # Authentication headers for Grafana Cloud
+    # Use OTEL_EXPORTER_OTLP_TRACES_HEADERS env var for security
+    # Format: "Authorization=Basic base64(instanceId:grafanaCloudAccessToken)"
+    headers: {}
+
+    # Sampling configuration
+    # samplingRatio: 1.0 means trace 100% of requests (adjust for high volume)
+    samplingRatio: 1.0
+
+    # Batch processor configuration
+    batch:
+      # Maximum time to wait before exporting a batch (milliseconds)
+      scheduleDelayMillis: 5000
+      # Maximum batch size
+      maxQueueSize: 2048
+      # Maximum export batch size
+      maxExportBatchSize: 512
+
+  # OTLP metrics exporter configuration
+  metrics:
+    # Enable metrics collection and export
+    enabled: true
+
+    # OTLP endpoint for metrics (can be same as traces or different)
+    # Use OTEL_EXPORTER_OTLP_METRICS_ENDPOINT env var
+    endpoint: ""
+
+    # Authentication headers (same format as traces)
+    headers: {}
+
+    # Metric collection interval in milliseconds
+    intervalMillis: 30000
+
+    # Enable runtime metrics (Go runtime stats: goroutines, memory, GC)
+    enableRuntimeMetrics: true
+
+  # Resource attributes (additional metadata attached to all traces and metrics)
+  resourceAttributes:
+    # Example: Add custom attributes
+    # deployment.datacenter: "us-central1"
+    # host.type: "raspberry-pi"

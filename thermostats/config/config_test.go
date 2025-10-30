@@ -435,7 +435,7 @@ func TestValidate_LogLevel(t *testing.T) {
 	}
 }
 
-func TestInitLogger_ConsoleFormat(t *testing.T) {
+func TestNewLogger_ConsoleFormat(t *testing.T) {
 	config := Config{
 		Logging: LoggingConfig{
 			Format: "console",
@@ -443,7 +443,7 @@ func TestInitLogger_ConsoleFormat(t *testing.T) {
 		},
 	}
 
-	logger, err := config.InitLogger()
+	logger, err := config.NewLogger()
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestInitLogger_ConsoleFormat(t *testing.T) {
 	logger.Sync()
 }
 
-func TestInitLogger_JSONFormat(t *testing.T) {
+func TestNewLogger_JSONFormat(t *testing.T) {
 	config := Config{
 		Logging: LoggingConfig{
 			Format: "json",
@@ -464,7 +464,7 @@ func TestInitLogger_JSONFormat(t *testing.T) {
 		},
 	}
 
-	logger, err := config.InitLogger()
+	logger, err := config.NewLogger()
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -477,7 +477,7 @@ func TestInitLogger_JSONFormat(t *testing.T) {
 	logger.Sync()
 }
 
-func TestInitLogger_AllLevels(t *testing.T) {
+func TestNewLogger_AllLevels(t *testing.T) {
 	levels := []string{"debug", "info", "warn", "error"}
 
 	for _, level := range levels {
@@ -489,7 +489,7 @@ func TestInitLogger_AllLevels(t *testing.T) {
 				},
 			}
 
-			logger, err := config.InitLogger()
+			logger, err := config.NewLogger()
 			if err != nil {
 				t.Fatalf("Expected no error for level %s, got: %v", level, err)
 			}
