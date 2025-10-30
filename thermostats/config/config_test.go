@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	pkgconfig "github.com/mjasion/balena-home/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -133,7 +134,7 @@ func TestValidate_MissingRequiredFields(t *testing.T) {
 					BufferSize:          1000,
 				BatchSize:           1000,
 				},
-				Logging: LoggingConfig{
+				Logging: pkgconfig.LoggingConfig{
 					Format: "console",
 					Level:  "info",
 				},
@@ -155,7 +156,7 @@ func TestValidate_MissingRequiredFields(t *testing.T) {
 					BufferSize:          1000,
 				BatchSize:           1000,
 				},
-				Logging: LoggingConfig{
+				Logging: pkgconfig.LoggingConfig{
 					Format: "console",
 					Level:  "info",
 				},
@@ -177,7 +178,7 @@ func TestValidate_MissingRequiredFields(t *testing.T) {
 					BufferSize:          1000,
 				BatchSize:           1000,
 				},
-				Logging: LoggingConfig{
+				Logging: pkgconfig.LoggingConfig{
 					Format: "console",
 					Level:  "info",
 				},
@@ -230,7 +231,7 @@ func TestValidate_InvalidMACAddress(t *testing.T) {
 					BufferSize:          1000,
 				BatchSize:           1000,
 				},
-				Logging: LoggingConfig{
+				Logging: pkgconfig.LoggingConfig{
 					Format: "console",
 					Level:  "info",
 				},
@@ -275,7 +276,7 @@ func TestValidate_PushInterval(t *testing.T) {
 					BufferSize:          1000,
 				BatchSize:           1000,
 				},
-				Logging: LoggingConfig{
+				Logging: pkgconfig.LoggingConfig{
 					Format: "console",
 					Level:  "info",
 				},
@@ -324,7 +325,7 @@ func TestValidate_BufferSize(t *testing.T) {
 					BufferSize:          tt.bufferCapacity,
 				BatchSize:           1000,
 				},
-				Logging: LoggingConfig{
+				Logging: pkgconfig.LoggingConfig{
 					Format: "console",
 					Level:  "info",
 				},
@@ -370,7 +371,7 @@ func TestValidate_LogFormat(t *testing.T) {
 					BufferSize:          1000,
 				BatchSize:           1000,
 				},
-				Logging: LoggingConfig{
+				Logging: pkgconfig.LoggingConfig{
 					Format: tt.format,
 					Level:  "info",
 				},
@@ -418,7 +419,7 @@ func TestValidate_LogLevel(t *testing.T) {
 					BufferSize:          1000,
 				BatchSize:           1000,
 				},
-				Logging: LoggingConfig{
+				Logging: pkgconfig.LoggingConfig{
 					Format: "console",
 					Level:  tt.level,
 				},
@@ -437,7 +438,7 @@ func TestValidate_LogLevel(t *testing.T) {
 
 func TestNewLogger_ConsoleFormat(t *testing.T) {
 	config := Config{
-		Logging: LoggingConfig{
+		Logging: pkgconfig.LoggingConfig{
 			Format: "console",
 			Level:  "info",
 		},
@@ -458,7 +459,7 @@ func TestNewLogger_ConsoleFormat(t *testing.T) {
 
 func TestNewLogger_JSONFormat(t *testing.T) {
 	config := Config{
-		Logging: LoggingConfig{
+		Logging: pkgconfig.LoggingConfig{
 			Format: "json",
 			Level:  "debug",
 		},
@@ -483,7 +484,7 @@ func TestNewLogger_AllLevels(t *testing.T) {
 	for _, level := range levels {
 		t.Run(level, func(t *testing.T) {
 			config := Config{
-				Logging: LoggingConfig{
+				Logging: pkgconfig.LoggingConfig{
 					Format: "console",
 					Level:  level,
 				},
@@ -520,7 +521,7 @@ func TestPrintConfig(t *testing.T) {
 			BufferSize:        1000,
 		BatchSize:         1000,
 		},
-		Logging: LoggingConfig{
+		Logging: pkgconfig.LoggingConfig{
 			Format: "console",
 			Level:  "info",
 		},

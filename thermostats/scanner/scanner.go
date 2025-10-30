@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mjasion/balena-home/thermostats/buffer"
+	"github.com/mjasion/balena-home/pkg/buffer"
+	"github.com/mjasion/balena-home/pkg/types"
 	"github.com/mjasion/balena-home/thermostats/decoder"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -35,12 +36,12 @@ type SensorConfig struct {
 type Scanner struct {
 	adapter    *bluetooth.Adapter
 	sensorMACs map[string]SensorInfo // Map of MAC address to sensor info
-	buffer     *buffer.RingBuffer
+	buffer     *buffer.RingBuffer[*types.Reading]
 	logger     *zap.Logger
 }
 
 // New creates a new BLE scanner
-func New(sensors []SensorConfig, buf *buffer.RingBuffer, logger *zap.Logger) *Scanner {
+func New(sensors []SensorConfig, buf *buffer.RingBuffer[*types.Reading], logger *zap.Logger) *Scanner {
 	// Convert sensor list to map for fast lookup
 	macMap := make(map[string]SensorInfo)
 	for _, sensor := range sensors {
@@ -135,9 +136,9 @@ func (s *Scanner) Start(ctx context.Context) error {
 				}
 
 				// Add to buffer
-				bufReading := &buffer.Reading{
-					Type: buffer.ReadingTypeBLE,
-					BLE: &buffer.SensorReading{
+				bufReading := &types.Reading{
+					Type: types.ReadingTypeBLE,
+					BLE: &types.BLEReading{
 						Timestamp:          reading.Timestamp,
 						MAC:                reading.MAC,
 						SensorName:         sensorInfo.Name,

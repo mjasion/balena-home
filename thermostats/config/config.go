@@ -2,23 +2,21 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 
 	"github.com/ilyakaznacheev/cleanenv"
-	"github.com/jsternberg/zap-logfmt"
+	pkgconfig "github.com/mjasion/balena-home/pkg/config"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 // Config represents the application configuration
 type Config struct {
-	BLE           BLEConfig           `yaml:"ble"`
-	Netatmo       NetatmoConfig       `yaml:"netatmo"`
-	Prometheus    PrometheusConfig    `yaml:"prometheus"`
-	OpenTelemetry OpenTelemetryConfig `yaml:"opentelemetry"`
-	Logging       LoggingConfig       `yaml:"logging"`
+	BLE           BLEConfig                       `yaml:"ble"`
+	Netatmo       NetatmoConfig                   `yaml:"netatmo"`
+	Prometheus    PrometheusConfig                `yaml:"prometheus"`
+	OpenTelemetry pkgconfig.OpenTelemetryConfig   `yaml:"opentelemetry"`
+	Logging       pkgconfig.LoggingConfig         `yaml:"logging"`
 }
 
 // BLEConfig contains BLE scanning configuration
@@ -51,48 +49,6 @@ type PrometheusConfig struct {
 	StartAtEvenSecond   bool   `yaml:"startAtEvenSecond" env:"START_AT_EVEN_SECOND" env-default:"true"`
 	BufferSize          int    `yaml:"bufferSize" env:"BUFFER_SIZE" env-default:"1000"`
 	BatchSize           int    `yaml:"batchSize" env:"BATCH_SIZE" env-default:"1000"`
-}
-
-// LoggingConfig contains logging configuration
-type LoggingConfig struct {
-	Format string `yaml:"logFormat" env:"LOG_FORMAT" env-default:"console"`
-	Level  string `yaml:"logLevel" env:"LOG_LEVEL" env-default:"info"`
-}
-
-// OpenTelemetryConfig contains OpenTelemetry configuration
-type OpenTelemetryConfig struct {
-	Enabled            bool                     `yaml:"enabled" env:"OTEL_ENABLED" env-default:"false"`
-	ServiceName        string                   `yaml:"serviceName" env:"OTEL_SERVICE_NAME" env-default:"thermostats-ble"`
-	ServiceVersion     string                   `yaml:"serviceVersion" env:"OTEL_SERVICE_VERSION" env-default:"1.0.0"`
-	Environment        string                   `yaml:"environment" env:"OTEL_ENVIRONMENT" env-default:"production"`
-	Traces             OTelTracesConfig         `yaml:"traces"`
-	Metrics            OTelMetricsConfig        `yaml:"metrics"`
-	ResourceAttributes map[string]string        `yaml:"resourceAttributes"`
-}
-
-// OTelTracesConfig contains OpenTelemetry traces configuration
-type OTelTracesConfig struct {
-	Enabled        bool                    `yaml:"enabled" env:"OTEL_TRACES_ENABLED" env-default:"true"`
-	Endpoint       string                  `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"`
-	Headers        map[string]string       `yaml:"headers"`
-	SamplingRatio  float64                 `yaml:"samplingRatio" env:"OTEL_TRACES_SAMPLING_RATIO" env-default:"1.0"`
-	Batch          OTelBatchConfig         `yaml:"batch"`
-}
-
-// OTelMetricsConfig contains OpenTelemetry metrics configuration
-type OTelMetricsConfig struct {
-	Enabled              bool              `yaml:"enabled" env:"OTEL_METRICS_ENABLED" env-default:"true"`
-	Endpoint             string            `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"`
-	Headers              map[string]string `yaml:"headers"`
-	IntervalMillis       int               `yaml:"intervalMillis" env:"OTEL_METRICS_INTERVAL" env-default:"30000"`
-	EnableRuntimeMetrics bool              `yaml:"enableRuntimeMetrics" env:"OTEL_ENABLE_RUNTIME_METRICS" env-default:"true"`
-}
-
-// OTelBatchConfig contains batch processor configuration for traces
-type OTelBatchConfig struct {
-	ScheduleDelayMillis  int `yaml:"scheduleDelayMillis" env:"OTEL_BSP_SCHEDULE_DELAY" env-default:"5000"`
-	MaxQueueSize         int `yaml:"maxQueueSize" env:"OTEL_BSP_MAX_QUEUE_SIZE" env-default:"2048"`
-	MaxExportBatchSize   int `yaml:"maxExportBatchSize" env:"OTEL_BSP_MAX_EXPORT_BATCH_SIZE" env-default:"512"`
 }
 
 var macAddressRegex = regexp.MustCompile(`^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$`)
@@ -190,66 +146,14 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("batch size must be at least 1")
 	}
 
-	// Validate log format
-	c.Logging.Format = strings.ToLower(c.Logging.Format)
-	if c.Logging.Format != "console" && c.Logging.Format != "json" && c.Logging.Format != "logfmt" {
-		return fmt.Errorf("log format must be 'console', 'json', or 'logfmt', got: %s", c.Logging.Format)
+	// Validate logging configuration
+	if err := pkgconfig.ValidateLogging(&c.Logging); err != nil {
+		return fmt.Errorf("logging validation failed: %w", err)
 	}
 
-	// Validate log level
-	c.Logging.Level = strings.ToLower(c.Logging.Level)
-	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
-	if !validLevels[c.Logging.Level] {
-		return fmt.Errorf("log level must be one of: debug, info, warn, error, got: %s", c.Logging.Level)
-	}
-
-	// Validate OpenTelemetry configuration if enabled
-	if c.OpenTelemetry.Enabled {
-		// Validate service name
-		if c.OpenTelemetry.ServiceName == "" {
-			return fmt.Errorf("opentelemetry service name is required when OpenTelemetry is enabled")
-		}
-
-		// Validate traces configuration
-		if c.OpenTelemetry.Traces.Enabled {
-			if c.OpenTelemetry.Traces.Endpoint == "" {
-				// Check environment variable fallback
-				if os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") == "" && os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-					return fmt.Errorf("opentelemetry traces endpoint is required when traces are enabled")
-				}
-			}
-
-			// Validate sampling ratio
-			if c.OpenTelemetry.Traces.SamplingRatio < 0 || c.OpenTelemetry.Traces.SamplingRatio > 1 {
-				return fmt.Errorf("opentelemetry traces sampling ratio must be between 0 and 1, got: %f", c.OpenTelemetry.Traces.SamplingRatio)
-			}
-
-			// Validate batch configuration
-			if c.OpenTelemetry.Traces.Batch.ScheduleDelayMillis < 0 {
-				return fmt.Errorf("opentelemetry traces batch schedule delay must be >= 0")
-			}
-			if c.OpenTelemetry.Traces.Batch.MaxQueueSize < 1 {
-				return fmt.Errorf("opentelemetry traces batch max queue size must be >= 1")
-			}
-			if c.OpenTelemetry.Traces.Batch.MaxExportBatchSize < 1 {
-				return fmt.Errorf("opentelemetry traces batch max export batch size must be >= 1")
-			}
-		}
-
-		// Validate metrics configuration
-		if c.OpenTelemetry.Metrics.Enabled {
-			if c.OpenTelemetry.Metrics.Endpoint == "" {
-				// Check environment variable fallback
-				if os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" && os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-					return fmt.Errorf("opentelemetry metrics endpoint is required when metrics are enabled")
-				}
-			}
-
-			// Validate interval
-			if c.OpenTelemetry.Metrics.IntervalMillis < 1000 {
-				return fmt.Errorf("opentelemetry metrics interval must be at least 1000ms (1 second)")
-			}
-		}
+	// Validate OpenTelemetry configuration
+	if err := pkgconfig.ValidateOpenTelemetry(&c.OpenTelemetry); err != nil {
+		return fmt.Errorf("opentelemetry validation failed: %w", err)
 	}
 
 	return nil
@@ -257,85 +161,7 @@ func (c *Config) Validate() error {
 
 // NewLogger creates a zap logger based on the logging configuration
 func (c *Config) NewLogger() (*zap.Logger, error) {
-	// Parse log level
-	var level zapcore.Level
-	switch c.Logging.Level {
-	case "debug":
-		level = zapcore.DebugLevel
-	case "info":
-		level = zapcore.InfoLevel
-	case "warn":
-		level = zapcore.WarnLevel
-	case "error":
-		level = zapcore.ErrorLevel
-	default:
-		level = zapcore.InfoLevel
-	}
-
-	// Handle logfmt format
-	if c.Logging.Format == "logfmt" {
-		encoderConfig := zapcore.EncoderConfig{
-			TimeKey:        "ts",
-			LevelKey:       "level",
-			NameKey:        "logger",
-			CallerKey:      "caller",
-			MessageKey:     "msg",
-			StacktraceKey:  "stacktrace",
-			LineEnding:     zapcore.DefaultLineEnding,
-			EncodeLevel:    zapcore.LowercaseLevelEncoder,
-			EncodeTime:     zapcore.ISO8601TimeEncoder,
-			EncodeDuration: zapcore.StringDurationEncoder,
-			EncodeCaller:   zapcore.ShortCallerEncoder,
-		}
-
-		core := zapcore.NewCore(
-			zaplogfmt.NewEncoder(encoderConfig),
-			zapcore.AddSync(os.Stdout),
-			level,
-		)
-
-		return zap.New(core), nil
-	}
-
-	// Create encoder config for json and console
-	encoderConfig := zap.NewProductionEncoderConfig()
-	encoderConfig.TimeKey = "ts"
-	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	encoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
-
-	// Create logger based on format
-	var logger *zap.Logger
-	if c.Logging.Format == "json" {
-		config := zap.Config{
-			Level:            zap.NewAtomicLevelAt(level),
-			Encoding:         "json",
-			EncoderConfig:    encoderConfig,
-			OutputPaths:      []string{"stdout"},
-			ErrorOutputPaths: []string{"stderr"},
-		}
-		var err error
-		logger, err = config.Build()
-		if err != nil {
-			return nil, fmt.Errorf("failed to build JSON logger: %w", err)
-		}
-	} else {
-		// Console format
-		encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
-		config := zap.Config{
-			Level:            zap.NewAtomicLevelAt(level),
-			Encoding:         "console",
-			EncoderConfig:    encoderConfig,
-			OutputPaths:      []string{"stdout"},
-			ErrorOutputPaths: []string{"stderr"},
-		}
-		var err error
-		logger, err = config.Build()
-		if err != nil {
-			return nil, fmt.Errorf("failed to build console logger: %w", err)
-		}
-	}
-
-	return logger, nil
+	return pkgconfig.NewLogger(&c.Logging)
 }
 
 // Redacted returns a copy of the config with sensitive fields redacted for logging

@@ -3,13 +3,11 @@ package config
 import (
 	"fmt"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/ilyakaznacheev/cleanenv"
-	"github.com/jsternberg/zap-logfmt"
+	pkgconfig "github.com/mjasion/balena-home/pkg/config"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 // Config holds all configuration parameters for the energy meter scraper
@@ -38,52 +36,10 @@ type Config struct {
 	HealthCheckPort int `yaml:"healthCheckPort" env:"HEALTH_CHECK_PORT" env-default:"8080"`
 
 	// Logging configuration
-	Logging LoggingConfig `yaml:"logging"`
+	Logging pkgconfig.LoggingConfig `yaml:"logging"`
 
 	// OpenTelemetry configuration
-	OpenTelemetry OpenTelemetryConfig `yaml:"opentelemetry"`
-}
-
-// LoggingConfig contains logging configuration
-type LoggingConfig struct {
-	Format string `yaml:"logFormat" env:"LOG_FORMAT" env-default:"console"`
-	Level  string `yaml:"logLevel" env:"LOG_LEVEL" env-default:"info"`
-}
-
-// OpenTelemetryConfig contains OpenTelemetry configuration
-type OpenTelemetryConfig struct {
-	Enabled            bool                  `yaml:"enabled" env:"OTEL_ENABLED" env-default:"false"`
-	ServiceName        string                `yaml:"serviceName" env:"OTEL_SERVICE_NAME" env-default:"pstryk-metric"`
-	ServiceVersion     string                `yaml:"serviceVersion" env:"OTEL_SERVICE_VERSION" env-default:"1.0.0"`
-	Environment        string                `yaml:"environment" env:"OTEL_ENVIRONMENT" env-default:"production"`
-	Traces             OTelTracesConfig      `yaml:"traces"`
-	Metrics            OTelMetricsConfig     `yaml:"metrics"`
-	ResourceAttributes map[string]string     `yaml:"resourceAttributes"`
-}
-
-// OTelTracesConfig contains OpenTelemetry traces configuration
-type OTelTracesConfig struct {
-	Enabled       bool              `yaml:"enabled" env:"OTEL_TRACES_ENABLED" env-default:"true"`
-	Endpoint      string            `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"`
-	Headers       map[string]string `yaml:"headers"`
-	SamplingRatio float64           `yaml:"samplingRatio" env:"OTEL_TRACES_SAMPLING_RATIO" env-default:"1.0"`
-	Batch         OTelBatchConfig   `yaml:"batch"`
-}
-
-// OTelMetricsConfig contains OpenTelemetry metrics configuration
-type OTelMetricsConfig struct {
-	Enabled              bool              `yaml:"enabled" env:"OTEL_METRICS_ENABLED" env-default:"true"`
-	Endpoint             string            `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"`
-	Headers              map[string]string `yaml:"headers"`
-	IntervalMillis       int               `yaml:"intervalMillis" env:"OTEL_METRICS_INTERVAL" env-default:"30000"`
-	EnableRuntimeMetrics bool              `yaml:"enableRuntimeMetrics" env:"OTEL_ENABLE_RUNTIME_METRICS" env-default:"true"`
-}
-
-// OTelBatchConfig contains batch processor configuration for traces
-type OTelBatchConfig struct {
-	ScheduleDelayMillis int `yaml:"scheduleDelayMillis" env:"OTEL_BSP_SCHEDULE_DELAY" env-default:"5000"`
-	MaxQueueSize        int `yaml:"maxQueueSize" env:"OTEL_BSP_MAX_QUEUE_SIZE" env-default:"2048"`
-	MaxExportBatchSize  int `yaml:"maxExportBatchSize" env:"OTEL_BSP_MAX_EXPORT_BATCH_SIZE" env-default:"512"`
+	OpenTelemetry pkgconfig.OpenTelemetryConfig `yaml:"opentelemetry"`
 }
 
 // Load reads configuration from the specified file path and applies environment variable overrides
@@ -141,71 +97,14 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("metricName cannot be empty")
 	}
 
-	// Validate log format
-	c.Logging.Format = strings.ToLower(c.Logging.Format)
-	if c.Logging.Format != "json" && c.Logging.Format != "console" && c.Logging.Format != "logfmt" {
-		return fmt.Errorf("logFormat must be 'json', 'console', or 'logfmt', got '%s'", c.Logging.Format)
+	// Validate logging configuration
+	if err := pkgconfig.ValidateLogging(&c.Logging); err != nil {
+		return fmt.Errorf("logging validation failed: %w", err)
 	}
 
-	// Validate log level
-	c.Logging.Level = strings.ToLower(c.Logging.Level)
-	validLevels := map[string]bool{
-		"debug": true,
-		"info":  true,
-		"warn":  true,
-		"error": true,
-	}
-	if !validLevels[c.Logging.Level] {
-		return fmt.Errorf("logLevel must be one of: debug, info, warn, error, got '%s'", c.Logging.Level)
-	}
-
-	// Validate OpenTelemetry configuration if enabled
-	if c.OpenTelemetry.Enabled {
-		// Validate service name
-		if c.OpenTelemetry.ServiceName == "" {
-			return fmt.Errorf("opentelemetry service name is required when OpenTelemetry is enabled")
-		}
-
-		// Validate traces configuration
-		if c.OpenTelemetry.Traces.Enabled {
-			if c.OpenTelemetry.Traces.Endpoint == "" {
-				// Check environment variable fallback
-				if os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") == "" && os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-					return fmt.Errorf("opentelemetry traces endpoint is required when traces are enabled")
-				}
-			}
-
-			// Validate sampling ratio
-			if c.OpenTelemetry.Traces.SamplingRatio < 0 || c.OpenTelemetry.Traces.SamplingRatio > 1 {
-				return fmt.Errorf("opentelemetry traces sampling ratio must be between 0 and 1, got: %f", c.OpenTelemetry.Traces.SamplingRatio)
-			}
-
-			// Validate batch configuration
-			if c.OpenTelemetry.Traces.Batch.ScheduleDelayMillis < 0 {
-				return fmt.Errorf("opentelemetry traces batch schedule delay must be >= 0")
-			}
-			if c.OpenTelemetry.Traces.Batch.MaxQueueSize < 1 {
-				return fmt.Errorf("opentelemetry traces batch max queue size must be >= 1")
-			}
-			if c.OpenTelemetry.Traces.Batch.MaxExportBatchSize < 1 {
-				return fmt.Errorf("opentelemetry traces batch max export batch size must be >= 1")
-			}
-		}
-
-		// Validate metrics configuration
-		if c.OpenTelemetry.Metrics.Enabled {
-			if c.OpenTelemetry.Metrics.Endpoint == "" {
-				// Check environment variable fallback
-				if os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" && os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-					return fmt.Errorf("opentelemetry metrics endpoint is required when metrics are enabled")
-				}
-			}
-
-			// Validate interval
-			if c.OpenTelemetry.Metrics.IntervalMillis < 1000 {
-				return fmt.Errorf("opentelemetry metrics interval must be at least 1000ms (1 second)")
-			}
-		}
+	// Validate OpenTelemetry configuration
+	if err := pkgconfig.ValidateOpenTelemetry(&c.OpenTelemetry); err != nil {
+		return fmt.Errorf("opentelemetry validation failed: %w", err)
 	}
 
 	return nil
@@ -251,57 +150,7 @@ func (c *Config) Redacted() map[string]interface{} {
 
 // NewLogger creates a zap logger based on the configuration
 func (c *Config) NewLogger() (*zap.Logger, error) {
-	// Set log level
-	var level zapcore.Level
-	switch strings.ToLower(c.Logging.Level) {
-	case "debug":
-		level = zapcore.DebugLevel
-	case "info":
-		level = zapcore.InfoLevel
-	case "warn":
-		level = zapcore.WarnLevel
-	case "error":
-		level = zapcore.ErrorLevel
-	default:
-		level = zapcore.InfoLevel
-	}
-
-	// Handle logfmt format separately
-	if c.Logging.Format == "logfmt" {
-		encoderConfig := zapcore.EncoderConfig{
-			TimeKey:        "ts",
-			LevelKey:       "level",
-			NameKey:        "logger",
-			CallerKey:      "caller",
-			MessageKey:     "msg",
-			StacktraceKey:  "stacktrace",
-			LineEnding:     zapcore.DefaultLineEnding,
-			EncodeLevel:    zapcore.LowercaseLevelEncoder,
-			EncodeTime:     zapcore.ISO8601TimeEncoder,
-			EncodeDuration: zapcore.StringDurationEncoder,
-			EncodeCaller:   zapcore.ShortCallerEncoder,
-		}
-
-		core := zapcore.NewCore(
-			zaplogfmt.NewEncoder(encoderConfig),
-			zapcore.AddSync(os.Stdout),
-			level,
-		)
-
-		return zap.New(core), nil
-	}
-
-	// Handle json and console formats
-	var zapConfig zap.Config
-	if c.Logging.Format == "json" {
-		zapConfig = zap.NewProductionConfig()
-	} else {
-		zapConfig = zap.NewDevelopmentConfig()
-	}
-
-	zapConfig.Level = zap.NewAtomicLevelAt(level)
-
-	return zapConfig.Build()
+	return pkgconfig.NewLogger(&c.Logging)
 }
 
 // PrintConfig prints the configuration (masking sensitive fields)

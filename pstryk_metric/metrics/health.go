@@ -6,29 +6,30 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mjasion/balena-home/pstryk_metric/buffer"
+	"github.com/mjasion/balena-home/pkg/buffer"
+	pkgmetrics "github.com/mjasion/balena-home/pkg/metrics"
+	"github.com/mjasion/balena-home/pkg/types"
 	"go.uber.org/zap"
 )
 
 // HealthStatus represents the health status of the service
 type HealthStatus struct {
 	Status          string    `json:"status"`
-	LastScrapeTime  time.Time `json:"lastScrapeTime"`
 	LastPushTime    time.Time `json:"lastPushTime"`
 	BufferedSamples int       `json:"bufferedSamples"`
 }
 
 // HealthChecker provides health check functionality
 type HealthChecker struct {
-	buffer            *buffer.RingBuffer
-	pusher            *Pusher
+	buffer            *buffer.RingBuffer[*types.Reading]
+	pusher            *pkgmetrics.Pusher
 	scrapeInterval    time.Duration
 	healthCheckServer *http.Server
 	logger            *zap.Logger
 }
 
 // NewHealthChecker creates a new HealthChecker instance
-func NewHealthChecker(buf *buffer.RingBuffer, pusher *Pusher, scrapeInterval time.Duration, port int, logger *zap.Logger) *HealthChecker {
+func NewHealthChecker(buf *buffer.RingBuffer[*types.Reading], pusher *pkgmetrics.Pusher, scrapeInterval time.Duration, port int, logger *zap.Logger) *HealthChecker {
 	hc := &HealthChecker{
 		buffer:         buf,
 		pusher:         pusher,
@@ -65,19 +66,17 @@ func (hc *HealthChecker) Stop() error {
 
 // handleHealth responds to health check requests
 func (hc *HealthChecker) handleHealth(w http.ResponseWriter, r *http.Request) {
-	lastScrape := hc.buffer.GetLastScrapeTime()
-	lastPush := hc.pusher.GetLastPushTime()
+	lastPush := hc.pusher.LastPushTime()
 	bufferedSamples := hc.buffer.Size()
 
 	status := HealthStatus{
 		Status:          "healthy",
-		LastScrapeTime:  lastScrape,
 		LastPushTime:    lastPush,
 		BufferedSamples: bufferedSamples,
 	}
 
-	// Check if scraping is stale (more than 2x the scrape interval)
-	if !lastScrape.IsZero() && time.Since(lastScrape) > 2*hc.scrapeInterval {
+	// Check if pushing is stale (more than 3x the scrape interval)
+	if !lastPush.IsZero() && time.Since(lastPush) > 3*hc.scrapeInterval {
 		status.Status = "unhealthy"
 		w.WriteHeader(http.StatusServiceUnavailable)
 	} else {

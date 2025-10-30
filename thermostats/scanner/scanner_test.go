@@ -5,7 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mjasion/balena-home/thermostats/buffer"
+	"github.com/mjasion/balena-home/pkg/buffer"
+	"github.com/mjasion/balena-home/pkg/types"
 	"go.uber.org/zap"
 )
 
@@ -13,7 +14,7 @@ func TestNewScanner(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	ringBuffer := buffer.New[*types.Reading](100, logger)
 
 	sensors := []SensorConfig{
 		{Name: "Sensor1", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
@@ -77,7 +78,7 @@ func TestNewScanner_EmptyMACList(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	ringBuffer := buffer.New[*types.Reading](100, logger)
 
 	scanner := New([]SensorConfig{}, ringBuffer, logger)
 
@@ -94,7 +95,7 @@ func TestNewScanner_DuplicateMACs(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	ringBuffer := buffer.New[*types.Reading](100, logger)
 
 	// Include duplicates and case variations
 	sensors := []SensorConfig{
@@ -126,7 +127,7 @@ func TestNewScanner_MixedCaseMACs(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	ringBuffer := buffer.New[*types.Reading](100, logger)
 
 	sensors := []SensorConfig{
 		{Name: "Sensor1", ID: 1, MACAddress: "a4:c1:38:00:00:01"}, // all lowercase
@@ -154,7 +155,7 @@ func TestNewScanner_LargeMACList(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	ringBuffer := buffer.New[*types.Reading](100, logger)
 
 	// Create a large list of sensor configs
 	var sensors []SensorConfig
@@ -189,7 +190,7 @@ func TestScanner_Structure(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	ringBuffer := buffer.New[*types.Reading](100, logger)
 	sensors := []SensorConfig{
 		{Name: "Sensor1", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
 	}
@@ -218,7 +219,7 @@ func TestScanner_MACFiltering(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	ringBuffer := buffer.New[*types.Reading](100, logger)
 
 	// Only allow specific MACs
 	sensors := []SensorConfig{

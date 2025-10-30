@@ -4,20 +4,21 @@ import (
 	"context"
 	"time"
 
-	"github.com/mjasion/balena-home/thermostats/buffer"
+	"github.com/mjasion/balena-home/pkg/buffer"
+	"github.com/mjasion/balena-home/pkg/types"
 	"go.uber.org/zap"
 )
 
 // Poller periodically fetches thermostat data from Netatmo and adds it to the buffer
 type Poller struct {
 	fetcher      *Fetcher
-	buffer       *buffer.RingBuffer
+	buffer       *buffer.RingBuffer[*types.Reading]
 	logger       *zap.Logger
 	fetchInterval time.Duration
 }
 
 // NewPoller creates a new Netatmo poller
-func NewPoller(fetcher *Fetcher, buf *buffer.RingBuffer, fetchIntervalSeconds int, logger *zap.Logger) *Poller {
+func NewPoller(fetcher *Fetcher, buf *buffer.RingBuffer[*types.Reading], fetchIntervalSeconds int, logger *zap.Logger) *Poller {
 	return &Poller{
 		fetcher:      fetcher,
 		buffer:       buf,
@@ -68,9 +69,9 @@ func (p *Poller) fetchAndBuffer(ctx context.Context) {
 
 	// Convert Netatmo readings to buffer readings and add to buffer
 	for _, reading := range readings {
-		bufferReading := &buffer.Reading{
-			Type: buffer.ReadingTypeNetatmo,
-			Thermostat: &buffer.ThermostatReading{
+		bufferReading := &types.Reading{
+			Type: types.ReadingTypeThermostat,
+			Thermostat: &types.ThermostatReading{
 				Timestamp:           time.Unix(reading.Timestamp, 0),
 				HomeID:              reading.HomeID,
 				HomeName:            reading.HomeName,
