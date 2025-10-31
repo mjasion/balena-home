@@ -4,7 +4,7 @@
 # Build artifacts
 hellpot/HellPot
 wolweb/wolweb
-thermostats/ble-temp-monitor
+home-controller/ble-temp-monitor
 *.exe
 
 # IDE
@@ -13,5 +13,5 @@ thermostats/ble-temp-monitor
 
 # Logs
 *.log
-/thermostats/coverage.out
-/thermostats/thermostats
+/home-controller/coverage.out
+/home-controller/home-controller
