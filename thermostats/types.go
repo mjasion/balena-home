@@ -10,6 +10,7 @@ type ReadingType string
 const (
 	ReadingTypeBLE     ReadingType = "ble"
 	ReadingTypeNetatmo ReadingType = "netatmo"
+	ReadingTypePower   ReadingType = "power"
 )
 
 // SensorReading represents a single temperature sensor reading from BLE sensors
@@ -39,9 +40,17 @@ type ThermostatReading struct {
 	Reachable           bool      `json:"reachable"`
 }
 
-// Reading is a union type that can hold either BLE sensor or Netatmo thermostat readings
+// PowerReading represents an active power measurement from energy meter
+type PowerReading struct {
+	Timestamp time.Time `json:"timestamp"`
+	SensorID  int       `json:"sensor_id"`
+	Value     float64   `json:"value_watts"`
+}
+
+// Reading is a union type that can hold BLE sensor, Netatmo thermostat, or power readings
 type Reading struct {
 	Type       ReadingType
 	BLE        *SensorReading
 	Thermostat *ThermostatReading
+	Power      *PowerReading
 }

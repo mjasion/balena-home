@@ -12,6 +12,7 @@ type ReadingType string
 const (
 	ReadingTypeBLE     ReadingType = "ble"
 	ReadingTypeNetatmo ReadingType = "netatmo"
+	ReadingTypePower   ReadingType = "power"
 )
 
 // SensorReading represents a single temperature sensor reading from BLE
@@ -44,11 +45,19 @@ type ThermostatReading struct {
 	Reachable           bool
 }
 
-// Reading is a union type that can hold either BLE sensor or Netatmo thermostat readings
+// PowerReading represents an active power measurement from energy meter
+type PowerReading struct {
+	Timestamp interface{} // time.Time
+	SensorID  int
+	Value     float64
+}
+
+// Reading is a union type that can hold BLE sensor, Netatmo thermostat, or power readings
 type Reading struct {
 	Type       ReadingType
 	BLE        *SensorReading
 	Thermostat *ThermostatReading
+	Power      *PowerReading
 }
 
 // RingBuffer is a thread-safe circular buffer for sensor readings

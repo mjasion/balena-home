@@ -16,6 +16,7 @@ import (
 type Config struct {
 	BLE        BLEConfig        `yaml:"ble"`
 	Netatmo    NetatmoConfig    `yaml:"netatmo"`
+	Power      PowerConfig      `yaml:"power"`
 	Prometheus PrometheusConfig `yaml:"prometheus"`
 	Logging    LoggingConfig    `yaml:"logging"`
 }
@@ -39,6 +40,14 @@ type NetatmoConfig struct {
 	ClientSecret  string `yaml:"clientSecret" env:"NETATMO_CLIENT_SECRET"`
 	RefreshToken  string `yaml:"refreshToken" env:"NETATMO_REFRESH_TOKEN"`
 	FetchInterval int    `yaml:"fetchIntervalSeconds" env:"NETATMO_FETCH_INTERVAL" env-default:"60"`
+}
+
+// PowerConfig contains power meter scraping configuration
+type PowerConfig struct {
+	Enabled               bool    `yaml:"enabled" env:"POWER_ENABLED" env-default:"false"`
+	ScrapeURL             string  `yaml:"scrapeUrl" env:"POWER_SCRAPE_URL"`
+	ScrapeIntervalSeconds int     `yaml:"scrapeIntervalSeconds" env:"POWER_SCRAPE_INTERVAL" env-default:"2"`
+	ScrapeTimeoutSeconds  float64 `yaml:"scrapeTimeoutSeconds" env:"POWER_SCRAPE_TIMEOUT" env-default:"1.5"`
 }
 
 // PrometheusConfig contains Prometheus metrics push configuration
@@ -126,6 +135,19 @@ func (c *Config) Validate() error {
 		}
 		if c.Netatmo.FetchInterval < 1 {
 			return fmt.Errorf("netatmo fetch interval must be at least 1 second")
+		}
+	}
+
+	// Validate Power configuration if enabled
+	if c.Power.Enabled {
+		if c.Power.ScrapeURL == "" {
+			return fmt.Errorf("power scrape URL is required when power monitoring is enabled")
+		}
+		if c.Power.ScrapeIntervalSeconds < 1 {
+			return fmt.Errorf("power scrape interval must be at least 1 second")
+		}
+		if c.Power.ScrapeTimeoutSeconds <= 0 {
+			return fmt.Errorf("power scrape timeout must be positive")
 		}
 	}
 
@@ -266,6 +288,10 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.Bool("netatmo_enabled", c.Netatmo.Enabled),
 		zap.Bool("netatmo_configured", c.Netatmo.ClientID != "" && c.Netatmo.RefreshToken != ""),
 		zap.Int("netatmo_fetch_interval_seconds", c.Netatmo.FetchInterval),
+		zap.Bool("power_enabled", c.Power.Enabled),
+		zap.String("power_scrape_url", c.Power.ScrapeURL),
+		zap.Int("power_scrape_interval_seconds", c.Power.ScrapeIntervalSeconds),
+		zap.Float64("power_scrape_timeout_seconds", c.Power.ScrapeTimeoutSeconds),
 		zap.Int("push_interval_seconds", c.Prometheus.PushIntervalSeconds),
 		zap.String("prometheus_url", c.Prometheus.URL),
 		zap.String("prometheus_username", c.Prometheus.Username),
