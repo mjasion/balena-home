@@ -132,17 +132,21 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 
 			bleCount := 0
 			netatmoCount := 0
+			powerCount := 0
 			for _, r := range readings {
 				if r.Type == buffer.ReadingTypeBLE {
 					bleCount++
 				} else if r.Type == buffer.ReadingTypeNetatmo {
 					netatmoCount++
+				} else if r.Type == buffer.ReadingTypePower {
+					powerCount++
 				}
 			}
 
 			p.logger.Info("successfully pushed metrics",
 				zap.Int("ble_data_points", bleCount),
 				zap.Int("netatmo_data_points", netatmoCount),
+				zap.Int("power_data_points", powerCount),
 				zap.Int("total_data_points", len(readings)),
 				zap.Int("attempt", attempt),
 			)
@@ -173,9 +177,10 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 func (p *Pusher) buildWriteRequest(readings []*buffer.Reading) (*prompb.WriteRequest, error) {
 	var timeSeries []prompb.TimeSeries
 
-	// Separate BLE and Netatmo readings
+	// Separate BLE, Netatmo, and Power readings
 	var bleReadings []*buffer.SensorReading
 	var netatmoReadings []*buffer.ThermostatReading
+	var powerReadings []*buffer.PowerReading
 
 	for _, reading := range readings {
 		switch reading.Type {
@@ -186,6 +191,10 @@ func (p *Pusher) buildWriteRequest(readings []*buffer.Reading) (*prompb.WriteReq
 		case buffer.ReadingTypeNetatmo:
 			if reading.Thermostat != nil {
 				netatmoReadings = append(netatmoReadings, reading.Thermostat)
+			}
+		case buffer.ReadingTypePower:
+			if reading.Power != nil {
+				powerReadings = append(powerReadings, reading.Power)
 			}
 		}
 	}
@@ -203,6 +212,13 @@ func (p *Pusher) buildWriteRequest(readings []*buffer.Reading) (*prompb.WriteReq
 		return nil, fmt.Errorf("failed to build Netatmo time series: %w", err)
 	}
 	timeSeries = append(timeSeries, netatmoSeries...)
+
+	// Process Power readings
+	powerSeries, err := p.buildPowerTimeSeries(powerReadings)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Power time series: %w", err)
+	}
+	timeSeries = append(timeSeries, powerSeries...)
 
 	return &prompb.WriteRequest{
 		Timeseries: timeSeries,
@@ -478,6 +494,59 @@ func (p *Pusher) pushOnce(ctx context.Context, writeReq *prompb.WriteRequest) er
 // LastPushTime returns the time of the last successful push
 func (p *Pusher) LastPushTime() time.Time {
 	return p.lastPush
+}
+
+// buildPowerTimeSeries builds time series for power meter readings
+func (p *Pusher) buildPowerTimeSeries(readings []*buffer.PowerReading) ([]prompb.TimeSeries, error) {
+	// Group readings by sensor
+	sensorReadings := make(map[int][]*buffer.PowerReading)
+	for _, reading := range readings {
+		sensorReadings[reading.SensorID] = append(sensorReadings[reading.SensorID], reading)
+	}
+
+	// Build time series for each sensor
+	var timeSeries []prompb.TimeSeries
+	for sensorID, sensorData := range sensorReadings {
+		// Create base labels for this sensor
+		baseLabels := []prompb.Label{
+			{
+				Name:  "__name__",
+				Value: "active_power_watts",
+			},
+			{
+				Name:  "sensor_id",
+				Value: fmt.Sprintf("%d", sensorID),
+			},
+		}
+
+		// Prepare samples
+		samples := make([]prompb.Sample, 0, len(sensorData))
+
+		for _, reading := range sensorData {
+			ts, ok := reading.Timestamp.(time.Time)
+			if !ok {
+				p.logger.Warn("invalid timestamp type in power reading",
+					zap.Int("sensor_id", sensorID),
+				)
+				continue
+			}
+			timestampMs := ts.UnixMilli()
+
+			// Add power sample
+			samples = append(samples, prompb.Sample{
+				Value:     reading.Value,
+				Timestamp: timestampMs,
+			})
+		}
+
+		// Add power time series
+		timeSeries = append(timeSeries, prompb.TimeSeries{
+			Labels:  baseLabels,
+			Samples: samples,
+		})
+	}
+
+	return timeSeries, nil
 }
 
 // roundToTenSeconds rounds a time to the nearest 10-second interval

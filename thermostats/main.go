@@ -14,6 +14,7 @@ import (
 	"github.com/mjasion/balena-home/thermostats/config"
 	"github.com/mjasion/balena-home/thermostats/metrics"
 	"github.com/mjasion/balena-home/thermostats/netatmo"
+	"github.com/mjasion/balena-home/thermostats/power"
 	"github.com/mjasion/balena-home/thermostats/scanner"
 	"go.uber.org/zap"
 )
@@ -114,6 +115,32 @@ func main() {
 		}()
 	} else {
 		logger.Info("netatmo integration disabled")
+	}
+
+	// Start Power poller if enabled
+	if cfg.Power.Enabled {
+		logger.Info("power monitoring enabled, starting poller")
+
+		powerScraper := power.New(
+			cfg.Power.ScrapeURL,
+			time.Duration(cfg.Power.ScrapeTimeoutSeconds*float64(time.Second)),
+			logger,
+		)
+
+		powerPoller := power.NewPoller(
+			powerScraper,
+			ringBuffer,
+			cfg.Power.ScrapeIntervalSeconds,
+			logger,
+		)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			powerPoller.Start(ctx)
+		}()
+	} else {
+		logger.Info("power monitoring disabled")
 	}
 
 	// Wait for START_AT_EVEN_SECOND if configured
