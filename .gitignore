@@ -13,3 +13,5 @@ thermostats/ble-temp-monitor
 
 # Logs
 *.log
+/thermostats/coverage.out
+/thermostats/thermostats

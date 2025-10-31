@@ -230,7 +230,7 @@ func (c *Config) InitLogger() (*zap.Logger, error) {
 			level,
 		)
 
-		return zap.New(core), nil
+		return zap.New(core, zap.AddCaller()), nil
 	}
 
 	// Create encoder config for json and console
