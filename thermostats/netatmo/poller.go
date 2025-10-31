@@ -4,20 +4,21 @@ import (
 	"context"
 	"time"
 
-	"github.com/mjasion/balena-home/thermostats/buffer"
+	"github.com/mjasion/balena-home/pkg/buffer"
+	"github.com/mjasion/balena-home/pkg/types"
 	"go.uber.org/zap"
 )
 
 // Poller periodically fetches thermostat data from Netatmo and adds it to the buffer
 type Poller struct {
 	fetcher      *Fetcher
-	buffer       *buffer.RingBuffer
+	buffer       *buffer.RingBuffer[*types.Reading]
 	logger       *zap.Logger
 	fetchInterval time.Duration
 }
 
 // NewPoller creates a new Netatmo poller
-func NewPoller(fetcher *Fetcher, buf *buffer.RingBuffer, fetchIntervalSeconds int, logger *zap.Logger) *Poller {
+func NewPoller(fetcher *Fetcher, buf *buffer.RingBuffer[*types.Reading], fetchIntervalSeconds int, logger *zap.Logger) *Poller {
 	return &Poller{
 		fetcher:      fetcher,
 		buffer:       buf,
@@ -68,9 +69,9 @@ func (p *Poller) fetchAndBuffer(ctx context.Context) {
 
 	// Convert Netatmo readings to buffer readings and add to buffer
 	for _, reading := range readings {
-		bufferReading := &buffer.Reading{
-			Type: buffer.ReadingTypeNetatmo,
-			Thermostat: &buffer.ThermostatReading{
+		bufferReading := &types.Reading{
+			Type: types.ReadingTypeThermostat,
+			Thermostat: &types.ThermostatReading{
 				Timestamp:           time.Unix(reading.Timestamp, 0),
 				HomeID:              reading.HomeID,
 				HomeName:            reading.HomeName,
@@ -86,13 +87,17 @@ func (p *Poller) fetchAndBuffer(ctx context.Context) {
 		}
 		p.buffer.Add(bufferReading)
 
-		p.logger.Debug("added Netatmo reading to buffer",
-			zap.String("home", reading.HomeName),
-			zap.String("room", reading.RoomName),
+		p.logger.Info("added Netatmo reading to buffer",
+			zap.String("home_id", reading.HomeID),
+			zap.String("home_name", reading.HomeName),
+			zap.String("room_id", reading.RoomID),
+			zap.String("room_name", reading.RoomName),
 			zap.Float64("measured_temp", reading.MeasuredTemperature),
 			zap.Float64("setpoint_temp", reading.SetpointTemperature),
 			zap.String("mode", reading.SetpointMode),
-			zap.Int("heating_power", reading.HeatingPowerRequest),
+			zap.Int("heating_power_request", reading.HeatingPowerRequest),
+			zap.Bool("open_window", reading.OpenWindow),
+			zap.Bool("reachable", reading.Reachable),
 		)
 	}
 

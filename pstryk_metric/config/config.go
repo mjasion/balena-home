@@ -3,13 +3,11 @@ package config
 import (
 	"fmt"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/ilyakaznacheev/cleanenv"
-	"github.com/jsternberg/zap-logfmt"
+	pkgconfig "github.com/mjasion/balena-home/pkg/config"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 // Config holds all configuration parameters for the energy meter scraper
@@ -38,8 +36,13 @@ type Config struct {
 	HealthCheckPort int `yaml:"healthCheckPort" env:"HEALTH_CHECK_PORT" env-default:"8080"`
 
 	// Logging configuration
-	LogFormat string `yaml:"logFormat" env:"LOG_FORMAT" env-default:"console"`
-	LogLevel  string `yaml:"logLevel" env:"LOG_LEVEL" env-default:"info"`
+	Logging pkgconfig.LoggingConfig `yaml:"logging"`
+
+	// OpenTelemetry configuration
+	OpenTelemetry pkgconfig.OpenTelemetryConfig `yaml:"opentelemetry"`
+
+	// Profiling configuration
+	Profiling pkgconfig.ProfilingConfig `yaml:"profiling"`
 }
 
 // Load reads configuration from the specified file path and applies environment variable overrides
@@ -97,20 +100,19 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("metricName cannot be empty")
 	}
 
-	// Validate log format
-	if c.LogFormat != "json" && c.LogFormat != "console" && c.LogFormat != "logfmt" {
-		return fmt.Errorf("logFormat must be 'json', 'console', or 'logfmt', got '%s'", c.LogFormat)
+	// Validate logging configuration
+	if err := pkgconfig.ValidateLogging(&c.Logging); err != nil {
+		return fmt.Errorf("logging validation failed: %w", err)
 	}
 
-	// Validate log level
-	validLevels := map[string]bool{
-		"debug": true,
-		"info":  true,
-		"warn":  true,
-		"error": true,
+	// Validate OpenTelemetry configuration
+	if err := pkgconfig.ValidateOpenTelemetry(&c.OpenTelemetry); err != nil {
+		return fmt.Errorf("opentelemetry validation failed: %w", err)
 	}
-	if !validLevels[strings.ToLower(c.LogLevel)] {
-		return fmt.Errorf("logLevel must be one of: debug, info, warn, error, got '%s'", c.LogLevel)
+
+	// Validate Profiling configuration
+	if err := pkgconfig.ValidateProfiling(&c.Profiling); err != nil {
+		return fmt.Errorf("profiling validation failed: %w", err)
 	}
 
 	return nil
@@ -130,64 +132,63 @@ func (c *Config) Redacted() map[string]interface{} {
 		"startAtEvenSecond":     c.StartAtEvenSecond,
 		"bufferSize":            c.BufferSize,
 		"healthCheckPort":       c.HealthCheckPort,
-		"logFormat":             c.LogFormat,
-		"logLevel":              c.LogLevel,
+		"logging": map[string]interface{}{
+			"logFormat": c.Logging.Format,
+			"logLevel":  c.Logging.Level,
+		},
+		"opentelemetry": map[string]interface{}{
+			"enabled":        c.OpenTelemetry.Enabled,
+			"serviceName":    c.OpenTelemetry.ServiceName,
+			"serviceVersion": c.OpenTelemetry.ServiceVersion,
+			"environment":    c.OpenTelemetry.Environment,
+			"traces": map[string]interface{}{
+				"enabled":       c.OpenTelemetry.Traces.Enabled,
+				"endpointSet":   c.OpenTelemetry.Traces.Endpoint != "",
+				"samplingRatio": c.OpenTelemetry.Traces.SamplingRatio,
+			},
+			"metrics": map[string]interface{}{
+				"enabled":              c.OpenTelemetry.Metrics.Enabled,
+				"endpointSet":          c.OpenTelemetry.Metrics.Endpoint != "",
+				"intervalMillis":       c.OpenTelemetry.Metrics.IntervalMillis,
+				"enableRuntimeMetrics": c.OpenTelemetry.Metrics.EnableRuntimeMetrics,
+			},
+		},
 	}
 }
 
 // NewLogger creates a zap logger based on the configuration
 func (c *Config) NewLogger() (*zap.Logger, error) {
-	// Set log level
-	var level zapcore.Level
-	switch strings.ToLower(c.LogLevel) {
-	case "debug":
-		level = zapcore.DebugLevel
-	case "info":
-		level = zapcore.InfoLevel
-	case "warn":
-		level = zapcore.WarnLevel
-	case "error":
-		level = zapcore.ErrorLevel
-	default:
-		level = zapcore.InfoLevel
-	}
+	return pkgconfig.NewLogger(&c.Logging)
+}
 
-	// Handle logfmt format separately
-	if c.LogFormat == "logfmt" {
-		encoderConfig := zapcore.EncoderConfig{
-			TimeKey:        "ts",
-			LevelKey:       "level",
-			NameKey:        "logger",
-			CallerKey:      "caller",
-			MessageKey:     "msg",
-			StacktraceKey:  "stacktrace",
-			LineEnding:     zapcore.DefaultLineEnding,
-			EncodeLevel:    zapcore.LowercaseLevelEncoder,
-			EncodeTime:     zapcore.ISO8601TimeEncoder,
-			EncodeDuration: zapcore.StringDurationEncoder,
-			EncodeCaller:   zapcore.ShortCallerEncoder,
-		}
-
-		core := zapcore.NewCore(
-			zaplogfmt.NewEncoder(encoderConfig),
-			zapcore.AddSync(os.Stdout),
-			level,
-		)
-
-		return zap.New(core), nil
-	}
-
-	// Handle json and console formats
-	var zapConfig zap.Config
-	if c.LogFormat == "json" {
-		zapConfig = zap.NewProductionConfig()
-	} else {
-		zapConfig = zap.NewDevelopmentConfig()
-	}
-
-	zapConfig.Level = zap.NewAtomicLevelAt(level)
-
-	return zapConfig.Build()
+// PrintConfig prints the configuration (masking sensitive fields)
+func (c *Config) PrintConfig(logger *zap.Logger) {
+	logger.Info("configuration loaded",
+		zap.String("scrape_url", c.ScrapeURL),
+		zap.Int("scrape_interval_seconds", c.ScrapeIntervalSeconds),
+		zap.Float64("scrape_timeout_seconds", c.ScrapeTimeoutSeconds),
+		zap.Int("push_interval_seconds", c.PushIntervalSeconds),
+		zap.String("prometheus_url", c.PrometheusURL),
+		zap.String("prometheus_username", c.PrometheusUsername),
+		zap.Bool("prometheus_password_set", c.PrometheusPassword != ""),
+		zap.String("metric_name", c.MetricName),
+		zap.Bool("start_at_even_second", c.StartAtEvenSecond),
+		zap.Int("buffer_size", c.BufferSize),
+		zap.Int("health_check_port", c.HealthCheckPort),
+		zap.Bool("otel_enabled", c.OpenTelemetry.Enabled),
+		zap.String("otel_service_name", c.OpenTelemetry.ServiceName),
+		zap.String("otel_service_version", c.OpenTelemetry.ServiceVersion),
+		zap.String("otel_environment", c.OpenTelemetry.Environment),
+		zap.Bool("otel_traces_enabled", c.OpenTelemetry.Traces.Enabled),
+		zap.Bool("otel_traces_endpoint_set", c.OpenTelemetry.Traces.Endpoint != ""),
+		zap.Float64("otel_traces_sampling_ratio", c.OpenTelemetry.Traces.SamplingRatio),
+		zap.Bool("otel_metrics_enabled", c.OpenTelemetry.Metrics.Enabled),
+		zap.Bool("otel_metrics_endpoint_set", c.OpenTelemetry.Metrics.Endpoint != ""),
+		zap.Int("otel_metrics_interval_ms", c.OpenTelemetry.Metrics.IntervalMillis),
+		zap.Bool("otel_runtime_metrics_enabled", c.OpenTelemetry.Metrics.EnableRuntimeMetrics),
+		zap.String("log_format", c.Logging.Format),
+		zap.String("log_level", c.Logging.Level),
+	)
 }
 
 // redactURL removes credentials from URLs for logging

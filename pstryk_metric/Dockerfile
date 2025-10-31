@@ -7,14 +7,20 @@ RUN apk add --no-cache git
 # Set working directory
 WORKDIR /build
 
-# Copy go mod files
-COPY go.mod go.sum ./
+# Copy pkg directory first (dependency)
+COPY pkg/ ./pkg/
+
+# Copy pstryk_metric go module files
+COPY pstryk_metric/go.mod pstryk_metric/go.sum ./pstryk_metric/
+
+# Set working directory to pstryk_metric
+WORKDIR /build/pstryk_metric
 
 # Download dependencies
 RUN go mod download
 
-# Copy source code
-COPY . .
+# Copy pstryk_metric source code
+COPY pstryk_metric/ .
 
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o pstryk_metric .
@@ -29,10 +35,10 @@ RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /build/pstryk_metric .
+COPY --from=builder /build/pstryk_metric/pstryk_metric .
 
 # Copy default config (can be overridden with volume mount)
-COPY config.yaml ./config.yaml
+COPY pstryk_metric/config.yaml ./config.yaml
 
 # Expose health check port
 EXPOSE 8080

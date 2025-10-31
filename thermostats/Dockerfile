@@ -12,16 +12,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set working directory
 WORKDIR /build
 
-# Copy go module files
-COPY go.mod go.sum ./
+# Copy pkg directory first (dependency)
+COPY pkg/ ./pkg/
+
+# Copy thermostats go module files
+COPY thermostats/go.mod thermostats/go.sum ./thermostats/
+
+# Set working directory to thermostats
+WORKDIR /build/thermostats
 
 # Download dependencies
 RUN go mod download
 
-# Copy source code
-COPY . .
+# Copy thermostats source code
+COPY thermostats/ .
 
-# Build the binary
+# Build the binary (from thermostats directory)
 RUN CGO_ENABLED=1 GOOS=linux go build -o ble-temp-monitor .
 
 # Runtime stage
@@ -38,10 +44,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /build/ble-temp-monitor .
+COPY --from=builder /build/thermostats/ble-temp-monitor .
 
 # Copy default config
-COPY config.yaml .
+COPY thermostats/config.yaml .
 
 # Expose no ports (this service doesn't have HTTP API)
 

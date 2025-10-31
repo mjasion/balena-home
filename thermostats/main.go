@@ -10,11 +10,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mjasion/balena-home/thermostats/buffer"
+	"github.com/mjasion/balena-home/pkg/buffer"
+	pkgmetrics "github.com/mjasion/balena-home/pkg/metrics"
+	"github.com/mjasion/balena-home/pkg/profiling"
+	"github.com/mjasion/balena-home/pkg/telemetry"
+	"github.com/mjasion/balena-home/pkg/types"
 	"github.com/mjasion/balena-home/thermostats/config"
-	"github.com/mjasion/balena-home/thermostats/metrics"
 	"github.com/mjasion/balena-home/thermostats/netatmo"
 	"github.com/mjasion/balena-home/thermostats/scanner"
+	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
 )
 
@@ -31,7 +35,7 @@ func main() {
 	}
 
 	// Initialize logger
-	logger, err := cfg.InitLogger()
+	logger, err := cfg.NewLogger()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		os.Exit(1)
@@ -41,24 +45,64 @@ func main() {
 	logger.Info("starting BLE temperature monitoring service")
 	cfg.PrintConfig(logger)
 
+	// Initialize Pyroscope profiling
+	profiler, err := profiling.Start(&cfg.Profiling, logger)
+	if err != nil {
+		logger.Error("failed to initialize profiler", zap.Error(err))
+		os.Exit(1)
+	}
+	// Ensure profiler shutdown happens even if profiler is nil
+	defer func() {
+		if profiler != nil {
+			if err := profiler.Stop(); err != nil {
+				logger.Error("failed to shutdown profiler", zap.Error(err))
+			}
+		}
+	}()
+
+	// Initialize OpenTelemetry providers
+	ctx := context.Background()
+	otelProviders, err := telemetry.InitProviders(ctx, &cfg.OpenTelemetry, logger)
+	if err != nil {
+		logger.Error("failed to initialize OpenTelemetry providers", zap.Error(err))
+		os.Exit(1)
+	}
+	// Ensure OTel shutdown happens even if providers are nil
+	defer func() {
+		if otelProviders != nil {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer shutdownCancel()
+			if err := otelProviders.Shutdown(shutdownCtx); err != nil {
+				logger.Error("failed to shutdown OpenTelemetry providers", zap.Error(err))
+			}
+		}
+	}()
+
+	// Create a root tracer for main operations
+	tracer := otel.Tracer("main")
+	ctx, mainSpan := tracer.Start(ctx, "main.run")
+	defer mainSpan.End()
+
 	// Create ring buffer
-	ringBuffer := buffer.New(cfg.Prometheus.BufferSize, logger)
+	ringBuffer := buffer.New[*types.Reading](cfg.Prometheus.BufferSize, logger)
 	logger.Info("ring buffer created", zap.Int("capacity", cfg.Prometheus.BufferSize))
 
-	// Create Prometheus pusher
-	pusher := metrics.New(
-		cfg.Prometheus.URL,
-		cfg.Prometheus.Username,
-		cfg.Prometheus.Password,
-		ringBuffer,
-		cfg.Prometheus.PushIntervalSeconds,
-		cfg.Prometheus.BatchSize,
-		logger,
-	)
+	// Create Prometheus pusher with combined BLE and Thermostat builders
+	pusher := pkgmetrics.New(pkgmetrics.Config{
+		URL:               cfg.Prometheus.URL,
+		Username:          cfg.Prometheus.Username,
+		Password:          cfg.Prometheus.Password,
+		PushIntervalSec:   cfg.Prometheus.PushIntervalSeconds,
+		BatchSize:         cfg.Prometheus.BatchSize,
+		TimeSeriesBuilder: pkgmetrics.CombineBuilders(
+			pkgmetrics.BuildBLETimeSeries,
+			pkgmetrics.BuildThermostatTimeSeries,
+		),
+	}, ringBuffer, logger)
 	logger.Info("prometheus pusher initialized", zap.String("url", cfg.Prometheus.URL))
 
-	// Create context for graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background())
+	// Create cancelable context for graceful shutdown (inherits trace context from main span)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	// Setup signal handling
@@ -154,7 +198,7 @@ func main() {
 
 	// Final push of remaining data
 	logger.Info("performing final metrics push")
-	readings := ringBuffer.GetAll()
+	readings := ringBuffer.GetAllAndClear()
 	if len(readings) > 0 {
 		finalCtx, finalCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer finalCancel()

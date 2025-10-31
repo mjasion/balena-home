@@ -13,3 +13,4 @@ thermostats/ble-temp-monitor
 
 # Logs
 *.log
+/thermostats/thermostats

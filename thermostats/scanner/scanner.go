@@ -5,8 +5,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mjasion/balena-home/thermostats/buffer"
+	"github.com/mjasion/balena-home/pkg/buffer"
+	"github.com/mjasion/balena-home/pkg/types"
 	"github.com/mjasion/balena-home/thermostats/decoder"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"tinygo.org/x/bluetooth"
 )
@@ -31,12 +36,12 @@ type SensorConfig struct {
 type Scanner struct {
 	adapter    *bluetooth.Adapter
 	sensorMACs map[string]SensorInfo // Map of MAC address to sensor info
-	buffer     *buffer.RingBuffer
+	buffer     *buffer.RingBuffer[*types.Reading]
 	logger     *zap.Logger
 }
 
 // New creates a new BLE scanner
-func New(sensors []SensorConfig, buf *buffer.RingBuffer, logger *zap.Logger) *Scanner {
+func New(sensors []SensorConfig, buf *buffer.RingBuffer[*types.Reading], logger *zap.Logger) *Scanner {
 	// Convert sensor list to map for fast lookup
 	macMap := make(map[string]SensorInfo)
 	for _, sensor := range sensors {
@@ -58,14 +63,25 @@ func New(sensors []SensorConfig, buf *buffer.RingBuffer, logger *zap.Logger) *Sc
 
 // Start initializes the BLE adapter and starts scanning
 func (s *Scanner) Start(ctx context.Context) error {
+	tracer := otel.Tracer("scanner")
+	ctx, span := tracer.Start(ctx, "scanner.Start",
+		trace.WithAttributes(
+			attribute.Int("scanner.sensor_count", len(s.sensorMACs)),
+		),
+	)
+	defer span.End()
+
 	s.logger.Info("initializing BLE adapter")
 
 	// Enable the BLE stack
 	err := s.adapter.Enable()
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to enable BLE adapter")
 		return fmt.Errorf("failed to enable BLE adapter: %w", err)
 	}
 
+	span.AddEvent("BLE adapter enabled")
 	s.logger.Info("BLE adapter initialized successfully")
 	s.logger.Info("starting BLE scan", zap.Int("sensor_count", len(s.sensorMACs)), zap.Any("sensors", s.sensorMACs))
 
@@ -86,6 +102,17 @@ func (s *Scanner) Start(ctx context.Context) error {
 		if !found {
 			return
 		}
+
+		// Create a span for this sensor reading
+		_, readingSpan := tracer.Start(ctx, "scanner.ProcessAdvertisement",
+			trace.WithAttributes(
+				attribute.String("ble.mac", mac),
+				attribute.String("ble.sensor_name", sensorInfo.Name),
+				attribute.Int("ble.sensor_id", sensorInfo.ID),
+			),
+		)
+		defer readingSpan.End()
+
 		s.logger.Debug("BLE scan",
 			zap.String("mac", mac),
 			zap.String("sensor_name", sensorInfo.Name),
@@ -103,13 +130,15 @@ func (s *Scanner) Start(ctx context.Context) error {
 						zap.String("mac", mac),
 						zap.Error(err),
 					)
+					readingSpan.RecordError(err)
+					readingSpan.SetStatus(codes.Error, "failed to decode")
 					continue
 				}
 
 				// Add to buffer
-				bufReading := &buffer.Reading{
-					Type: buffer.ReadingTypeBLE,
-					BLE: &buffer.SensorReading{
+				bufReading := &types.Reading{
+					Type: types.ReadingTypeBLE,
+					BLE: &types.BLEReading{
 						Timestamp:          reading.Timestamp,
 						MAC:                reading.MAC,
 						SensorName:         sensorInfo.Name,
@@ -123,6 +152,15 @@ func (s *Scanner) Start(ctx context.Context) error {
 					},
 				}
 				s.buffer.Add(bufReading)
+
+				// Add sensor reading attributes to span
+				readingSpan.SetAttributes(
+					attribute.Float64("ble.temperature_celsius", reading.TemperatureCelsius),
+					attribute.Int("ble.humidity_percent", reading.HumidityPercent),
+					attribute.Int("ble.battery_percent", reading.BatteryPercent),
+					attribute.Int("ble.rssi_dbm", int(reading.RSSI)),
+				)
+				readingSpan.SetStatus(codes.Ok, "sensor reading processed")
 
 				// Log sensor reading
 				s.logger.Info("Read sensor data",
@@ -140,9 +178,12 @@ func (s *Scanner) Start(ctx context.Context) error {
 	})
 
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to start BLE scan")
 		return fmt.Errorf("failed to start BLE scan: %w", err)
 	}
 
+	span.SetStatus(codes.Ok, "BLE scan started")
 	return nil
 }
 
