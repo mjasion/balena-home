@@ -1,0 +1,72 @@
+name: Home Controller Tests
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'home-controller/**'
+      - '.github/workflows/home-controller-test.yml'
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - 'home-controller/**'
+      - '.github/workflows/home-controller-test.yml'
+
+concurrency:
+  group: home-controller-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./home-controller
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.25.3'
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Verify dependencies
+      run: go mod verify
+
+    - name: Run go vet
+      run: go vet ./...
+
+    - name: Run tests
+      run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+    - name: Generate coverage report
+      run: go tool cover -func=coverage.out
+
+    - name: Upload coverage to GitHub
+      uses: actions/upload-artifact@v5
+      with:
+        name: coverage-report
+        path: home-controller/coverage.out
+
+    - name: Display coverage summary
+      run: |
+        echo "### Coverage Summary" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        go tool cover -func=coverage.out >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY

@@ -23,9 +23,6 @@ services:
       WOLWEBPORT: "8089"
       #WOLWEBVDIR: "/wolweb"
       WOLWEBBCASTIP: "192.168.1.255:9"
-  pstryk_metric:
-    build: pstryk_metric
-    network_mode: host
 #  scanner:
 #    build: scanner
 #    network_mode: host
@@ -34,8 +31,8 @@ services:
 #      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/host/run/dbus/system_bus_socket
 #    labels:
 #      io.balena.features.dbus: '1'
-  thermostats:
-    build: thermostats
+  home-controller:
+    build: home-controller
     network_mode: host
     privileged: true
     environment:
