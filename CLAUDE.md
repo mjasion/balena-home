@@ -4,88 +4,230 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This is a home automation service repository containing a Go application for Wake-on-LAN functionality, designed to run using Docker Compose.
+This is a home automation service repository containing multiple Go applications for home monitoring and control, designed to run on Raspberry Pi using Docker Compose and Balena.
 
-- **WolWeb**: A web interface for sending Wake-on-LAN magic packets to devices on the local network
+### Services
 
-The service is containerized and exposed via nginx reverse proxy with Cloudflare tunnel integration.
+- **home-controller**: Climate monitoring and automation service
+  - BLE temperature sensor monitoring (LYWSD03MMC with ATC firmware)
+  - Netatmo thermostat integration
+  - Power meter monitoring
+  - Prometheus metrics push
+  - Future: Intelligent climate control automation
+
+- **wolweb**: Wake-on-LAN web interface
+  - Web UI for sending magic packets to devices
+  - Device management with persistent storage
+  - Direct HTTP GET endpoints for automation
+
+- **alloy**: Grafana Alloy (observability agent)
+  - Log collection and forwarding
+  - Metrics scraping
+  - Integration with Grafana Cloud
+
+- **nginx**: Reverse proxy
+  - Exposes services via HTTPS
+  - Cloudflare tunnel integration
+
+- **tunnel**: Cloudflare tunnel
+  - Secure remote access without port forwarding
 
 ## Project Structure
 
 ```
-wolweb/           # Wake-on-LAN web service
-  main.go         # Entry point with embedded static files
-  *.go            # HTTP handlers, WoL logic, data persistence
+balena-home/
+├── docker-compose.yml           # Service orchestration
+├── CLAUDE.md                    # This file (project-level instructions)
+├── home-controller/             # Climate monitoring & automation
+│   ├── CLAUDE.md                # Service-specific instructions
+│   ├── main.go                  # Entry point
+│   ├── scanner/                 # BLE scanning
+│   ├── netatmo/                 # Netatmo API integration
+│   ├── power/                   # Power meter scraping
+│   ├── metrics/                 # Prometheus push
+│   ├── buffer/                  # Ring buffer
+│   └── config.yaml              # Configuration
+├── wolweb/                      # Wake-on-LAN service
+│   ├── main.go                  # Entry point with embedded UI
+│   ├── devices.json             # Device database
+│   └── config.json              # Configuration
+├── alloy/                       # Grafana Alloy configuration
+│   └── config.alloy             # Alloy config
+├── nginx/                       # Nginx reverse proxy
+│   └── *.conf                   # Nginx configurations
+└── .github/workflows/           # CI/CD
+    ├── home-controller-test.yml # Tests for home-controller
+    └── *.yml                    # Other workflows
 ```
 
 ## Building and Running
 
-### WolWeb
+### Individual Services
+
+Each service can be built independently:
 
 ```bash
-cd wolweb
-go build -o wolweb .              # Build binary
-go run main.go -c config.json -d devices.json  # Run with custom config
-```
+# Home Controller
+cd home-controller
+go build -o home-controller .
+./home-controller -c config.yaml
 
-WolWeb accepts command-line flags:
-- `-c`: Path to config.json (default: config.json)
-- `-d`: Path to devices.json (default: devices.json)
+# WolWeb
+cd wolweb
+go build -o wolweb .
+go run main.go -c config.json -d devices.json
+```
 
 ### Docker Compose
 
+Start all services:
+
 ```bash
-docker-compose up -d     # Start all services
+docker-compose up -d
 ```
 
-Services:
-- `wolweb`: Uses host network mode for WoL packet broadcasting
-- `nginx`: Reverse proxy on ports 80/443
-- `tunnel`: Cloudflare tunnel (configured with TUNNEL_TOKEN)
+Service configurations:
+- `home-controller`: Host network + privileged (for BLE and D-Bus)
+- `wolweb`: Host network (for WoL broadcast)
+- `nginx`: Ports 80/443 exposed
+- `tunnel`: Requires `TUNNEL_TOKEN` environment variable
+- `alloy`: Port 12345, Balena socket access
 
 ## Configuration
 
-### WolWeb Configuration
+### Environment Variables
 
-Uses cleanenv library to load config.json with environment variable overrides:
+Critical secrets managed via environment variables:
+- `TUNNEL_TOKEN`: Cloudflare tunnel token
+- `PROMETHEUS_PASSWORD`: Grafana Cloud API key
+- `NETATMO_CLIENT_ID`: Netatmo OAuth2 client ID
+- `NETATMO_CLIENT_SECRET`: Netatmo OAuth2 client secret
+- `NETATMO_REFRESH_TOKEN`: Netatmo OAuth2 refresh token
 
-Environment variables:
-- `WOLWEBHOST`: HTTP host (default: 0.0.0.0)
-- `WOLWEBPORT`: HTTP port (default: 8089)
-- `WOLWEBVDIR`: Virtual directory prefix (default: /wolweb)
-- `WOLWEBBCASTIP`: Broadcast IP and port (default: 192.168.1.255:9)
-- `WOLWEBREADONLY`: Read-only mode for UI (default: false)
+### Service-Specific Configuration
+
+Each service has its own configuration file:
+- `home-controller/config.yaml`: BLE sensors, Netatmo, Prometheus
+- `wolweb/config.json`: WoL settings, virtual directory
+- `wolweb/devices.json`: Device database
+- `alloy/config.alloy`: Grafana Alloy pipeline
+- `nginx/*.conf`: Reverse proxy routes
 
 ## Architecture Notes
 
-### WolWeb
+### Network Modes
 
-- Uses **gorilla/mux** router with embedded static files (Go 1.16+ embed)
-- **gorilla/handlers** for recovery and logging
-- **gziphandler** for response compression
-- Bootstrap UI with JS Grid for CRUD operations
-- Persistent device storage in devices.json
-- Direct WoL via HTTP GET: `/wolweb/wake/{deviceName}`
+**Host Network Mode** (home-controller, wolweb):
+- Required for BLE broadcasting and WoL magic packets
+- Docker's bridged network blocks broadcast traffic
+- Reference: https://github.com/docker/for-linux/issues/637
 
-Entry point: `wolweb/main.go`
-- Sets working directory to executable location
-- Loads config and devices data
-- Maps static files from embedded FS
-- Conditionally enables data modification endpoints based on read-only flag
+**Privileged Mode** (home-controller):
+- Required for BLE adapter access via BlueZ
+- Needs D-Bus socket for system bus communication
 
-### Docker Network Configuration
+### Service Communication
 
-WolWeb requires **host network mode** because Wake-on-LAN magic packets must be broadcast on the local network. Docker's bridged network mode blocks broadcasts. See: https://github.com/docker/for-linux/issues/637
+```
+Internet → Cloudflare Tunnel → nginx → Services
+                                 ↓
+                          ┌──────┼──────┐
+                          ▼      ▼      ▼
+                       wolweb  home-  alloy
+                              controller
+                                 ↓
+                          Grafana Cloud
+```
 
 ## Testing
 
-The project currently does not include test files. When adding tests:
-- WolWeb: Test WoL packet sending, device CRUD, HTTP endpoints
+### Go Services
+
+```bash
+# Run all tests
+go test ./...
+
+# Run with coverage
+go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+# Generate coverage report
+go tool cover -func=coverage.out
+
+# Format and vet
+go fmt ./...
+go vet ./...
+```
+
+### GitHub Workflows
+
+CI/CD runs automatically:
+- `home-controller-test.yml`: Tests on PR to main
+- Other workflows for additional services
 
 ## Go Versions
 
-- **WolWeb**: Requires Go 1.19+
+All Go services require **Go 1.19+** (tested with 1.25.3 in CI)
 
 ## Common Development Tasks
 
-When modifying WolWeb routes, ensure virtual directory handling is consistent - basePath is empty when VDir is "/" to avoid redirect loops (see `wolweb/main.go:70-76`).
+### Adding a New Service
+
+1. Create service directory with Dockerfile
+2. Add service to `docker-compose.yml`
+3. Create service-specific CLAUDE.md for documentation
+4. Add GitHub workflow for testing (if applicable)
+5. Update this root CLAUDE.md
+
+### Modifying Network Configuration
+
+When changing service networking:
+- Services needing broadcast (BLE, WoL): Use `network_mode: host`
+- Services needing BLE: Add `privileged: true` and D-Bus labels
+- Services needing external access: Expose via nginx
+
+### Working with Secrets
+
+- **Never** commit secrets to `config.yaml` or `config.json`
+- Always use environment variables for sensitive data
+- Reference secrets in docker-compose.yml via `${VAR}` syntax
+- Use `.env` file locally (git-ignored)
+
+### Debugging Services
+
+```bash
+# View logs
+docker-compose logs -f [service-name]
+
+# Restart specific service
+docker-compose restart [service-name]
+
+# Rebuild and restart
+docker-compose up -d --build [service-name]
+
+# Check service status
+docker-compose ps
+```
+
+## Service-Specific Documentation
+
+For detailed information about each service, see:
+- [home-controller/CLAUDE.md](./home-controller/CLAUDE.md): Climate monitoring details
+- Individual service README files where available
+
+## Deployment
+
+This project is designed for:
+- **Raspberry Pi** (tested on Pi 4)
+- **Balena.io** platform for easy deployment and management
+- **Docker Compose** for local development
+
+Balena-specific labels are used for:
+- `io.balena.features.dbus`: D-Bus access
+- `io.balena.features.balena-socket`: Balena API access
+
+## Related Resources
+
+- Grafana Cloud: Metrics and logs
+- Cloudflare Tunnel: Secure remote access
+- Netatmo API: https://dev.netatmo.com/
+- ATC Firmware: https://github.com/atc1441/ATC_MiThermometer
