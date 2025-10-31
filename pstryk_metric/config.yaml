@@ -36,6 +36,51 @@ startAtEvenSecond: true
 # Ring buffer size (number of scrape results to keep in memory)
 bufferSize: 5000
 
+# Pyroscope profiling configuration
+profiling:
+  # Enable continuous profiling
+  enabled: false
+
+  # Application name (identifies this service in Pyroscope)
+  applicationName: "pstryk-metric"
+
+  # Pyroscope server address
+  # For Grafana Cloud: https://profiles-prod-{region}.grafana.net
+  # For local: http://localhost:4040
+  serverAddress: ""
+
+  # Basic authentication (for Grafana Cloud)
+  # IMPORTANT: Use environment variables for credentials
+  basicAuthUser: ""     # or use PYROSCOPE_BASIC_AUTH_USER env var
+  basicAuthPassword: "" # or use PYROSCOPE_BASIC_AUTH_PASSWORD env var
+
+  # Tenant ID (for multi-tenant Pyroscope, optional)
+  tenantID: ""
+
+  # Custom tags (labels) to add to all profiles
+  tags:
+    # Example: Add custom attributes
+    # environment: "production"
+    # region: "us-central1"
+
+  # Profile types to enable
+  cpuProfile: true           # CPU profiling
+  allocObjectsProfile: true  # Memory allocations (objects)
+  allocSpaceProfile: true    # Memory allocations (space)
+  inuseObjectsProfile: true  # In-use memory (objects)
+  inuseSpaceProfile: true    # In-use memory (space)
+  goroutineProfile: false    # Goroutine count
+  mutexProfile: false        # Mutex contention
+  blockProfile: false        # Blocking operations
+
+  # Profiling rates (only used when respective profile types are enabled)
+  mutexProfileRate: 5  # Sample 1 in every 5 mutex events
+  blockProfileRate: 5  # Sample 1 in every 5 block events
+
+  # Disable automatic GC runs between heap profiles (default: false)
+  # Set to true if you want to avoid GC overhead from profiling
+  disableGCRuns: false
+
 # Logging configuration
 logging:
   # Log format: "console" (human-readable), "json" (structured), or "logfmt"
@@ -59,19 +104,34 @@ opentelemetry:
   # Deployment environment (e.g., production, staging, development)
   environment: "production"
 
+  # OTLP protocol: "http/protobuf" (default, recommended) or "grpc"
+  # Can be overridden with OTEL_EXPORTER_OTLP_PROTOCOL env var
+  protocol: "http/protobuf"
+
+  # Global OTLP endpoint (used for both traces and metrics if specific endpoints not set)
+  # Format: https://otlp-gateway-prod-{region}.grafana.net/otlp
+  # Example: https://otlp-gateway-prod-us-central-0.grafana.net/otlp
+  # Can be overridden with OTEL_EXPORTER_OTLP_ENDPOINT env var
+  endpoint: ""
+
+  # Global authentication headers (used for both traces and metrics if specific headers not set)
+  # Format: Authorization=Basic <base64(instanceId:grafanaCloudAccessToken)>
+  # IMPORTANT: Set via OTEL_EXPORTER_OTLP_HEADERS environment variable (not this file)
+  # The env var is read directly by telemetry code, not parsed by config loader
+  headers: {}
+
   # OTLP trace exporter configuration
   traces:
     # Enable trace collection and export
     enabled: true
 
-    # OTLP endpoint for traces (Grafana Cloud Tempo endpoint)
-    # Format: https://otlp-gateway-{region}.grafana.net/otlp
-    # or use OTEL_EXPORTER_OTLP_TRACES_ENDPOINT env var
+    # Specific OTLP endpoint for traces (overrides global endpoint if set)
+    # Use OTEL_EXPORTER_OTLP_TRACES_ENDPOINT env var to override
     endpoint: ""
 
-    # Authentication headers for Grafana Cloud
-    # Use OTEL_EXPORTER_OTLP_TRACES_HEADERS env var for security
-    # Format: "Authorization=Basic base64(instanceId:grafanaCloudAccessToken)"
+    # Specific authentication headers for traces (overrides global headers if set)
+    # Use OTEL_EXPORTER_OTLP_TRACES_HEADERS env var to override
+    # IMPORTANT: Use environment variables for security, not this file
     headers: {}
 
     # Sampling configuration
@@ -92,11 +152,12 @@ opentelemetry:
     # Enable metrics collection and export
     enabled: true
 
-    # OTLP endpoint for metrics (can be same as traces or different)
-    # Use OTEL_EXPORTER_OTLP_METRICS_ENDPOINT env var
+    # Specific OTLP endpoint for metrics (overrides global endpoint if set)
+    # Use OTEL_EXPORTER_OTLP_METRICS_ENDPOINT env var to override
     endpoint: ""
 
-    # Authentication headers (same format as traces)
+    # Specific authentication headers for metrics (overrides global headers if set)
+    # IMPORTANT: Use environment variables for security, not this file
     headers: {}
 
     # Metric collection interval in milliseconds

@@ -35,10 +35,11 @@ func BuildBLETimeSeries(ctx context.Context, readings []*types.Reading) ([]promp
 	type sensorKey struct {
 		name string
 		id   int
+		mac  string
 	}
 	sensorReadings := make(map[sensorKey][]*types.BLEReading)
 	for _, reading := range bleReadings {
-		key := sensorKey{name: reading.SensorName, id: reading.SensorID}
+		key := sensorKey{name: reading.SensorName, id: reading.SensorID, mac: reading.MAC}
 		sensorReadings[key] = append(sensorReadings[key], reading)
 	}
 
@@ -50,6 +51,7 @@ func BuildBLETimeSeries(ctx context.Context, readings []*types.Reading) ([]promp
 		labels := []prompb.Label{
 			{Name: "sensor_name", Value: key.name},
 			{Name: "sensor_id", Value: fmt.Sprintf("%d", key.id)},
+			{Name: "mac", Value: key.mac},
 		}
 
 		// Temperature time series

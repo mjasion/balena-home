@@ -11,6 +11,9 @@ type OpenTelemetryConfig struct {
 	ServiceName        string                `yaml:"serviceName" env:"OTEL_SERVICE_NAME"`
 	ServiceVersion     string                `yaml:"serviceVersion" env:"OTEL_SERVICE_VERSION" env-default:"1.0.0"`
 	Environment        string                `yaml:"environment" env:"OTEL_ENVIRONMENT" env-default:"production"`
+	Protocol           string                `yaml:"protocol" env:"OTEL_EXPORTER_OTLP_PROTOCOL" env-default:"http/protobuf"`
+	Endpoint           string                `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+	Headers            map[string]string     `yaml:"headers"`
 	Traces             OTelTracesConfig      `yaml:"traces"`
 	Metrics            OTelMetricsConfig     `yaml:"metrics"`
 	ResourceAttributes map[string]string     `yaml:"resourceAttributes"`
@@ -20,7 +23,7 @@ type OpenTelemetryConfig struct {
 type OTelTracesConfig struct {
 	Enabled       bool              `yaml:"enabled" env:"OTEL_TRACES_ENABLED" env-default:"true"`
 	Endpoint      string            `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"`
-	Headers       map[string]string `yaml:"headers" env:"OTEL_EXPORTER_OTLP_TRACES_HEADERS"`
+	Headers       map[string]string `yaml:"headers"`
 	SamplingRatio float64           `yaml:"samplingRatio" env:"OTEL_TRACES_SAMPLING_RATIO" env-default:"1.0"`
 	Batch         OTelBatchConfig   `yaml:"batch"`
 }
@@ -52,11 +55,18 @@ func ValidateOpenTelemetry(cfg *OpenTelemetryConfig) error {
 		return fmt.Errorf("opentelemetry service name is required when OpenTelemetry is enabled")
 	}
 
+	// Validate protocol
+	if cfg.Protocol != "" && cfg.Protocol != "http/protobuf" && cfg.Protocol != "grpc" {
+		return fmt.Errorf("opentelemetry protocol must be 'http/protobuf' or 'grpc', got: %s", cfg.Protocol)
+	}
+
 	// Validate traces configuration
 	if cfg.Traces.Enabled {
 		if cfg.Traces.Endpoint == "" {
-			// Check environment variable fallback
-			if os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") == "" && os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+			// Check environment variable fallback (specific takes precedence over general)
+			if os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") == "" &&
+			   cfg.Endpoint == "" &&
+			   os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
 				return fmt.Errorf("opentelemetry traces endpoint is required when traces are enabled")
 			}
 		}
@@ -81,8 +91,10 @@ func ValidateOpenTelemetry(cfg *OpenTelemetryConfig) error {
 	// Validate metrics configuration
 	if cfg.Metrics.Enabled {
 		if cfg.Metrics.Endpoint == "" {
-			// Check environment variable fallback
-			if os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" && os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+			// Check environment variable fallback (specific takes precedence over general)
+			if os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" &&
+			   cfg.Endpoint == "" &&
+			   os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
 				return fmt.Errorf("opentelemetry metrics endpoint is required when metrics are enabled")
 			}
 		}

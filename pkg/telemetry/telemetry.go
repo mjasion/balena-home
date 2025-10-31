@@ -165,17 +165,25 @@ func newResource(otelCfg *config.OpenTelemetryConfig) (*resource.Resource, error
 
 // newTracerProvider creates a new tracer provider with OTLP exporter
 func newTracerProvider(ctx context.Context, otelCfg *config.OpenTelemetryConfig, res *resource.Resource) (*trace.TracerProvider, error) {
+	endpoint := getTracesEndpoint(otelCfg)
+
+	// Parse the endpoint URL
+	host, path, insecure := parseOTLPEndpoint(endpoint)
+
 	// Build OTLP HTTP exporter options
 	opts := []otlptracehttp.Option{
-		otlptracehttp.WithEndpoint(getTracesEndpoint(otelCfg)),
+		otlptracehttp.WithEndpoint(host),
 	}
 
-	// Check if endpoint uses HTTPS (default) or HTTP
-	if endpoint := getTracesEndpoint(otelCfg); endpoint != "" {
-		// Use HTTP if localhost or explicitly set
-		if len(endpoint) > 9 && endpoint[:10] == "localhost:" {
-			opts = append(opts, otlptracehttp.WithInsecure())
-		}
+	// Set URL path - if a custom path is provided, append /v1/traces to it
+	// If no path is provided, the exporter defaults to /v1/traces
+	if path != "" {
+		opts = append(opts, otlptracehttp.WithURLPath(path+"/v1/traces"))
+	}
+
+	// Use insecure (HTTP) connection if requested
+	if insecure {
+		opts = append(opts, otlptracehttp.WithInsecure())
 	}
 
 	// Add authentication headers
@@ -211,17 +219,25 @@ func newTracerProvider(ctx context.Context, otelCfg *config.OpenTelemetryConfig,
 
 // newMeterProvider creates a new meter provider with OTLP exporter
 func newMeterProvider(ctx context.Context, otelCfg *config.OpenTelemetryConfig, res *resource.Resource) (*metric.MeterProvider, error) {
+	endpoint := getMetricsEndpoint(otelCfg)
+
+	// Parse the endpoint URL
+	host, path, insecure := parseOTLPEndpoint(endpoint)
+
 	// Build OTLP HTTP exporter options
 	opts := []otlpmetrichttp.Option{
-		otlpmetrichttp.WithEndpoint(getMetricsEndpoint(otelCfg)),
+		otlpmetrichttp.WithEndpoint(host),
 	}
 
-	// Check if endpoint uses HTTPS (default) or HTTP
-	if endpoint := getMetricsEndpoint(otelCfg); endpoint != "" {
-		// Use HTTP if localhost or explicitly set
-		if len(endpoint) > 9 && endpoint[:10] == "localhost:" {
-			opts = append(opts, otlpmetrichttp.WithInsecure())
-		}
+	// Set URL path - if a custom path is provided, append /v1/metrics to it
+	// If no path is provided, the exporter defaults to /v1/metrics
+	if path != "" {
+		opts = append(opts, otlpmetrichttp.WithURLPath(path+"/v1/metrics"))
+	}
+
+	// Use insecure (HTTP) connection if requested
+	if insecure {
+		opts = append(opts, otlpmetrichttp.WithInsecure())
 	}
 
 	// Add authentication headers
@@ -253,6 +269,7 @@ func newMeterProvider(ctx context.Context, otelCfg *config.OpenTelemetryConfig, 
 
 // getTracesEndpoint returns the traces endpoint with fallback to environment variable
 func getTracesEndpoint(otelCfg *config.OpenTelemetryConfig) string {
+	// Specific traces endpoint takes highest precedence
 	if otelCfg.Traces.Endpoint != "" {
 		return otelCfg.Traces.Endpoint
 	}
@@ -260,12 +277,17 @@ func getTracesEndpoint(otelCfg *config.OpenTelemetryConfig) string {
 	if endpoint := os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"); endpoint != "" {
 		return endpoint
 	}
-	// Fallback to general OTLP endpoint env var
+	// Fallback to general endpoint from config
+	if otelCfg.Endpoint != "" {
+		return otelCfg.Endpoint
+	}
+	// Final fallback to general OTLP endpoint env var
 	return os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 }
 
 // getMetricsEndpoint returns the metrics endpoint with fallback to environment variable
 func getMetricsEndpoint(otelCfg *config.OpenTelemetryConfig) string {
+	// Specific metrics endpoint takes highest precedence
 	if otelCfg.Metrics.Endpoint != "" {
 		return otelCfg.Metrics.Endpoint
 	}
@@ -273,19 +295,29 @@ func getMetricsEndpoint(otelCfg *config.OpenTelemetryConfig) string {
 	if endpoint := os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"); endpoint != "" {
 		return endpoint
 	}
-	// Fallback to general OTLP endpoint env var
+	// Fallback to general endpoint from config
+	if otelCfg.Endpoint != "" {
+		return otelCfg.Endpoint
+	}
+	// Final fallback to general OTLP endpoint env var
 	return os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 }
 
 // getTracesHeaders returns the traces headers with fallback to environment variable
 func getTracesHeaders(otelCfg *config.OpenTelemetryConfig) map[string]string {
+	// Specific traces headers take highest precedence
 	if len(otelCfg.Traces.Headers) > 0 {
 		return otelCfg.Traces.Headers
 	}
-	// Parse headers from environment variable (format: key1=value1,key2=value2)
+	// Check specific traces headers env var
 	if headersEnv := os.Getenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS"); headersEnv != "" {
 		return parseHeadersEnv(headersEnv)
 	}
+	// Fallback to general headers from config
+	if len(otelCfg.Headers) > 0 {
+		return otelCfg.Headers
+	}
+	// Final fallback to general OTLP headers env var
 	if headersEnv := os.Getenv("OTEL_EXPORTER_OTLP_HEADERS"); headersEnv != "" {
 		return parseHeadersEnv(headersEnv)
 	}
@@ -294,13 +326,19 @@ func getTracesHeaders(otelCfg *config.OpenTelemetryConfig) map[string]string {
 
 // getMetricsHeaders returns the metrics headers with fallback to environment variable
 func getMetricsHeaders(otelCfg *config.OpenTelemetryConfig) map[string]string {
+	// Specific metrics headers take highest precedence
 	if len(otelCfg.Metrics.Headers) > 0 {
 		return otelCfg.Metrics.Headers
 	}
-	// Parse headers from environment variable
+	// Check specific metrics headers env var
 	if headersEnv := os.Getenv("OTEL_EXPORTER_OTLP_METRICS_HEADERS"); headersEnv != "" {
 		return parseHeadersEnv(headersEnv)
 	}
+	// Fallback to general headers from config
+	if len(otelCfg.Headers) > 0 {
+		return otelCfg.Headers
+	}
+	// Final fallback to general OTLP headers env var
 	if headersEnv := os.Getenv("OTEL_EXPORTER_OTLP_HEADERS"); headersEnv != "" {
 		return parseHeadersEnv(headersEnv)
 	}
@@ -356,4 +394,47 @@ func findFirstEqual(s string) int {
 		}
 	}
 	return -1
+}
+
+// parseOTLPEndpoint parses an OTLP endpoint URL and returns the host, path, and whether to use insecure connection
+// The caller is responsible for appending the signal-specific path (/v1/traces or /v1/metrics) to the returned path.
+//
+// Handles formats like:
+//   - https://otlp-gateway-prod-us-central-0.grafana.net/otlp → (otlp-gateway-prod-us-central-0.grafana.net, /otlp, false)
+//   - http://localhost:4318 → (localhost:4318, "", true)
+//   - otlp-gateway.example.com/custom → (otlp-gateway.example.com, /custom, false)
+func parseOTLPEndpoint(endpoint string) (host string, path string, insecure bool) {
+	if endpoint == "" {
+		return "", "", false
+	}
+
+	insecure = false
+
+	// Check for http:// or https:// prefix
+	if len(endpoint) > 7 && endpoint[:7] == "http://" {
+		insecure = true
+		endpoint = endpoint[7:]
+	} else if len(endpoint) > 8 && endpoint[:8] == "https://" {
+		insecure = false
+		endpoint = endpoint[8:]
+	}
+
+	// Split host and path
+	slashIdx := -1
+	for i, c := range endpoint {
+		if c == '/' {
+			slashIdx = i
+			break
+		}
+	}
+
+	if slashIdx == -1 {
+		// No path, just host
+		return endpoint, "", insecure
+	}
+
+	host = endpoint[:slashIdx]
+	path = endpoint[slashIdx:]
+
+	return host, path, insecure
 }

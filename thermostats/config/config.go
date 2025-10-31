@@ -16,6 +16,7 @@ type Config struct {
 	Netatmo       NetatmoConfig                   `yaml:"netatmo"`
 	Prometheus    PrometheusConfig                `yaml:"prometheus"`
 	OpenTelemetry pkgconfig.OpenTelemetryConfig   `yaml:"opentelemetry"`
+	Profiling     pkgconfig.ProfilingConfig       `yaml:"profiling"`
 	Logging       pkgconfig.LoggingConfig         `yaml:"logging"`
 }
 
@@ -154,6 +155,11 @@ func (c *Config) Validate() error {
 	// Validate OpenTelemetry configuration
 	if err := pkgconfig.ValidateOpenTelemetry(&c.OpenTelemetry); err != nil {
 		return fmt.Errorf("opentelemetry validation failed: %w", err)
+	}
+
+	// Validate Profiling configuration
+	if err := pkgconfig.ValidateProfiling(&c.Profiling); err != nil {
+		return fmt.Errorf("profiling validation failed: %w", err)
 	}
 
 	return nil

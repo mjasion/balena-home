@@ -87,13 +87,17 @@ func (p *Poller) fetchAndBuffer(ctx context.Context) {
 		}
 		p.buffer.Add(bufferReading)
 
-		p.logger.Debug("added Netatmo reading to buffer",
-			zap.String("home", reading.HomeName),
-			zap.String("room", reading.RoomName),
+		p.logger.Info("added Netatmo reading to buffer",
+			zap.String("home_id", reading.HomeID),
+			zap.String("home_name", reading.HomeName),
+			zap.String("room_id", reading.RoomID),
+			zap.String("room_name", reading.RoomName),
 			zap.Float64("measured_temp", reading.MeasuredTemperature),
 			zap.Float64("setpoint_temp", reading.SetpointTemperature),
 			zap.String("mode", reading.SetpointMode),
-			zap.Int("heating_power", reading.HeatingPowerRequest),
+			zap.Int("heating_power_request", reading.HeatingPowerRequest),
+			zap.Bool("open_window", reading.OpenWindow),
+			zap.Bool("reachable", reading.Reachable),
 		)
 	}
 

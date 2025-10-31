@@ -40,6 +40,9 @@ type Config struct {
 
 	// OpenTelemetry configuration
 	OpenTelemetry pkgconfig.OpenTelemetryConfig `yaml:"opentelemetry"`
+
+	// Profiling configuration
+	Profiling pkgconfig.ProfilingConfig `yaml:"profiling"`
 }
 
 // Load reads configuration from the specified file path and applies environment variable overrides
@@ -105,6 +108,11 @@ func (c *Config) Validate() error {
 	// Validate OpenTelemetry configuration
 	if err := pkgconfig.ValidateOpenTelemetry(&c.OpenTelemetry); err != nil {
 		return fmt.Errorf("opentelemetry validation failed: %w", err)
+	}
+
+	// Validate Profiling configuration
+	if err := pkgconfig.ValidateProfiling(&c.Profiling); err != nil {
+		return fmt.Errorf("profiling validation failed: %w", err)
 	}
 
 	return nil

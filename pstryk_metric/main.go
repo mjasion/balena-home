@@ -11,6 +11,7 @@ import (
 
 	"github.com/mjasion/balena-home/pkg/buffer"
 	pkgmetrics "github.com/mjasion/balena-home/pkg/metrics"
+	"github.com/mjasion/balena-home/pkg/profiling"
 	"github.com/mjasion/balena-home/pkg/telemetry"
 	"github.com/mjasion/balena-home/pkg/types"
 	"github.com/mjasion/balena-home/pstryk_metric/config"
@@ -43,6 +44,19 @@ func main() {
 
 	logger.Info("Loading configuration", zap.String("path", *configPath))
 	logger.Info("Configuration loaded successfully", zap.Any("config", cfg.Redacted()))
+
+	// Initialize Pyroscope profiling
+	profiler, err := profiling.Start(&cfg.Profiling, logger)
+	if err != nil {
+		logger.Fatal("Failed to initialize profiler", zap.Error(err))
+	}
+	if profiler != nil {
+		defer func() {
+			if err := profiler.Stop(); err != nil {
+				logger.Error("Error shutting down profiler", zap.Error(err))
+			}
+		}()
+	}
 
 	// Initialize OpenTelemetry providers
 	ctx := context.Background()

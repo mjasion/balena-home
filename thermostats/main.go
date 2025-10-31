@@ -12,6 +12,7 @@ import (
 
 	"github.com/mjasion/balena-home/pkg/buffer"
 	pkgmetrics "github.com/mjasion/balena-home/pkg/metrics"
+	"github.com/mjasion/balena-home/pkg/profiling"
 	"github.com/mjasion/balena-home/pkg/telemetry"
 	"github.com/mjasion/balena-home/pkg/types"
 	"github.com/mjasion/balena-home/thermostats/config"
@@ -43,6 +44,21 @@ func main() {
 
 	logger.Info("starting BLE temperature monitoring service")
 	cfg.PrintConfig(logger)
+
+	// Initialize Pyroscope profiling
+	profiler, err := profiling.Start(&cfg.Profiling, logger)
+	if err != nil {
+		logger.Error("failed to initialize profiler", zap.Error(err))
+		os.Exit(1)
+	}
+	// Ensure profiler shutdown happens even if profiler is nil
+	defer func() {
+		if profiler != nil {
+			if err := profiler.Stop(); err != nil {
+				logger.Error("failed to shutdown profiler", zap.Error(err))
+			}
+		}
+	}()
 
 	// Initialize OpenTelemetry providers
 	ctx := context.Background()
