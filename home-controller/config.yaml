@@ -34,6 +34,21 @@ netatmo:
   # Note: Netatmo rate limits apply - don't set too low
   fetchIntervalSeconds: 60
 
+# Power meter monitoring
+power:
+  # Enable power meter monitoring
+  enabled: true
+
+  # HTTP endpoint URL for power meter scraping
+  # Example: http://192.168.1.100/metrics or http://powermeter.local/status
+  scrapeUrl: "http://192.168.25.46/state"  # or use POWER_SCRAPE_URL env var
+
+  # Interval between power meter scrapes in seconds (minimum: 1, default: 2)
+  scrapeIntervalSeconds: 1
+
+  # HTTP request timeout in seconds (default: 1.5)
+  scrapeTimeoutSeconds: 0.99
+
 # Prometheus metrics push configuration
 prometheus:
   # Interval between metric pushes in seconds (minimum: 1)
@@ -54,7 +69,7 @@ prometheus:
   startAtEvenSecond: true
 
   # Ring buffer size (number of readings to buffer before push)
-  bufferSize: 100000
+  bufferSize: 200000
 
   # Batch size for pushing metrics (number of readings per batch, default: 1000)
   # Larger batches are more efficient but may hit size limits on the receiving end
