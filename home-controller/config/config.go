@@ -17,6 +17,7 @@ type Config struct {
 	BLE        BLEConfig        `yaml:"ble"`
 	Netatmo    NetatmoConfig    `yaml:"netatmo"`
 	Power      PowerConfig      `yaml:"power"`
+	Pyroscope  PyroscopeConfig  `yaml:"pyroscope"`
 	Prometheus PrometheusConfig `yaml:"prometheus"`
 	Logging    LoggingConfig    `yaml:"logging"`
 }
@@ -48,6 +49,20 @@ type PowerConfig struct {
 	ScrapeURL             string  `yaml:"scrapeUrl" env:"POWER_SCRAPE_URL"`
 	ScrapeIntervalSeconds int     `yaml:"scrapeIntervalSeconds" env:"POWER_SCRAPE_INTERVAL" env-default:"2"`
 	ScrapeTimeoutSeconds  float64 `yaml:"scrapeTimeoutSeconds" env:"POWER_SCRAPE_TIMEOUT" env-default:"1.5"`
+}
+
+// PyroscopeConfig contains Pyroscope profiling configuration
+type PyroscopeConfig struct {
+	Enabled           bool              `yaml:"enabled" env:"PYROSCOPE_ENABLED" env-default:"false"`
+	ServerURL         string            `yaml:"serverUrl" env:"PYROSCOPE_SERVER_URL"`
+	ApplicationName   string            `yaml:"applicationName" env:"PYROSCOPE_APPLICATION_NAME" env-default:"home-controller"`
+	BasicAuthUser     string            `yaml:"basicAuthUser" env:"PYROSCOPE_BASIC_AUTH_USER"`
+	BasicAuthPassword string            `yaml:"basicAuthPassword" env:"PYROSCOPE_BASIC_AUTH_PASSWORD"`
+	ProfileTypes      []string          `yaml:"profileTypes"`
+	MutexProfileRate  int               `yaml:"mutexProfileRate" env:"PYROSCOPE_MUTEX_PROFILE_RATE" env-default:"0"`
+	BlockProfileRate  int               `yaml:"blockProfileRate" env:"PYROSCOPE_BLOCK_PROFILE_RATE" env-default:"0"`
+	DisableGCRuns     bool              `yaml:"disableGCRuns" env:"PYROSCOPE_DISABLE_GC_RUNS" env-default:"false"`
+	Tags              map[string]string `yaml:"tags"`
 }
 
 // PrometheusConfig contains Prometheus metrics push configuration
@@ -148,6 +163,41 @@ func (c *Config) Validate() error {
 		}
 		if c.Power.ScrapeTimeoutSeconds <= 0 {
 			return fmt.Errorf("power scrape timeout must be positive")
+		}
+	}
+
+	// Validate Pyroscope configuration if enabled
+	if c.Pyroscope.Enabled {
+		if c.Pyroscope.ServerURL == "" {
+			return fmt.Errorf("pyroscope server URL is required when profiling is enabled")
+		}
+		if c.Pyroscope.ApplicationName == "" {
+			return fmt.Errorf("pyroscope application name is required when profiling is enabled")
+		}
+		if c.Pyroscope.MutexProfileRate < 0 {
+			return fmt.Errorf("pyroscope mutex profile rate must be non-negative")
+		}
+		if c.Pyroscope.BlockProfileRate < 0 {
+			return fmt.Errorf("pyroscope block profile rate must be non-negative")
+		}
+
+		// Validate profile types if specified
+		if len(c.Pyroscope.ProfileTypes) > 0 {
+			validTypes := map[string]bool{
+				"cpu":            true,
+				"alloc_objects":  true,
+				"alloc_space":    true,
+				"inuse_objects":  true,
+				"inuse_space":    true,
+				"goroutines":     true,
+				"mutex":          true,
+				"block":          true,
+			}
+			for _, pt := range c.Pyroscope.ProfileTypes {
+				if !validTypes[pt] {
+					return fmt.Errorf("invalid pyroscope profile type: %s (must be one of: cpu, alloc_objects, alloc_space, inuse_objects, inuse_space, goroutines, mutex, block)", pt)
+				}
+			}
 		}
 	}
 
@@ -292,6 +342,11 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.String("power_scrape_url", c.Power.ScrapeURL),
 		zap.Int("power_scrape_interval_seconds", c.Power.ScrapeIntervalSeconds),
 		zap.Float64("power_scrape_timeout_seconds", c.Power.ScrapeTimeoutSeconds),
+		zap.Bool("pyroscope_enabled", c.Pyroscope.Enabled),
+		zap.String("pyroscope_server_url", c.Pyroscope.ServerURL),
+		zap.String("pyroscope_application_name", c.Pyroscope.ApplicationName),
+		zap.Bool("pyroscope_auth_configured", c.Pyroscope.BasicAuthUser != "" && c.Pyroscope.BasicAuthPassword != ""),
+		zap.Strings("pyroscope_profile_types", c.Pyroscope.ProfileTypes),
 		zap.Int("push_interval_seconds", c.Prometheus.PushIntervalSeconds),
 		zap.String("prometheus_url", c.Prometheus.URL),
 		zap.String("prometheus_username", c.Prometheus.Username),

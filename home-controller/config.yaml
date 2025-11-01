@@ -49,6 +49,54 @@ power:
   # HTTP request timeout in seconds (default: 1.5)
   scrapeTimeoutSeconds: 0.99
 
+# Pyroscope profiling configuration
+pyroscope:
+  # Enable Pyroscope continuous profiling
+  enabled: false
+
+  # Pyroscope server URL
+  # For Grafana Cloud: https://profiles-prod-XXX.grafana.net
+  # For local: http://pyroscope-server:4040
+  serverUrl: ""  # or use PYROSCOPE_SERVER_URL env var
+
+  # Application name for profiling data
+  # This will appear in Pyroscope UI for filtering
+  applicationName: "home-controller"  # or use PYROSCOPE_APPLICATION_NAME env var
+
+  # Basic auth username (for Grafana Cloud, this is your instance ID)
+  basicAuthUser: ""  # or use PYROSCOPE_BASIC_AUTH_USER env var
+
+  # Basic auth password (for Grafana Cloud, this is your API key)
+  # IMPORTANT: Use PYROSCOPE_BASIC_AUTH_PASSWORD environment variable
+  basicAuthPassword: ""  # or use PYROSCOPE_BASIC_AUTH_PASSWORD env var
+
+  # Profile types to enable (all enabled by default)
+  # Supported: cpu, alloc_objects, alloc_space, inuse_objects, inuse_space,
+  #            goroutines, mutex, block
+  profileTypes:
+    - cpu              # CPU profiling
+    - alloc_objects    # Memory allocation object count
+    - alloc_space      # Memory allocation bytes
+    - inuse_objects    # In-use memory object count
+    - inuse_space      # In-use memory bytes
+    - goroutines       # Number of goroutines
+
+  # Mutex profiling rate (0 = disabled, recommended: 5-10 for production)
+  # Higher = more detail but more overhead
+  mutexProfileRate: 0
+
+  # Block profiling rate (0 = disabled, recommended: 1000000-10000000 nanoseconds)
+  # Samples blocking events that last longer than this duration
+  blockProfileRate: 0
+
+  # Disable GC runs for more efficient memory profiling
+  # Set to true if tracking many objects (reduces CPU overhead, less precise heap profiles)
+  disableGCRuns: false
+
+  # Additional tags for filtering in Pyroscope UI
+  # Example: environment, version, hostname
+  tags: {}
+
 # Prometheus metrics push configuration
 prometheus:
   # Interval between metric pushes in seconds (minimum: 1)

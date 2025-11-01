@@ -15,6 +15,7 @@ import (
 	"github.com/mjasion/balena-home/thermostats/metrics"
 	"github.com/mjasion/balena-home/thermostats/netatmo"
 	"github.com/mjasion/balena-home/thermostats/power"
+	"github.com/mjasion/balena-home/thermostats/pyroscope"
 	"github.com/mjasion/balena-home/thermostats/scanner"
 	"go.uber.org/zap"
 )
@@ -41,6 +42,18 @@ func main() {
 
 	logger.Info("starting BLE temperature monitoring service")
 	cfg.PrintConfig(logger)
+
+	// Initialize Pyroscope profiler if enabled
+	profiler, err := pyroscope.New(&cfg.Pyroscope, logger)
+	if err != nil {
+		logger.Error("failed to initialize pyroscope profiler", zap.Error(err))
+		os.Exit(1)
+	}
+	defer func() {
+		if err := profiler.Stop(); err != nil {
+			logger.Error("failed to stop pyroscope profiler", zap.Error(err))
+		}
+	}()
 
 	// Create ring buffer
 	ringBuffer := buffer.New(cfg.Prometheus.BufferSize, logger)

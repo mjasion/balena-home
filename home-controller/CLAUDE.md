@@ -40,6 +40,7 @@ This service consolidates multiple data sources into a unified monitoring platfo
 │  - Config loading                                    │
 │  - Signal handling (SIGINT/SIGTERM)                 │
 │  - Graceful shutdown with final metrics push        │
+│  - Pyroscope profiling (optional)                   │
 └─────────────────────────────────────────────────────┘
          │
          ├──────────────┬──────────────┬──────────────┐
@@ -64,6 +65,23 @@ This service consolidates multiple data sources into a unified monitoring platfo
                │  - Concurrent    │
                │  - 100K capacity │
                └─────────────────┘
+                        │
+                        ▼
+               ┌─────────────────┐
+               │   Pyroscope      │
+               │  (pyroscope/)    │
+               │  - CPU profiling │
+               │  - Memory        │
+               │  - Goroutines    │
+               │  - Mutex/Block   │
+               └─────────────────┘
+                        │
+                        ▼
+               ┌─────────────────┐
+               │  Grafana Cloud   │
+               │  - Metrics       │
+               │  - Profiles      │
+               └─────────────────┘
 ```
 
 ### Data Flow
@@ -73,6 +91,7 @@ This service consolidates multiple data sources into a unified monitoring platfo
 3. **Power Meter Scraper**: Polls HTTP endpoints for energy consumption metrics
 4. **All readings** → Ring buffer (thread-safe, 100K capacity)
 5. **Metrics Pusher**: Batch pushes to Prometheus every 30 seconds
+6. **Pyroscope Profiler** (optional): Continuous profiling of CPU, memory, goroutines to Grafana Cloud
 
 ## Project Structure
 
@@ -99,6 +118,8 @@ home-controller/
 │   ├── poller.go          # Periodic polling logic
 │   ├── types.go           # Power meter data types
 │   └── *_test.go          # Tests
+├── pyroscope/
+│   └── profiler.go        # Pyroscope continuous profiling
 ├── buffer/
 │   ├── buffer.go          # Thread-safe ring buffer
 │   └── buffer_test.go
@@ -121,8 +142,9 @@ The service uses `config.yaml` with environment variable overrides via cleanenv:
 **BLE Sensors**: List of LYWSD03MMC sensors with MAC addresses
 **Netatmo**: OAuth2 credentials, fetch interval (60s default)
 **Power Meter**: HTTP endpoint, scrape interval
+**Pyroscope**: Continuous profiling configuration (CPU, memory, goroutines, mutex, block)
 **Prometheus**: Push interval (30s), endpoint URL, credentials, buffer/batch sizes
-**Logging**: Format (console/json), level (debug/info/warn/error)
+**Logging**: Format (console/json/logfmt), level (debug/info/warn/error)
 
 ### Environment Variables
 
@@ -131,6 +153,10 @@ Critical secrets should be set via environment variables:
 - `NETATMO_CLIENT_ID`: Netatmo OAuth2 client ID
 - `NETATMO_CLIENT_SECRET`: Netatmo OAuth2 client secret
 - `NETATMO_REFRESH_TOKEN`: Netatmo OAuth2 refresh token
+- `PYROSCOPE_ENABLED`: Enable/disable Pyroscope profiling (true/false)
+- `PYROSCOPE_SERVER_URL`: Pyroscope server URL (e.g., https://profiles-prod-XXX.grafana.net)
+- `PYROSCOPE_BASIC_AUTH_USER`: Pyroscope basic auth username (Grafana Cloud instance ID)
+- `PYROSCOPE_BASIC_AUTH_PASSWORD`: Pyroscope basic auth password (Grafana Cloud API key)
 
 ## Building and Running
 
@@ -209,11 +235,49 @@ Key external dependencies:
 - `github.com/prometheus/prometheus`: Protobuf/snappy for remote_write
 - `github.com/gogo/protobuf`: Protobuf encoding
 - `github.com/golang/snappy`: Compression
+- `github.com/grafana/pyroscope-go`: Continuous profiling (CPU, memory, goroutines)
+
+## Pyroscope Continuous Profiling
+
+The service supports optional continuous profiling via Pyroscope (Grafana Cloud Profiles):
+
+### Benefits
+
+- **Performance Monitoring**: Track CPU usage, memory allocations, and goroutine counts
+- **Memory Leak Detection**: Identify memory leaks through heap profiling over time
+- **Production Debugging**: Understand production performance without impacting users
+- **Historical Analysis**: Compare profiles across different time periods
+
+### Configuration
+
+Enable profiling by setting `pyroscope.enabled: true` in `config.yaml` and providing:
+- Server URL (Grafana Cloud Profiles endpoint)
+- Application name (defaults to "home-controller")
+- Basic auth credentials for Grafana Cloud
+- Profile types to collect (CPU, memory, goroutines, mutex, block)
+- Optional: Mutex/block profiling rates for concurrency analysis
+
+### Profile Types
+
+- **cpu**: CPU time consumed by each function
+- **alloc_objects/alloc_space**: Memory allocation tracking (objects and bytes)
+- **inuse_objects/inuse_space**: Current memory usage (objects and bytes)
+- **goroutines**: Number of goroutines over time
+- **mutex**: Mutex contention (requires `mutexProfileRate > 0`)
+- **block**: Blocking events (requires `blockProfileRate > 0`)
+
+### Best Practices
+
+- Start with CPU and memory profiling (alloc/inuse) for most use cases
+- Enable mutex/block profiling only when debugging concurrency issues (adds overhead)
+- Set `disableGCRuns: true` for high-volume memory tracking (reduces CPU overhead)
+- Use tags (hostname, environment, version) for filtering in Pyroscope UI
+- Monitor overhead in production (typically <5% with default settings)
 
 ## Future Plans
 
 This service is designed as the foundation for intelligent climate control:
-1. **Current**: Monitoring only (BLE sensors, Netatmo, power meters)
+1. **Current**: Monitoring only (BLE sensors, Netatmo, power meters) + continuous profiling
 2. **Next**: Decision-making logic to open/close thermostats based on:
    - Temperature targets
    - Energy prices
