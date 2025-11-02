@@ -31,9 +31,9 @@ type Pusher struct {
 // New creates a new Prometheus pusher
 func New(url, username, password string, buf *buffer.RingBuffer, pushIntervalSeconds, batchSize int, logger *zap.Logger) *Pusher {
 	return &Pusher{
-		url:          url,
-		username:     username,
-		password:     password,
+		url:      url,
+		username: username,
+		password: password,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -519,7 +519,7 @@ func (p *Pusher) buildPowerTimeSeries(readings []*buffer.PowerReading) ([]prompb
 		labels := []prompb.Label{
 			{
 				Name:  "__name__",
-				Value: "power_meter_" + key.sensorType,
+				Value: key.sensorType,
 			},
 			{
 				Name:  "sensor_id",
