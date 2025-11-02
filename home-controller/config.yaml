@@ -52,19 +52,19 @@ power:
 # Pyroscope profiling configuration
 pyroscope:
   # Enable Pyroscope continuous profiling
-  enabled: false
+  enabled: true
 
   # Pyroscope server URL
   # For Grafana Cloud: https://profiles-prod-XXX.grafana.net
   # For local: http://pyroscope-server:4040
-  serverUrl: ""  # or use PYROSCOPE_SERVER_URL env var
+  serverUrl: "https://profiles-prod-003.grafana.net"  # or use PYROSCOPE_SERVER_URL env var
 
   # Application name for profiling data
   # This will appear in Pyroscope UI for filtering
   applicationName: "home-controller"  # or use PYROSCOPE_APPLICATION_NAME env var
 
   # Basic auth username (for Grafana Cloud, this is your instance ID)
-  basicAuthUser: ""  # or use PYROSCOPE_BASIC_AUTH_USER env var
+  basicAuthUser: "192047"  # or use PYROSCOPE_BASIC_AUTH_USER env var
 
   # Basic auth password (for Grafana Cloud, this is your API key)
   # IMPORTANT: Use PYROSCOPE_BASIC_AUTH_PASSWORD environment variable
@@ -83,11 +83,11 @@ pyroscope:
 
   # Mutex profiling rate (0 = disabled, recommended: 5-10 for production)
   # Higher = more detail but more overhead
-  mutexProfileRate: 0
+  mutexProfileRate: 10
 
   # Block profiling rate (0 = disabled, recommended: 1000000-10000000 nanoseconds)
   # Samples blocking events that last longer than this duration
-  blockProfileRate: 0
+  blockProfileRate: 10000000
 
   # Disable GC runs for more efficient memory profiling
   # Set to true if tracking many objects (reduces CPU overhead, less precise heap profiles)
