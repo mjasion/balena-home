@@ -71,21 +71,31 @@ func (p *Poller) scrapeAndBuffer(ctx context.Context) {
 		bufferReading := &buffer.Reading{
 			Type: buffer.ReadingTypePower,
 			Power: &buffer.PowerReading{
-				Timestamp: reading.Timestamp,
-				SensorID:  reading.SensorID,
-				Value:     reading.Value,
+				Timestamp:  reading.Timestamp,
+				SensorID:   reading.SensorID,
+				SensorType: reading.SensorType,
+				SensorName: reading.SensorName,
+				Value:      reading.Value,
 			},
 		}
 		p.buffer.Add(bufferReading)
 
 		p.logger.Debug("added power reading to buffer",
 			zap.Int("sensor_id", reading.SensorID),
-			zap.Float64("value_watts", reading.Value),
+			zap.String("sensor_type", reading.SensorType),
+			zap.Float64("value", reading.Value),
 			zap.Time("timestamp", reading.Timestamp),
 		)
 	}
 
+	// Count sensor types for summary logging
+	typeCount := make(map[string]int)
+	for _, reading := range result.Readings {
+		typeCount[reading.SensorType]++
+	}
+
 	p.logger.Info("scraped and buffered power meter data",
 		zap.Int("reading_count", len(result.Readings)),
+		zap.Any("sensor_types", typeCount),
 	)
 }

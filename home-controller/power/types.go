@@ -40,33 +40,56 @@ type Sensor struct {
 	IconSet int     `json:"iconSet,omitempty"`
 }
 
-// ActivePowerReading represents a single active power measurement with metadata
-type ActivePowerReading struct {
-	SensorID  int
-	Value     float64
-	Timestamp time.Time
+// SensorReading represents a single sensor measurement with metadata
+type SensorReading struct {
+	SensorID   int
+	SensorType string
+	SensorName string
+	Value      float64
+	Timestamp  time.Time
 }
 
 // ScrapeResult contains the results of a scraping operation
 type ScrapeResult struct {
-	Readings  []ActivePowerReading
+	Readings  []SensorReading
 	Timestamp time.Time
 	Error     error
 }
 
-// FilterActivePower extracts all sensors with type "activePower" from the response
-func (r *MultiSensorResponse) FilterActivePower() []ActivePowerReading {
-	var readings []ActivePowerReading
+// ConvertCamelToSnake converts camelCase strings to snake_case (lowercase)
+func ConvertCamelToSnake(s string) string {
+	var result []rune
+	for i, r := range s {
+		// Add underscore before uppercase letters (except the first character)
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			result = append(result, '_')
+		}
+		// Convert to lowercase
+		if r >= 'A' && r <= 'Z' {
+			result = append(result, r+32) // Convert to lowercase
+		} else {
+			result = append(result, r)
+		}
+	}
+	return string(result)
+}
+
+// GetAllSensors extracts all sensors from the response
+func (r *MultiSensorResponse) GetAllSensors() []SensorReading {
+	var readings []SensorReading
 	now := time.Now()
 
 	for _, sensor := range r.MultiSensor.Sensors {
-		if sensor.Type == "activePower" {
-			readings = append(readings, ActivePowerReading{
-				SensorID:  sensor.ID,
-				Value:     sensor.Value,
-				Timestamp: now,
-			})
-		}
+		// Convert sensor type from camelCase to snake_case
+		sensorType := ConvertCamelToSnake(sensor.Type)
+
+		readings = append(readings, SensorReading{
+			SensorID:   sensor.ID,
+			SensorType: sensorType,
+			SensorName: sensor.Name,
+			Value:      sensor.Value,
+			Timestamp:  now,
+		})
 	}
 
 	return readings

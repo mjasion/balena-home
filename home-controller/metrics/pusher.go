@@ -498,25 +498,41 @@ func (p *Pusher) LastPushTime() time.Time {
 
 // buildPowerTimeSeries builds time series for power meter readings
 func (p *Pusher) buildPowerTimeSeries(readings []*buffer.PowerReading) ([]prompb.TimeSeries, error) {
-	// Group readings by sensor
-	sensorReadings := make(map[int][]*buffer.PowerReading)
+	// Group readings by sensor ID and sensor type (e.g., sensor 0 with active_power, sensor 0 with voltage)
+	type sensorKey struct {
+		id         int
+		sensorType string
+	}
+	sensorReadings := make(map[sensorKey][]*buffer.PowerReading)
 	for _, reading := range readings {
-		sensorReadings[reading.SensorID] = append(sensorReadings[reading.SensorID], reading)
+		key := sensorKey{
+			id:         reading.SensorID,
+			sensorType: reading.SensorType,
+		}
+		sensorReadings[key] = append(sensorReadings[key], reading)
 	}
 
-	// Build time series for each sensor
+	// Build time series for each sensor and type
 	var timeSeries []prompb.TimeSeries
-	for sensorID, sensorData := range sensorReadings {
-		// Create base labels for this sensor
-		baseLabels := []prompb.Label{
+	for key, sensorData := range sensorReadings {
+		// Create labels for this sensor and type
+		labels := []prompb.Label{
 			{
 				Name:  "__name__",
-				Value: "active_power_watts",
+				Value: "power_meter_" + key.sensorType,
 			},
 			{
 				Name:  "sensor_id",
-				Value: fmt.Sprintf("%d", sensorID),
+				Value: fmt.Sprintf("%d", key.id),
 			},
+		}
+
+		// Add sensor name label if available
+		if len(sensorData) > 0 && sensorData[0].SensorName != "" {
+			labels = append(labels, prompb.Label{
+				Name:  "sensor_name",
+				Value: sensorData[0].SensorName,
+			})
 		}
 
 		// Prepare samples
@@ -526,22 +542,23 @@ func (p *Pusher) buildPowerTimeSeries(readings []*buffer.PowerReading) ([]prompb
 			ts, ok := reading.Timestamp.(time.Time)
 			if !ok {
 				p.logger.Warn("invalid timestamp type in power reading",
-					zap.Int("sensor_id", sensorID),
+					zap.Int("sensor_id", key.id),
+					zap.String("sensor_type", key.sensorType),
 				)
 				continue
 			}
 			timestampMs := ts.UnixMilli()
 
-			// Add power sample
+			// Add sample
 			samples = append(samples, prompb.Sample{
 				Value:     reading.Value,
 				Timestamp: timestampMs,
 			})
 		}
 
-		// Add power time series
+		// Add time series
 		timeSeries = append(timeSeries, prompb.TimeSeries{
-			Labels:  baseLabels,
+			Labels:  labels,
 			Samples: samples,
 		})
 	}

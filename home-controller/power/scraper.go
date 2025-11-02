@@ -73,7 +73,7 @@ func (s *Scraper) Scrape(ctx context.Context) (*ScrapeResult, error) {
 }
 
 // scrapeOnce performs a single scrape attempt
-func (s *Scraper) scrapeOnce(ctx context.Context) ([]ActivePowerReading, error) {
+func (s *Scraper) scrapeOnce(ctx context.Context) ([]SensorReading, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -107,12 +107,18 @@ func (s *Scraper) scrapeOnce(ctx context.Context) ([]ActivePowerReading, error) 
 		return nil, fmt.Errorf("failed to parse JSON: %w", err)
 	}
 
-	readings := data.FilterActivePower()
+	readings := data.GetAllSensors()
 	if len(readings) == 0 {
-		s.logger.Warn("No activePower sensors found in response")
+		s.logger.Warn("No sensors found in response")
 	} else {
+		// Count sensor types for logging
+		typeCount := make(map[string]int)
+		for _, r := range readings {
+			typeCount[r.SensorType]++
+		}
 		s.logger.Info("Successfully fetched sensor readings",
-			zap.Int("sensorCount", len(readings)),
+			zap.Int("total_sensors", len(readings)),
+			zap.Any("sensor_types", typeCount),
 			zap.Int("statusCode", resp.StatusCode))
 	}
 

@@ -92,31 +92,51 @@ func TestScrape_Success(t *testing.T) {
 		t.Errorf("Expected no error in result, got: %v", result.Error)
 	}
 
-	if len(result.Readings) != 4 {
-		t.Errorf("Expected 4 active power readings, got %d", len(result.Readings))
+	// fullSampleJSON has 6 sensors total (2 energy + 4 activePower)
+	if len(result.Readings) != 6 {
+		t.Errorf("Expected 6 sensor readings, got %d", len(result.Readings))
 	}
 
 	if result.Timestamp.IsZero() {
 		t.Error("Expected timestamp to be set")
 	}
 
-	// Verify readings
-	expectedValues := map[int]float64{
+	// Verify we have the expected sensor types and values
+	foundActivePower := 0
+	foundEnergy := 0
+	activePowerValues := make(map[int]float64)
+
+	for _, reading := range result.Readings {
+		if reading.SensorType == "active_power" {
+			foundActivePower++
+			activePowerValues[reading.SensorID] = reading.Value
+		} else if reading.SensorType == "forward_active_energy" || reading.SensorType == "reverse_active_energy" {
+			foundEnergy++
+		}
+	}
+
+	if foundActivePower != 4 {
+		t.Errorf("Expected 4 active_power readings, got %d", foundActivePower)
+	}
+	if foundEnergy != 2 {
+		t.Errorf("Expected 2 energy readings, got %d", foundEnergy)
+	}
+
+	// Verify the active power values
+	expectedActivePowerValues := map[int]float64{
 		0: 89,
 		1: -1,
 		2: 73,
 		3: 17,
 	}
-
-	for _, reading := range result.Readings {
-		expectedValue, exists := expectedValues[reading.SensorID]
+	for id, expectedValue := range expectedActivePowerValues {
+		actualValue, exists := activePowerValues[id]
 		if !exists {
-			t.Errorf("Unexpected sensor ID: %d", reading.SensorID)
+			t.Errorf("Missing active_power reading for sensor ID %d", id)
 			continue
 		}
-
-		if reading.Value != expectedValue {
-			t.Errorf("For sensor %d, expected value %f, got %f", reading.SensorID, expectedValue, reading.Value)
+		if actualValue != expectedValue {
+			t.Errorf("For sensor %d active_power, expected value %f, got %f", id, expectedValue, actualValue)
 		}
 	}
 }
@@ -188,8 +208,13 @@ func TestScrape_NoActivePowerSensors(t *testing.T) {
 		t.Fatalf("Expected successful scrape, got error: %v", err)
 	}
 
-	if len(result.Readings) != 0 {
-		t.Errorf("Expected 0 active power readings, got %d", len(result.Readings))
+	// Now we return all sensors, so we expect 1 voltage sensor
+	if len(result.Readings) != 1 {
+		t.Errorf("Expected 1 sensor reading (voltage), got %d", len(result.Readings))
+	}
+
+	if len(result.Readings) > 0 && result.Readings[0].SensorType != "voltage" {
+		t.Errorf("Expected voltage sensor, got %s", result.Readings[0].SensorType)
 	}
 }
 
@@ -258,8 +283,9 @@ func TestScrape_RetryLogic(t *testing.T) {
 		t.Errorf("Expected 3 attempts, got %d", attemptCount)
 	}
 
-	if len(result.Readings) != 4 {
-		t.Errorf("Expected 4 active power readings, got %d", len(result.Readings))
+	// fullSampleJSON has 6 sensors total (2 energy + 4 activePower)
+	if len(result.Readings) != 6 {
+		t.Errorf("Expected 6 sensor readings, got %d", len(result.Readings))
 	}
 }
 

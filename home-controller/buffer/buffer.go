@@ -45,11 +45,13 @@ type ThermostatReading struct {
 	Reachable           bool
 }
 
-// PowerReading represents an active power measurement from energy meter
+// PowerReading represents a power/energy sensor measurement from energy meter
 type PowerReading struct {
-	Timestamp interface{} // time.Time
-	SensorID  int
-	Value     float64
+	Timestamp  interface{} // time.Time
+	SensorID   int
+	SensorType string // snake_case type: active_power, apparent_power, voltage, current, etc.
+	SensorName string // Optional friendly name
+	Value      float64
 }
 
 // Reading is a union type that can hold BLE sensor, Netatmo thermostat, or power readings
