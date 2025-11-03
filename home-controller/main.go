@@ -12,6 +12,7 @@ import (
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
 	"github.com/mjasion/balena-home/thermostats/config"
+	"github.com/mjasion/balena-home/thermostats/control"
 	"github.com/mjasion/balena-home/thermostats/metrics"
 	"github.com/mjasion/balena-home/thermostats/netatmo"
 	"github.com/mjasion/balena-home/thermostats/power"
@@ -55,16 +56,22 @@ func main() {
 		}
 	}()
 
-	// Create ring buffer
-	ringBuffer := buffer.New(cfg.Prometheus.BufferSize, logger)
-	logger.Info("ring buffer created", zap.Int("capacity", cfg.Prometheus.BufferSize))
+	// Create dual ring buffers for separate purposes
+	// Metrics buffer: Used by metrics pusher (cleared every push interval)
+	metricsBuffer := buffer.New(cfg.Prometheus.BufferSize, logger)
+	logger.Info("metrics buffer created", zap.Int("capacity", cfg.Prometheus.BufferSize))
 
-	// Create Prometheus pusher
+	// Control buffer: Used by control loop (retained for 60s+ history, never cleared)
+	controlBufferSize := 10000 // Sufficient for ~2.5 hours of BLE readings
+	controlBuffer := buffer.New(controlBufferSize, logger)
+	logger.Info("control buffer created", zap.Int("capacity", controlBufferSize))
+
+	// Create Prometheus pusher (uses metrics buffer)
 	pusher := metrics.New(
 		cfg.Prometheus.URL,
 		cfg.Prometheus.Username,
 		cfg.Prometheus.Password,
-		ringBuffer,
+		metricsBuffer,
 		cfg.Prometheus.PushIntervalSeconds,
 		cfg.Prometheus.BatchSize,
 		logger,
@@ -92,8 +99,8 @@ func main() {
 		}
 	}
 
-	// Start BLE scanner in goroutine
-	bleScanner := scanner.New(scannerSensors, ringBuffer, logger)
+	// Start BLE scanner in goroutine (writes to BOTH buffers)
+	bleScanner := scanner.New(scannerSensors, metricsBuffer, controlBuffer, logger)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -104,7 +111,7 @@ func main() {
 		}
 	}()
 
-	// Start Netatmo poller if enabled
+	// Start Netatmo poller if enabled (writes to metrics buffer only)
 	if cfg.Netatmo.Enabled {
 		logger.Info("netatmo integration enabled, starting poller")
 
@@ -116,7 +123,7 @@ func main() {
 
 		netatmoPoller := netatmo.NewPoller(
 			netatmoFetcher,
-			ringBuffer,
+			metricsBuffer,
 			cfg.Netatmo.FetchInterval,
 			logger,
 		)
@@ -130,7 +137,7 @@ func main() {
 		logger.Info("netatmo integration disabled")
 	}
 
-	// Start Power poller if enabled
+	// Start Power poller if enabled (writes to metrics buffer only)
 	if cfg.Power.Enabled {
 		logger.Info("power monitoring enabled, starting poller")
 
@@ -142,7 +149,7 @@ func main() {
 
 		powerPoller := power.NewPoller(
 			powerScraper,
-			ringBuffer,
+			metricsBuffer,
 			cfg.Power.ScrapeIntervalSeconds,
 			logger,
 		)
@@ -154,6 +161,38 @@ func main() {
 		}()
 	} else {
 		logger.Info("power monitoring disabled")
+	}
+
+	// Start thermostat control loop if enabled (uses control buffer)
+	if cfg.ThermostatControl.Enabled {
+		logger.Info("thermostat control enabled, starting control loop")
+
+		// Create Netatmo client for control loop
+		netatmoClient := netatmo.NewClient(
+			cfg.Netatmo.ClientID,
+			cfg.Netatmo.ClientSecret,
+			cfg.Netatmo.RefreshToken,
+		)
+
+		// Create controller
+		controller := control.New(
+			&cfg.ThermostatControl,
+			netatmoClient,
+			controlBuffer,
+			metricsBuffer,
+			logger,
+		)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := controller.Start(ctx)
+			if err != nil {
+				logger.Error("thermostat control loop failed", zap.Error(err))
+			}
+		}()
+	} else {
+		logger.Info("thermostat control disabled")
 	}
 
 	// Wait for START_AT_EVEN_SECOND if configured
@@ -192,9 +231,9 @@ func main() {
 		logger.Error("failed to stop BLE scanner", zap.Error(err))
 	}
 
-	// Final push of remaining data
+	// Final push of remaining data from metrics buffer
 	logger.Info("performing final metrics push")
-	readings := ringBuffer.GetAll()
+	readings := metricsBuffer.GetAll()
 	if len(readings) > 0 {
 		finalCtx, finalCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer finalCancel()

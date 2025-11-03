@@ -131,3 +131,112 @@ logging:
 
   # Log level: "debug", "info", "warn", "error"
   logLevel: "info"
+
+# Intelligent Thermostat Control (NEW)
+# IMPORTANT: This feature is DISABLED by default. Enable only after reviewing all settings.
+thermostatControl:
+  # Enable thermostat control (default: false - feature disabled)
+  # IMPORTANT: Requires Netatmo OAuth2 token with read_thermostat and write_thermostat scopes
+  enabled: false
+
+  # Dry-run mode: Log control decisions without sending commands to thermostats (default: false)
+  # Use this for testing before enabling real control
+  # When true: Control loop runs, decisions are logged, but no API calls are made
+  dryRun: false
+
+  # Temperature difference threshold (°C) to trigger adjustment (default: 0.5)
+  # Minimum difference between Xiaomi sensor and scheduled temperature to trigger action
+  # Range: 0.1 to 5.0°C (lower = more aggressive, higher = more relaxed)
+  temperatureThreshold: 0.5
+
+  # Control loop interval in seconds (default: 60)
+  # How often to evaluate each room and potentially adjust thermostats
+  controlIntervalSeconds: 60
+
+  # Override duration in minutes (default: 10)
+  # SAFETY: All setpoint changes auto-expire after this duration (fail-safe)
+  # After expiration, thermostat reverts to schedule mode
+  overrideDurationMinutes: 10
+
+  # Recheck delay in minutes (default: 5)
+  # After adjusting a thermostat, wait this long before re-evaluating
+  # Prevents oscillation and excessive API calls
+  recheckDelayMinutes: 5
+
+  # External modification reset timeout in hours (default: 24)
+  # If thermostat manually changed, pause control for this duration
+  # Control resumes after timeout OR when thermostat switched to schedule mode
+  externalModificationResetHours: 24
+
+  # Safety limits for calculated setpoints
+  # SAFETY: Setpoints are clamped to these limits to prevent extreme temperatures
+  minSetpointCelsius: 10.0  # Minimum setpoint (prevents freezing)
+  maxSetpointCelsius: 30.0  # Maximum setpoint (prevents overheating)
+
+  # Sensor-to-room mappings
+  # Associates Netatmo rooms with Xiaomi BLE sensors
+  # One sensor can be shared by multiple rooms
+  mappings: []
+    # Example configuration (uncomment and customize):
+    # - roomName: "Sypialnia"  # Must match Netatmo room name exactly
+    #   sensorMAC: "A4:C1:38:ED:C0:21"  # Xiaomi sensor MAC (must exist in ble.sensors)
+    #   roomID: ""  # Leave empty - auto-populated at startup from Netatmo API
+    #
+    # - roomName: "Salon"
+    #   sensorMAC: "A4:C1:38:26:E2:4C"
+    #   roomID: ""
+
+  # Hard override schedules (optional)
+  # Time-based temperature overrides that take precedence over normal control
+  # Use for predictable patterns (e.g., warm up bedroom before waking)
+  hardOverrides: []
+    # Example configuration (uncomment and customize):
+    # - roomName: "Sypialnia"
+    #   schedule:
+    #     - startTime: "22:00"  # HH:MM format (24-hour)
+    #       endTime: "07:00"    # Can span midnight
+    #       targetTemperature: 19.0
+    #     - startTime: "06:30"  # Multiple windows allowed
+    #       endTime: "08:00"
+    #       targetTemperature: 22.0
+    #
+    # - roomName: "Salon"
+    #   schedule:
+    #     - startTime: "08:00"
+    #       endTime: "10:00"
+    #       targetTemperature: 22.0
+
+# USAGE NOTES:
+#
+# 1. BEFORE ENABLING:
+#    - Verify Netatmo OAuth2 token has write_thermostat scope
+#    - Test with dryRun: true first
+#    - Monitor logs for "DRY-RUN" messages
+#    - Verify room names match Netatmo exactly
+#    - Verify sensor MACs exist in ble.sensors
+#
+# 2. CONTROL ALGORITHM:
+#    - Reads Xiaomi BLE sensor (weighted average of last 60 seconds)
+#    - Compares with scheduled temperature (from Netatmo or hard override)
+#    - If |xiaomiTemp - scheduledTemp| > threshold:
+#      - Calculates: newSetpoint = thermostatMeasured + (xiaomiTemp - scheduledTemp)
+#      - Clamps to safety limits (10-30°C)
+#      - Sends 10-minute temporary override to Netatmo
+#    - Waits recheckDelayMinutes before re-evaluating
+#
+# 3. PRECEDENCE HIERARCHY:
+#    1. External modification detected → Pause control for 24h or until schedule mode
+#    2. Hard override active → Use hard override temperature as target
+#    3. Normal control → Use Netatmo schedule temperature as target
+#
+# 4. MONITORING:
+#    - Check Grafana metrics: thermostat_control_*
+#    - Alert if thermostat_control_temperature_difference_celsius > 1.0°C
+#    - Alert if thermostat_control_action == 0 (skip) for > 1 hour
+#    - Dashboard: Xiaomi temp vs Netatmo measured (should converge)
+#
+# 5. TROUBLESHOOTING:
+#    - "sensor data unavailable" → Check BLE sensor broadcasting
+#    - "room not found" → Verify room name matches Netatmo
+#    - "externally modified" → Wait 24h or switch thermostat to schedule mode
+#    - "waiting until next recheck time" → Normal after adjustment
