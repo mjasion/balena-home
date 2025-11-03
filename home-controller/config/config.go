@@ -14,12 +14,13 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	BLE        BLEConfig        `yaml:"ble"`
-	Netatmo    NetatmoConfig    `yaml:"netatmo"`
-	Power      PowerConfig      `yaml:"power"`
-	Pyroscope  PyroscopeConfig  `yaml:"pyroscope"`
-	Prometheus PrometheusConfig `yaml:"prometheus"`
-	Logging    LoggingConfig    `yaml:"logging"`
+	BLE               BLEConfig               `yaml:"ble"`
+	Netatmo           NetatmoConfig           `yaml:"netatmo"`
+	Power             PowerConfig             `yaml:"power"`
+	Pyroscope         PyroscopeConfig         `yaml:"pyroscope"`
+	Prometheus        PrometheusConfig        `yaml:"prometheus"`
+	Logging           LoggingConfig           `yaml:"logging"`
+	ThermostatControl ThermostatControlConfig `yaml:"thermostatControl"`
 }
 
 // BLEConfig contains BLE scanning configuration
@@ -82,7 +83,43 @@ type LoggingConfig struct {
 	Level  string `yaml:"logLevel" env:"LOG_LEVEL" env-default:"info"`
 }
 
+// ThermostatControlConfig contains thermostat control configuration
+type ThermostatControlConfig struct {
+	Enabled                         bool                  `yaml:"enabled" env:"THERMOSTAT_CONTROL_ENABLED" env-default:"false"`
+	DryRun                          bool                  `yaml:"dryRun" env:"THERMOSTAT_CONTROL_DRY_RUN" env-default:"false"`
+	TemperatureThreshold            float64               `yaml:"temperatureThreshold" env:"TEMPERATURE_THRESHOLD" env-default:"0.5"`
+	ControlIntervalSeconds          int                   `yaml:"controlIntervalSeconds" env:"CONTROL_INTERVAL_SECONDS" env-default:"60"`
+	OverrideDurationMinutes         int                   `yaml:"overrideDurationMinutes" env:"OVERRIDE_DURATION_MINUTES" env-default:"10"`
+	RecheckDelayMinutes             int                   `yaml:"recheckDelayMinutes" env:"RECHECK_DELAY_MINUTES" env-default:"5"`
+	ExternalModificationResetHours  int                   `yaml:"externalModificationResetHours" env:"EXTERNAL_MODIFICATION_RESET_HOURS" env-default:"24"`
+	MinSetpointCelsius              float64               `yaml:"minSetpointCelsius" env:"MIN_SETPOINT_CELSIUS" env-default:"10.0"`
+	MaxSetpointCelsius              float64               `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
+	Mappings                        []ThermostatMapping   `yaml:"mappings"`
+	HardOverrides                   []HardOverride        `yaml:"hardOverrides"`
+}
+
+// ThermostatMapping maps a Netatmo room to a Xiaomi sensor
+type ThermostatMapping struct {
+	RoomName  string `yaml:"roomName"`
+	SensorMAC string `yaml:"sensorMAC"`
+	RoomID    string `yaml:"roomID"` // Optional: Can be populated at runtime
+}
+
+// HardOverride defines a time-based temperature override
+type HardOverride struct {
+	RoomName string               `yaml:"roomName"`
+	Schedule []HardOverrideWindow `yaml:"schedule"`
+}
+
+// HardOverrideWindow defines a time window with target temperature
+type HardOverrideWindow struct {
+	StartTime         string  `yaml:"startTime"` // HH:MM format
+	EndTime           string  `yaml:"endTime"`   // HH:MM format
+	TargetTemperature float64 `yaml:"targetTemperature"`
+}
+
 var macAddressRegex = regexp.MustCompile(`^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$`)
+var timeFormatRegex = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
 
 // Load loads configuration from a YAML file with environment variable overrides
 func Load(configPath string) (*Config, error) {
@@ -238,6 +275,108 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("log level must be one of: debug, info, warn, error, got: %s", c.Logging.Level)
 	}
 
+	// Validate thermostat control configuration if enabled
+	if c.ThermostatControl.Enabled {
+		// Validate temperature threshold
+		if c.ThermostatControl.TemperatureThreshold < 0.1 || c.ThermostatControl.TemperatureThreshold > 5.0 {
+			return fmt.Errorf("thermostat control temperature threshold must be between 0.1 and 5.0°C, got: %.2f", c.ThermostatControl.TemperatureThreshold)
+		}
+
+		// Validate control interval
+		if c.ThermostatControl.ControlIntervalSeconds < 1 {
+			return fmt.Errorf("thermostat control interval must be at least 1 second")
+		}
+
+		// Validate override duration
+		if c.ThermostatControl.OverrideDurationMinutes < 1 {
+			return fmt.Errorf("thermostat override duration must be at least 1 minute")
+		}
+
+		// Validate recheck delay
+		if c.ThermostatControl.RecheckDelayMinutes < 1 {
+			return fmt.Errorf("thermostat recheck delay must be at least 1 minute")
+		}
+
+		// Validate external modification reset hours
+		if c.ThermostatControl.ExternalModificationResetHours < 1 {
+			return fmt.Errorf("thermostat external modification reset hours must be at least 1 hour")
+		}
+
+		// Validate mappings
+		if len(c.ThermostatControl.Mappings) == 0 {
+			return fmt.Errorf("at least one thermostat mapping must be configured when thermostat control is enabled")
+		}
+
+		// Track room names and validate sensor MACs
+		seenRoomNames := make(map[string]bool)
+		for i, mapping := range c.ThermostatControl.Mappings {
+			// Validate room name
+			if mapping.RoomName == "" {
+				return fmt.Errorf("thermostat mapping %d: room name is required", i)
+			}
+
+			// Note: We allow duplicate room names (one sensor can control multiple rooms)
+			seenRoomNames[mapping.RoomName] = true
+
+			// Validate sensor MAC
+			if !macAddressRegex.MatchString(mapping.SensorMAC) {
+				return fmt.Errorf("thermostat mapping %d (room: %s): invalid sensor MAC address format: %s", i, mapping.RoomName, mapping.SensorMAC)
+			}
+
+			// Verify sensor MAC exists in BLE sensor configuration
+			macUpper := strings.ToUpper(mapping.SensorMAC)
+			found := false
+			for _, sensor := range c.BLE.Sensors {
+				if strings.ToUpper(sensor.MACAddress) == macUpper {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("thermostat mapping %d (room: %s): sensor MAC %s not found in BLE sensor configuration", i, mapping.RoomName, mapping.SensorMAC)
+			}
+		}
+
+		// Validate hard overrides
+		for i, override := range c.ThermostatControl.HardOverrides {
+			// Validate room name
+			if override.RoomName == "" {
+				return fmt.Errorf("hard override %d: room name is required", i)
+			}
+
+			// Validate schedule
+			if len(override.Schedule) == 0 {
+				return fmt.Errorf("hard override %d (room: %s): at least one schedule window is required", i, override.RoomName)
+			}
+
+			// Validate each schedule window
+			for j, window := range override.Schedule {
+				// Validate time format
+				if !timeFormatRegex.MatchString(window.StartTime) {
+					return fmt.Errorf("hard override %d (room: %s), window %d: invalid start time format: %s (expected HH:MM)", i, override.RoomName, j, window.StartTime)
+				}
+				if !timeFormatRegex.MatchString(window.EndTime) {
+					return fmt.Errorf("hard override %d (room: %s), window %d: invalid end time format: %s (expected HH:MM)", i, override.RoomName, j, window.EndTime)
+				}
+
+				// Validate target temperature
+				if window.TargetTemperature < 10.0 || window.TargetTemperature > 30.0 {
+					return fmt.Errorf("hard override %d (room: %s), window %d: target temperature must be between 10.0 and 30.0°C, got: %.1f", i, override.RoomName, j, window.TargetTemperature)
+				}
+
+				// Validate that start time is before end time (simple string comparison works for HH:MM)
+				if window.StartTime >= window.EndTime {
+					return fmt.Errorf("hard override %d (room: %s), window %d: start time (%s) must be before end time (%s)", i, override.RoomName, j, window.StartTime, window.EndTime)
+				}
+			}
+		}
+
+		// Verify that Netatmo integration is enabled if thermostat control is enabled
+		if !c.Netatmo.Enabled {
+			return fmt.Errorf("thermostat control requires Netatmo integration to be enabled")
+		}
+	}
+
 	return nil
 }
 
@@ -332,6 +471,12 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		sensorInfo[i] = fmt.Sprintf("%s (ID:%d, MAC:%s)", sensor.Name, sensor.ID, sensor.MACAddress)
 	}
 
+	// Build thermostat mapping info for logging
+	mappingInfo := make([]string, len(c.ThermostatControl.Mappings))
+	for i, mapping := range c.ThermostatControl.Mappings {
+		mappingInfo[i] = fmt.Sprintf("%s → %s", mapping.RoomName, mapping.SensorMAC)
+	}
+
 	logger.Info("configuration loaded",
 		zap.Int("sensor_count", len(c.BLE.Sensors)),
 		zap.Strings("sensors", sensorInfo),
@@ -356,5 +501,14 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.Int("batch_size", c.Prometheus.BatchSize),
 		zap.String("log_format", c.Logging.Format),
 		zap.String("log_level", c.Logging.Level),
+		zap.Bool("thermostat_control_enabled", c.ThermostatControl.Enabled),
+		zap.Float64("thermostat_temperature_threshold", c.ThermostatControl.TemperatureThreshold),
+		zap.Int("thermostat_control_interval_seconds", c.ThermostatControl.ControlIntervalSeconds),
+		zap.Int("thermostat_override_duration_minutes", c.ThermostatControl.OverrideDurationMinutes),
+		zap.Int("thermostat_recheck_delay_minutes", c.ThermostatControl.RecheckDelayMinutes),
+		zap.Int("thermostat_external_mod_reset_hours", c.ThermostatControl.ExternalModificationResetHours),
+		zap.Int("thermostat_mapping_count", len(c.ThermostatControl.Mappings)),
+		zap.Strings("thermostat_mappings", mappingInfo),
+		zap.Int("thermostat_hard_override_count", len(c.ThermostatControl.HardOverrides)),
 	)
 }

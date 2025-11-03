@@ -2,6 +2,7 @@ package buffer
 
 import (
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -13,6 +14,7 @@ const (
 	ReadingTypeBLE     ReadingType = "ble"
 	ReadingTypeNetatmo ReadingType = "netatmo"
 	ReadingTypePower   ReadingType = "power"
+	ReadingTypeControl ReadingType = "control"
 )
 
 // SensorReading represents a single temperature sensor reading from BLE
@@ -54,12 +56,28 @@ type PowerReading struct {
 	Value      float64
 }
 
-// Reading is a union type that can hold BLE sensor, Netatmo thermostat, or power readings
+// ControlReading represents a control loop decision and metrics
+type ControlReading struct {
+	Timestamp              interface{} // time.Time
+	RoomName               string
+	Action                 string  // "skip", "no_adjustment_needed", "set_manual_override"
+	XiaomiTemperature      float64
+	ScheduledTemperature   float64
+	ThermostatMeasured     float64
+	CalculatedSetpoint     float64
+	TemperatureDifference  float64 // xiaomiTemp - scheduledTemp
+	SetpointAdjustment     float64 // calculatedSetpoint - thermostatMeasured
+	ExternallyModified     bool
+	HardOverrideActive     bool
+}
+
+// Reading is a union type that can hold BLE sensor, Netatmo thermostat, power, or control readings
 type Reading struct {
 	Type       ReadingType
 	BLE        *SensorReading
 	Thermostat *ThermostatReading
 	Power      *PowerReading
+	Control    *ControlReading
 }
 
 // RingBuffer is a thread-safe circular buffer for sensor readings
@@ -160,6 +178,90 @@ func (rb *RingBuffer) GetAllAndClear() []*Reading {
 	rb.data = make([]*Reading, rb.capacity)
 
 	return result
+}
+
+// GetReadingsByTimeWindow returns all readings within the specified time window
+// This is a non-destructive read that doesn't clear the buffer
+// startTime and endTime should be time.Time values
+// Returns readings where reading.Timestamp >= startTime AND reading.Timestamp <= endTime
+func (rb *RingBuffer) GetReadingsByTimeWindow(startTime, endTime interface{}) []*Reading {
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
+
+	if rb.size == 0 {
+		return []*Reading{} // Return empty slice, not nil
+	}
+
+	// Type assert the input parameters
+	start, okStart := startTime.(time.Time)
+	end, okEnd := endTime.(time.Time)
+	if !okStart || !okEnd {
+		rb.logger.Error("GetReadingsByTimeWindow: invalid time parameters",
+			zap.Any("startTime", startTime),
+			zap.Any("endTime", endTime),
+		)
+		return []*Reading{}
+	}
+
+	result := make([]*Reading, 0, rb.size) // Pre-allocate with capacity
+
+	// Iterate through all readings in order
+	if rb.size < rb.capacity {
+		// Buffer is not full yet, readings are from 0 to head-1
+		for i := 0; i < rb.size; i++ {
+			if matchesTimeWindow(rb.data[i], start, end) {
+				result = append(result, rb.data[i])
+			}
+		}
+	} else {
+		// Buffer is full, readings are from head to end, then 0 to head-1
+		for i := rb.head; i < rb.capacity; i++ {
+			if matchesTimeWindow(rb.data[i], start, end) {
+				result = append(result, rb.data[i])
+			}
+		}
+		for i := 0; i < rb.head; i++ {
+			if matchesTimeWindow(rb.data[i], start, end) {
+				result = append(result, rb.data[i])
+			}
+		}
+	}
+
+	return result
+}
+
+// matchesTimeWindow checks if a reading's timestamp falls within the specified time window
+func matchesTimeWindow(reading *Reading, start, end time.Time) bool {
+	var timestamp time.Time
+	var ok bool
+
+	// Extract timestamp based on reading type
+	switch reading.Type {
+	case ReadingTypeBLE:
+		if reading.BLE != nil {
+			timestamp, ok = reading.BLE.Timestamp.(time.Time)
+		}
+	case ReadingTypeNetatmo:
+		if reading.Thermostat != nil {
+			timestamp, ok = reading.Thermostat.Timestamp.(time.Time)
+		}
+	case ReadingTypePower:
+		if reading.Power != nil {
+			timestamp, ok = reading.Power.Timestamp.(time.Time)
+		}
+	case ReadingTypeControl:
+		if reading.Control != nil {
+			timestamp, ok = reading.Control.Timestamp.(time.Time)
+		}
+	}
+
+	if !ok {
+		return false // Skip readings with invalid timestamps
+	}
+
+	// Check if timestamp is within window (inclusive on both ends)
+	return (timestamp.Equal(start) || timestamp.After(start)) &&
+	       (timestamp.Equal(end) || timestamp.Before(end))
 }
 
 // Size returns the current number of readings in the buffer

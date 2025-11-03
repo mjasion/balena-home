@@ -13,7 +13,8 @@ func TestNewScanner(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+	controlBuffer := buffer.New(100, logger)
 
 	sensors := []SensorConfig{
 		{Name: "Sensor1", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
@@ -21,14 +22,18 @@ func TestNewScanner(t *testing.T) {
 		{Name: "Sensor3", ID: 3, MACAddress: "a4:c1:38:00:00:03"}, // lowercase
 	}
 
-	scanner := New(sensors, ringBuffer, logger)
+	scanner := New(sensors, metricsBuffer, controlBuffer, logger)
 
 	if scanner == nil {
 		t.Fatal("Expected scanner to be created, got nil")
 	}
 
-	if scanner.buffer != ringBuffer {
-		t.Error("Scanner buffer not set correctly")
+	if scanner.metricsBuffer != metricsBuffer {
+		t.Error("Scanner metrics buffer not set correctly")
+	}
+
+	if scanner.controlBuffer != controlBuffer {
+		t.Error("Scanner control buffer not set correctly")
 	}
 
 	if scanner.logger != logger {
@@ -77,9 +82,10 @@ func TestNewScanner_EmptyMACList(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+	controlBuffer := buffer.New(100, logger)
 
-	scanner := New([]SensorConfig{}, ringBuffer, logger)
+	scanner := New([]SensorConfig{}, metricsBuffer, controlBuffer, logger)
 
 	if scanner == nil {
 		t.Fatal("Expected scanner to be created, got nil")
@@ -94,7 +100,8 @@ func TestNewScanner_DuplicateMACs(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+	controlBuffer := buffer.New(100, logger)
 
 	// Include duplicates and case variations
 	sensors := []SensorConfig{
@@ -104,7 +111,7 @@ func TestNewScanner_DuplicateMACs(t *testing.T) {
 		{Name: "Sensor2", ID: 4, MACAddress: "A4:C1:38:00:00:02"},
 	}
 
-	scanner := New(sensors, ringBuffer, logger)
+	scanner := New(sensors, metricsBuffer, controlBuffer, logger)
 
 	// Should only have 2 unique MACs (duplicates removed, last one wins)
 	expectedCount := 2
@@ -126,7 +133,8 @@ func TestNewScanner_MixedCaseMACs(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+	controlBuffer := buffer.New(100, logger)
 
 	sensors := []SensorConfig{
 		{Name: "Sensor1", ID: 1, MACAddress: "a4:c1:38:00:00:01"}, // all lowercase
@@ -134,7 +142,7 @@ func TestNewScanner_MixedCaseMACs(t *testing.T) {
 		{Name: "Sensor3", ID: 3, MACAddress: "A4:c1:38:00:00:03"}, // mixed case
 	}
 
-	scanner := New(sensors, ringBuffer, logger)
+	scanner := New(sensors, metricsBuffer, controlBuffer, logger)
 
 	// All should be normalized to uppercase
 	if _, ok := scanner.sensorMACs["A4:C1:38:00:00:01"]; !ok {
@@ -154,7 +162,8 @@ func TestNewScanner_LargeMACList(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(1000, logger)
+	controlBuffer := buffer.New(1000, logger)
 
 	// Create a large list of sensor configs
 	var sensors []SensorConfig
@@ -168,7 +177,7 @@ func TestNewScanner_LargeMACList(t *testing.T) {
 		})
 	}
 
-	scanner := New(sensors, ringBuffer, logger)
+	scanner := New(sensors, metricsBuffer, controlBuffer, logger)
 
 	if scanner == nil {
 		t.Fatal("Expected scanner to be created, got nil")
@@ -189,12 +198,13 @@ func TestScanner_Structure(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+	controlBuffer := buffer.New(100, logger)
 	sensors := []SensorConfig{
 		{Name: "Sensor1", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
 	}
 
-	scanner := New(sensors, ringBuffer, logger)
+	scanner := New(sensors, metricsBuffer, controlBuffer, logger)
 
 	// Verify scanner has all required fields
 	if scanner.adapter == nil {
@@ -205,8 +215,12 @@ func TestScanner_Structure(t *testing.T) {
 		t.Error("Expected sensorMACs map to be initialized")
 	}
 
-	if scanner.buffer == nil {
-		t.Error("Expected buffer to be set")
+	if scanner.metricsBuffer == nil {
+		t.Error("Expected metrics buffer to be set")
+	}
+
+	if scanner.controlBuffer == nil {
+		t.Error("Expected control buffer to be set")
 	}
 
 	if scanner.logger == nil {
@@ -218,7 +232,8 @@ func TestScanner_MACFiltering(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	ringBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+	controlBuffer := buffer.New(100, logger)
 
 	// Only allow specific MACs
 	sensors := []SensorConfig{
@@ -226,7 +241,7 @@ func TestScanner_MACFiltering(t *testing.T) {
 		{Name: "Sensor2", ID: 2, MACAddress: "A4:C1:38:00:00:02"},
 	}
 
-	scanner := New(sensors, ringBuffer, logger)
+	scanner := New(sensors, metricsBuffer, controlBuffer, logger)
 
 	// Test that allowed MACs are in the map
 	testCases := []struct {

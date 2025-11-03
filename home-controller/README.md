@@ -1,15 +1,27 @@
-# BLE Temperature Monitoring Service
+# Home Controller Service
 
-A Go-based service for monitoring LYWSD03MMC Bluetooth Low Energy temperature sensors with Prometheus metrics push integration.
+A comprehensive Go-based service for home automation, monitoring LYWSD03MMC Bluetooth Low Energy temperature sensors, integrating with Netatmo thermostats, monitoring power consumption, and providing intelligent climate control with Prometheus metrics integration.
 
 ## Features
 
+### Monitoring
 - **Passive BLE Scanning**: Energy-efficient monitoring using BLE advertisements (no active connections)
 - **ATC Firmware Support**: Decodes ATC_MiThermometer advertisement format
-- **Prometheus Integration**: Pushes metrics to Grafana Cloud via remote_write protocol
+- **Netatmo Integration**: Fetches thermostat data and room temperatures via OAuth2 API
+- **Power Monitoring**: Scrapes energy consumption metrics from power meters
+- **Prometheus Integration**: Pushes all metrics to Grafana Cloud via remote_write protocol
 - **Concurrent-Safe Buffer**: Ring buffer for collecting sensor readings before push
 - **Structured Logging**: Uses zap for configurable JSON or console logging
 - **Graceful Shutdown**: Handles SIGINT/SIGTERM with final metrics push
+
+### Intelligent Thermostat Control (NEW)
+- **Automatic Temperature Compensation**: Uses Xiaomi BLE sensors as source of truth, automatically adjusts Netatmo thermostat setpoints to compensate for measurement errors
+- **Weighted Average Algorithm**: Recent sensor readings have higher influence (linear time decay weighting over 60-second window)
+- **Hard Override Schedules**: Time-based temperature overrides (e.g., "warm up bedroom 22:00-07:00") take precedence over normal control
+- **External Modification Detection**: Detects manual thermostat changes, pauses control for 24 hours or until schedule mode
+- **Auto-Expiring Overrides**: Temporary setpoint changes automatically revert after 10 minutes (configurable) for fail-safe operation
+- **Thread-Safe State Management**: Concurrent control of multiple thermostats without race conditions
+- **Dual Buffer Architecture**: Separate buffers for metrics collection vs. control algorithm (metrics cleared every 30s, control retains 60s+ history)
 
 ## Quick Start
 
@@ -133,18 +145,112 @@ thermostats/
 - `logFormat`: "console" (human-readable) or "json" (structured)
 - `logLevel`: "debug", "info", "warn", or "error"
 
+### Thermostat Control Settings (NEW)
+
+The thermostat control feature is **disabled by default**. Enable it by setting `thermostatControl.enabled: true` in config.yaml.
+
+```yaml
+thermostatControl:
+  enabled: true
+  temperatureThreshold: 0.5  # Minimum difference (°C) to trigger adjustment
+  controlIntervalSeconds: 60  # How often to evaluate (default: 60s)
+  overrideDurationMinutes: 10  # Auto-expiring override duration (fail-safe)
+  recheckDelayMinutes: 5  # Wait time after adjustment before re-evaluating
+  externalModificationResetHours: 24  # Pause duration after manual change
+
+  # Map rooms to sensors
+  mappings:
+    - roomName: "Living Room"
+      sensorMAC: "A4:C1:38:XX:XX:XX"
+      roomID: "1234567890abcdef"  # Netatmo room ID (auto-populated at startup)
+
+    - roomName: "Bedroom"
+      sensorMAC: "A4:C1:38:YY:YY:YY"
+      roomID: ""
+
+  # Optional: Hard override schedules (time-based temperature overrides)
+  hardOverrides:
+    - roomName: "Bedroom"
+      schedule:
+        - startTime: "22:00"  # HH:MM format
+          endTime: "07:00"
+          targetTemperature: 19.0
+        - startTime: "06:30"
+          endTime: "08:00"
+          targetTemperature: 22.0
+```
+
+**Required Netatmo OAuth2 Scopes**: `read_thermostat`, `write_thermostat`
+
+**Configuration Notes**:
+- `temperatureThreshold`: Minimum temperature difference (Xiaomi vs. scheduled) to trigger adjustment (0.1-5.0°C, default: 0.5°C)
+- `mappings`: Associates each Netatmo room with a Xiaomi BLE sensor (one sensor can be shared by multiple rooms)
+- `roomID`: Optional - automatically populated at startup by fetching Netatmo home data
+- `hardOverrides`: Time-based temperature overrides that take precedence over normal control algorithm
+
+**Control Algorithm**:
+1. Read Xiaomi BLE sensor (weighted average of last 60 seconds, recent readings weighted higher)
+2. Compare with scheduled temperature (from Netatmo or hard override)
+3. If difference exceeds threshold, calculate compensated setpoint: `newSetpoint = thermostatMeasured + (xiaomiTemp - scheduledTemp)`
+4. Send temporary 10-minute override to Netatmo (automatically reverts for fail-safe)
+5. Wait `recheckDelayMinutes` before re-evaluating (prevents oscillation)
+
+**Precedence Hierarchy** (highest to lowest):
+1. External modification detected → Pause control for 24 hours or until schedule mode
+2. Hard override active → Use hard override temperature as target
+3. Normal control → Use Netatmo schedule temperature as target
+
+**Safety Features**:
+- Auto-expiring overrides (default 10 minutes) prevent runaway heating/cooling
+- External modification detection pauses control when user manually changes thermostat
+- Setpoint compensation formula ensures bounded adjustments
+- Thread-safe concurrent control of multiple thermostats
+- Graceful degradation when sensor data unavailable
+
 ## Prometheus Metrics
 
-The service pushes metrics with the following structure:
+The service pushes the following metrics:
 
-- **Metric name**: Configurable (default: `ble_temperature_celsius`)
-- **Labels**: `sensor_id` (MAC address of sensor)
+### BLE Temperature Metrics
+- **Metric name**: `ble_temperature_celsius`
+- **Labels**: `sensor_id` (numeric), `sensor_name`, `sensor_mac`
 - **Values**: Temperature in Celsius
 - **Timestamps**: Rounded to nearest second, converted to milliseconds
 
-Example query in Grafana:
+Example query:
 ```promql
-ble_temperature_celsius{sensor_id="A4:C1:38:XX:XX:XX"}
+ble_temperature_celsius{sensor_name="Bedroom"}
+```
+
+### Netatmo Thermostat Metrics
+- **Metric name**: `netatmo_temperature_celsius`, `netatmo_setpoint_celsius`, `netatmo_heating_power_request`
+- **Labels**: `home_name`, `room_name`
+- **Values**: Temperature, setpoint, heating power (0-100%)
+
+### Power Consumption Metrics
+- **Metric name**: `power_meter_<type>` (e.g., `power_meter_active_power`, `power_meter_voltage`)
+- **Labels**: `sensor_id`, `sensor_type`
+- **Values**: Power (W), voltage (V), current (A), etc.
+
+### Thermostat Control Metrics (NEW)
+- **thermostat_control_xiaomi_temperature_celsius**: Weighted average from Xiaomi BLE sensor (labels: `room_name`)
+- **thermostat_control_scheduled_temperature_celsius**: Target temperature from schedule or hard override (labels: `room_name`)
+- **thermostat_control_measured_temperature_celsius**: Temperature measured by Netatmo thermostat (labels: `room_name`)
+- **thermostat_control_calculated_setpoint_celsius**: Compensated setpoint sent to thermostat (labels: `room_name`)
+- **thermostat_control_temperature_difference_celsius**: `xiaomiTemp - scheduledTemp` (labels: `room_name`)
+- **thermostat_control_setpoint_adjustment_celsius**: `calculatedSetpoint - thermostatMeasured` (labels: `room_name`)
+- **thermostat_control_action**: Control decision (0=skip, 1=no_adjustment, 2=set_override) (labels: `room_name`)
+
+Example Grafana queries:
+```promql
+# Temperature difference (should stay near 0 if working correctly)
+thermostat_control_temperature_difference_celsius{room_name="Living Room"}
+
+# Setpoint adjustments over time
+thermostat_control_setpoint_adjustment_celsius{room_name="Living Room"}
+
+# Control actions (2 = thermostat adjusted)
+thermostat_control_action{room_name="Living Room"}
 ```
 
 ## Logging
@@ -180,8 +286,8 @@ go vet ./...
 - Check adapter status: `hciconfig`
 
 ### Permission Denied
-- Run with sudo: `sudo ./ble-temp-monitor`
-- Or grant capabilities: `sudo setcap cap_net_admin+eip ./ble-temp-monitor`
+- Run with sudo: `sudo ./home-controller`
+- Or grant capabilities: `sudo setcap cap_net_admin+eip ./home-controller`
 
 ### Prometheus Push Failures
 - Verify credentials in logs
@@ -193,6 +299,39 @@ go vet ./...
 - Check MAC addresses in config match sensors
 - Ensure sensors are in range (< 10m typically)
 - Monitor RSSI values in logs
+
+### Thermostat Control Not Working (NEW)
+**Symptom**: Control loop running but no adjustments made
+
+**Check logs for**:
+- "sensor data unavailable" → Xiaomi BLE sensor not broadcasting or out of range
+- "room not found in Netatmo status" → Room name mismatch or Netatmo API issue
+- "externally modified, waiting for reset" → Manual thermostat change detected, control paused
+- "waiting until next recheck time" → Normal behavior after adjustment (prevents oscillation)
+
+**Common issues**:
+1. **Sensor MAC mismatch**: Verify `sensorMAC` in config matches actual Xiaomi sensor
+2. **Room name mismatch**: Ensure `roomName` in config matches Netatmo room name exactly
+3. **Insufficient sensor data**: Need at least one BLE reading in last 60 seconds for weighted average
+4. **External modification detected**: Check if thermostat was manually changed, wait 24h or switch to schedule mode
+5. **Temperature difference below threshold**: If `|xiaomiTemp - scheduledTemp| < 0.5°C`, no adjustment needed
+
+**Verify configuration**:
+```bash
+# Check Netatmo OAuth2 token has write_thermostat scope
+grep "write_thermostat" logs
+
+# Verify room IDs populated at startup
+grep "initialized room ID" logs
+
+# Monitor control decisions
+grep "control decision" logs | tail -20
+```
+
+**Monitoring recommendations**:
+- Alert if `thermostat_control_temperature_difference_celsius` consistently > 1.0°C
+- Alert if `thermostat_control_action == 0 (skip)` for > 1 hour during occupied periods
+- Dashboard showing Xiaomi temp vs. Netatmo measured temp (should converge over time)
 
 ## ATC Firmware
 
@@ -216,6 +355,13 @@ Part of the balena-home project. See project root for license information.
 
 ## Related Documentation
 
+### BLE Temperature Monitoring
 - [OpenSpec Proposal](./openspec/changes/add-ble-temp-monitoring/proposal.md)
 - [Design Document](./openspec/changes/add-ble-temp-monitoring/design.md)
 - [Implementation Tasks](./openspec/changes/add-ble-temp-monitoring/tasks.md)
+
+### Intelligent Thermostat Control (NEW)
+- [OpenSpec Proposal](./openspec/changes/add-intelligent-thermostat-control/proposal.md)
+- [Design Document](./openspec/changes/add-intelligent-thermostat-control/design.md)
+- [Implementation Tasks](./openspec/changes/add-intelligent-thermostat-control/tasks.md)
+- [CLAUDE.md](./CLAUDE.md) - Service-specific AI assistant instructions

@@ -117,3 +117,19 @@ type ThermostatReading struct {
 	OpenWindow           bool
 	Reachable            bool
 }
+
+// SetRoomThermPointRequest represents the request body for setroomthermpoint API
+type SetRoomThermPointRequest struct {
+	HomeID string  `json:"home_id"`
+	RoomID string  `json:"room_id"`
+	Mode   string  `json:"mode"` // "manual" or "home"
+	Temp   float64 `json:"temp,omitempty"` // Required for "manual" mode
+	EndTime int64  `json:"endtime,omitempty"` // Unix timestamp, optional (for temporary override)
+}
+
+// SetRoomThermPointResponse represents the response from setroomthermpoint API
+type SetRoomThermPointResponse struct {
+	Status     string `json:"status"`
+	TimeExec   float64 `json:"time_exec"`
+	TimeServer int64   `json:"time_server"`
+}

@@ -29,14 +29,17 @@ type SensorConfig struct {
 
 // Scanner handles BLE scanning for temperature sensors
 type Scanner struct {
-	adapter    *bluetooth.Adapter
-	sensorMACs map[string]SensorInfo // Map of MAC address to sensor info
-	buffer     *buffer.RingBuffer
-	logger     *zap.Logger
+	adapter       *bluetooth.Adapter
+	sensorMACs    map[string]SensorInfo // Map of MAC address to sensor info
+	metricsBuffer *buffer.RingBuffer    // Buffer for metrics pusher (cleared every 15s)
+	controlBuffer *buffer.RingBuffer    // Buffer for control loop (retained for 60s+ history)
+	logger        *zap.Logger
 }
 
-// New creates a new BLE scanner
-func New(sensors []SensorConfig, buf *buffer.RingBuffer, logger *zap.Logger) *Scanner {
+// New creates a new BLE scanner with dual buffers
+// metricsBuffer: Used by metrics pusher (cleared periodically)
+// controlBuffer: Used by control loop (retained for historical data)
+func New(sensors []SensorConfig, metricsBuffer, controlBuffer *buffer.RingBuffer, logger *zap.Logger) *Scanner {
 	// Convert sensor list to map for fast lookup
 	macMap := make(map[string]SensorInfo)
 	for _, sensor := range sensors {
@@ -49,10 +52,11 @@ func New(sensors []SensorConfig, buf *buffer.RingBuffer, logger *zap.Logger) *Sc
 	}
 
 	return &Scanner{
-		adapter:    bluetooth.DefaultAdapter,
-		sensorMACs: macMap,
-		buffer:     buf,
-		logger:     logger,
+		adapter:       bluetooth.DefaultAdapter,
+		sensorMACs:    macMap,
+		metricsBuffer: metricsBuffer,
+		controlBuffer: controlBuffer,
+		logger:        logger,
 	}
 }
 
@@ -106,7 +110,7 @@ func (s *Scanner) Start(ctx context.Context) error {
 					continue
 				}
 
-				// Add to buffer
+				// Create reading to add to buffers
 				bufReading := &buffer.Reading{
 					Type: buffer.ReadingTypeBLE,
 					BLE: &buffer.SensorReading{
@@ -122,7 +126,12 @@ func (s *Scanner) Start(ctx context.Context) error {
 						RSSI:               reading.RSSI,
 					},
 				}
-				s.buffer.Add(bufReading)
+
+				// Write to BOTH buffers for dual buffer architecture
+				// Metrics buffer: Used by metrics pusher (cleared every 15s)
+				s.metricsBuffer.Add(bufReading)
+				// Control buffer: Used by control loop (retained for 60s+ history)
+				s.controlBuffer.Add(bufReading)
 
 				// Log sensor reading
 				s.logger.Info("Read sensor data",
