@@ -21,6 +21,7 @@ type Config struct {
 	Prometheus        PrometheusConfig        `yaml:"prometheus"`
 	Logging           LoggingConfig           `yaml:"logging"`
 	ThermostatControl ThermostatControlConfig `yaml:"thermostatControl"`
+	Aggregator        AggregatorConfig        `yaml:"aggregator"`
 }
 
 // BLEConfig contains BLE scanning configuration
@@ -116,6 +117,12 @@ type HardOverrideWindow struct {
 	StartTime         string  `yaml:"startTime"` // HH:MM format
 	EndTime           string  `yaml:"endTime"`   // HH:MM format
 	TargetTemperature float64 `yaml:"targetTemperature"`
+}
+
+// AggregatorConfig contains configuration for the BLE sensor aggregator
+type AggregatorConfig struct {
+	Enabled         bool `yaml:"enabled" env:"AGGREGATOR_ENABLED" env-default:"true"`
+	IntervalSeconds int  `yaml:"intervalSeconds" env:"AGGREGATOR_INTERVAL_SECONDS" env-default:"30"`
 }
 
 var macAddressRegex = regexp.MustCompile(`^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$`)

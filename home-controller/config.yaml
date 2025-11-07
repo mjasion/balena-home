@@ -132,17 +132,29 @@ logging:
   # Log level: "debug", "info", "warn", "error"
   logLevel: "info"
 
+# BLE Sensor Aggregator
+# Calculates weighted average temperatures for all sensors
+aggregator:
+  # Enable BLE aggregator (default: true)
+  # When enabled, calculates time-weighted averages over 60 seconds
+  enabled: true
+
+  # Interval between aggregation runs in seconds (default: 30)
+  # How often to calculate and push weighted average metrics
+  # Note: Each calculation looks back 60 seconds, so this controls update frequency
+  intervalSeconds: 60
+
 # Intelligent Thermostat Control (NEW)
 # IMPORTANT: This feature is DISABLED by default. Enable only after reviewing all settings.
 thermostatControl:
   # Enable thermostat control (default: false - feature disabled)
   # IMPORTANT: Requires Netatmo OAuth2 token with read_thermostat and write_thermostat scopes
-  enabled: false
+  enabled: true
 
   # Dry-run mode: Log control decisions without sending commands to thermostats (default: false)
   # Use this for testing before enabling real control
   # When true: Control loop runs, decisions are logged, but no API calls are made
-  dryRun: false
+  dryRun: true
 
   # Temperature difference threshold (°C) to trigger adjustment (default: 0.5)
   # Minimum difference between Xiaomi sensor and scheduled temperature to trigger action
@@ -166,7 +178,7 @@ thermostatControl:
   # External modification reset timeout in hours (default: 24)
   # If thermostat manually changed, pause control for this duration
   # Control resumes after timeout OR when thermostat switched to schedule mode
-  externalModificationResetHours: 24
+  externalModificationResetHours: 1
 
   # Safety limits for calculated setpoints
   # SAFETY: Setpoints are clamped to these limits to prevent extreme temperatures
@@ -176,15 +188,20 @@ thermostatControl:
   # Sensor-to-room mappings
   # Associates Netatmo rooms with Xiaomi BLE sensors
   # One sensor can be shared by multiple rooms
-  mappings: []
-    # Example configuration (uncomment and customize):
-    # - roomName: "Sypialnia"  # Must match Netatmo room name exactly
-    #   sensorMAC: "A4:C1:38:ED:C0:21"  # Xiaomi sensor MAC (must exist in ble.sensors)
-    #   roomID: ""  # Leave empty - auto-populated at startup from Netatmo API
-    #
-    # - roomName: "Salon"
-    #   sensorMAC: "A4:C1:38:26:E2:4C"
-    #   roomID: ""
+  mappings:
+  # Example configuration (uncomment and customize):
+  # - roomName: "Sypialnia"  # Must match Netatmo room name exactly
+  #   sensorMAC: "A4:C1:38:ED:C0:21"  # Xiaomi sensor MAC (must exist in ble.sensors)
+  #   roomID: ""  # Leave empty - auto-populated at startup from Netatmo API
+  #
+   - roomName: "Salon"
+     sensorMAC: "A4:C1:38:26:E2:4C"
+   - roomName: "Hol"
+     sensorMAC: "A4:C1:38:26:E2:4C"
+   - roomName: "Sypialnia"
+     sensorMAC: "A4:C1:38:ED:C0:21"
+   - roomName: "Łazienka"
+     sensorMAC: "A4:C1:38:F1:2D:0D"
 
   # Hard override schedules (optional)
   # Time-based temperature overrides that take precedence over normal control

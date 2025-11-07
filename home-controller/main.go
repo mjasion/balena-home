@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mjasion/balena-home/thermostats/aggregator"
 	"github.com/mjasion/balena-home/thermostats/buffer"
 	"github.com/mjasion/balena-home/thermostats/config"
 	"github.com/mjasion/balena-home/thermostats/control"
@@ -161,6 +162,30 @@ func main() {
 		}()
 	} else {
 		logger.Info("power monitoring disabled")
+	}
+
+	// Start BLE aggregator if enabled (calculates weighted averages)
+	if cfg.Aggregator.Enabled {
+		logger.Info("BLE aggregator enabled, starting aggregator")
+
+		bleAggregator := aggregator.New(
+			scannerSensors,
+			controlBuffer,
+			metricsBuffer,
+			cfg.Aggregator.IntervalSeconds,
+			logger,
+		)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := bleAggregator.Start(ctx)
+			if err != nil {
+				logger.Error("BLE aggregator failed", zap.Error(err))
+			}
+		}()
+	} else {
+		logger.Info("BLE aggregator disabled")
 	}
 
 	// Start thermostat control loop if enabled (uses control buffer)
