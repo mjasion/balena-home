@@ -11,10 +11,11 @@ import (
 type ReadingType string
 
 const (
-	ReadingTypeBLE     ReadingType = "ble"
-	ReadingTypeNetatmo ReadingType = "netatmo"
-	ReadingTypePower   ReadingType = "power"
-	ReadingTypeControl ReadingType = "control"
+	ReadingTypeBLE            ReadingType = "ble"
+	ReadingTypeNetatmo        ReadingType = "netatmo"
+	ReadingTypePower          ReadingType = "power"
+	ReadingTypeControl        ReadingType = "control"
+	ReadingTypeBLEWeightedAvg ReadingType = "ble_weighted_avg"
 )
 
 // SensorReading represents a single temperature sensor reading from BLE
@@ -71,13 +72,24 @@ type ControlReading struct {
 	HardOverrideActive     bool
 }
 
-// Reading is a union type that can hold BLE sensor, Netatmo thermostat, power, or control readings
+// WeightedAvgReading represents a weighted average temperature reading from BLE sensors
+type WeightedAvgReading struct {
+	Timestamp          interface{} // time.Time
+	MAC                string
+	SensorName         string
+	SensorID           int
+	TemperatureCelsius float64 // Weighted average over last 60 seconds
+	ReadingCount       int     // Number of readings used in calculation
+}
+
+// Reading is a union type that can hold BLE sensor, Netatmo thermostat, power, control, or weighted average readings
 type Reading struct {
-	Type       ReadingType
-	BLE        *SensorReading
-	Thermostat *ThermostatReading
-	Power      *PowerReading
-	Control    *ControlReading
+	Type          ReadingType
+	BLE           *SensorReading
+	Thermostat    *ThermostatReading
+	Power         *PowerReading
+	Control       *ControlReading
+	WeightedAvg   *WeightedAvgReading
 }
 
 // RingBuffer is a thread-safe circular buffer for sensor readings
@@ -252,6 +264,10 @@ func matchesTimeWindow(reading *Reading, start, end time.Time) bool {
 	case ReadingTypeControl:
 		if reading.Control != nil {
 			timestamp, ok = reading.Control.Timestamp.(time.Time)
+		}
+	case ReadingTypeBLEWeightedAvg:
+		if reading.WeightedAvg != nil {
+			timestamp, ok = reading.WeightedAvg.Timestamp.(time.Time)
 		}
 	}
 

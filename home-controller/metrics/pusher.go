@@ -133,13 +133,20 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 			bleCount := 0
 			netatmoCount := 0
 			powerCount := 0
+			controlCount := 0
+			weightedAvgCount := 0
 			for _, r := range readings {
-				if r.Type == buffer.ReadingTypeBLE {
+				switch r.Type {
+				case buffer.ReadingTypeBLE:
 					bleCount++
-				} else if r.Type == buffer.ReadingTypeNetatmo {
+				case buffer.ReadingTypeNetatmo:
 					netatmoCount++
-				} else if r.Type == buffer.ReadingTypePower {
+				case buffer.ReadingTypePower:
 					powerCount++
+				case buffer.ReadingTypeControl:
+					controlCount++
+				case buffer.ReadingTypeBLEWeightedAvg:
+					weightedAvgCount++
 				}
 			}
 
@@ -147,6 +154,8 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 				zap.Int("ble_data_points", bleCount),
 				zap.Int("netatmo_data_points", netatmoCount),
 				zap.Int("power_data_points", powerCount),
+				zap.Int("control_data_points", controlCount),
+				zap.Int("weighted_avg_data_points", weightedAvgCount),
 				zap.Int("total_data_points", len(readings)),
 				zap.Int("attempt", attempt),
 			)
@@ -177,11 +186,12 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 func (p *Pusher) buildWriteRequest(readings []*buffer.Reading) (*prompb.WriteRequest, error) {
 	var timeSeries []prompb.TimeSeries
 
-	// Separate BLE, Netatmo, Power, and Control readings
+	// Separate BLE, Netatmo, Power, Control, and Weighted Average readings
 	var bleReadings []*buffer.SensorReading
 	var netatmoReadings []*buffer.ThermostatReading
 	var powerReadings []*buffer.PowerReading
 	var controlReadings []*buffer.ControlReading
+	var weightedAvgReadings []*buffer.WeightedAvgReading
 
 	for _, reading := range readings {
 		switch reading.Type {
@@ -200,6 +210,10 @@ func (p *Pusher) buildWriteRequest(readings []*buffer.Reading) (*prompb.WriteReq
 		case buffer.ReadingTypeControl:
 			if reading.Control != nil {
 				controlReadings = append(controlReadings, reading.Control)
+			}
+		case buffer.ReadingTypeBLEWeightedAvg:
+			if reading.WeightedAvg != nil {
+				weightedAvgReadings = append(weightedAvgReadings, reading.WeightedAvg)
 			}
 		}
 	}
@@ -231,6 +245,13 @@ func (p *Pusher) buildWriteRequest(readings []*buffer.Reading) (*prompb.WriteReq
 		return nil, fmt.Errorf("failed to build Control time series: %w", err)
 	}
 	timeSeries = append(timeSeries, controlSeries...)
+
+	// Process Weighted Average readings
+	weightedAvgSeries, err := p.buildWeightedAvgTimeSeries(weightedAvgReadings)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Weighted Average time series: %w", err)
+	}
+	timeSeries = append(timeSeries, weightedAvgSeries...)
 
 	return &prompb.WriteRequest{
 		Timeseries: timeSeries,
@@ -688,6 +709,76 @@ func (p *Pusher) buildControlTimeSeries(readings []*buffer.ControlReading) ([]pr
 				Samples: actionSamples,
 			},
 		)
+	}
+
+	return timeSeries, nil
+}
+
+// buildWeightedAvgTimeSeries builds time series for weighted average readings
+func (p *Pusher) buildWeightedAvgTimeSeries(readings []*buffer.WeightedAvgReading) ([]prompb.TimeSeries, error) {
+	// Group readings by sensor
+	type sensorKey struct {
+		name string
+		id   int
+	}
+	sensorReadings := make(map[sensorKey][]*buffer.WeightedAvgReading)
+	for _, reading := range readings {
+		key := sensorKey{name: reading.SensorName, id: reading.SensorID}
+		sensorReadings[key] = append(sensorReadings[key], reading)
+	}
+
+	// Build time series for each sensor
+	var timeSeries []prompb.TimeSeries
+	for key, sensorData := range sensorReadings {
+		// Create base labels for this sensor
+		baseLabels := []prompb.Label{
+			{
+				Name:  "sensor_name",
+				Value: key.name,
+			},
+			{
+				Name:  "sensor_id",
+				Value: fmt.Sprintf("%d", key.id),
+			},
+			{
+				Name:  "mac",
+				Value: sensorData[0].MAC, // All readings have same MAC
+			},
+		}
+
+		// Temperature time series (weighted average)
+		tempSamples := make([]prompb.Sample, 0, len(sensorData))
+
+		for _, reading := range sensorData {
+			// Round timestamp to nearest 10 seconds, then convert to milliseconds
+			ts, ok := reading.Timestamp.(time.Time)
+			if !ok {
+				p.logger.Warn("invalid timestamp type in weighted avg reading",
+					zap.String("sensor_name", key.name),
+				)
+				continue
+			}
+			roundedTime := roundToTenSeconds(ts)
+			timestampMs := roundedTime.UnixMilli()
+
+			// Add temperature sample
+			tempSamples = append(tempSamples, prompb.Sample{
+				Value:     reading.TemperatureCelsius,
+				Timestamp: timestampMs,
+			})
+		}
+
+		// Add weighted average temperature time series
+		tempLabels := append([]prompb.Label{
+			{
+				Name:  "__name__",
+				Value: "ble_temperature_weighted_avg_celsius",
+			},
+		}, baseLabels...)
+		timeSeries = append(timeSeries, prompb.TimeSeries{
+			Labels:  tempLabels,
+			Samples: tempSamples,
+		})
 	}
 
 	return timeSeries, nil
