@@ -112,18 +112,24 @@ func main() {
 		}
 	}()
 
-	// Start Netatmo poller if enabled (writes to metrics buffer only)
-	if cfg.Netatmo.Enabled {
-		logger.Info("netatmo integration enabled, starting poller")
-
-		netatmoFetcher := netatmo.NewFetcher(
+	// Create shared Netatmo client if needed (for both poller and control loop)
+	// This prevents OAuth token conflicts when multiple components use the same credentials
+	var netatmoClient *netatmo.Client
+	if cfg.Netatmo.Enabled || cfg.ThermostatControl.Enabled {
+		logger.Info("creating shared Netatmo API client")
+		netatmoClient = netatmo.NewClient(
 			cfg.Netatmo.ClientID,
 			cfg.Netatmo.ClientSecret,
 			cfg.Netatmo.RefreshToken,
 		)
+	}
+
+	// Start Netatmo poller if enabled (writes to metrics buffer only)
+	if cfg.Netatmo.Enabled {
+		logger.Info("netatmo integration enabled, starting poller")
 
 		netatmoPoller := netatmo.NewPoller(
-			netatmoFetcher,
+			netatmoClient,
 			metricsBuffer,
 			cfg.Netatmo.FetchInterval,
 			logger,
@@ -192,14 +198,7 @@ func main() {
 	if cfg.ThermostatControl.Enabled {
 		logger.Info("thermostat control enabled, starting control loop")
 
-		// Create Netatmo client for control loop
-		netatmoClient := netatmo.NewClient(
-			cfg.Netatmo.ClientID,
-			cfg.Netatmo.ClientSecret,
-			cfg.Netatmo.RefreshToken,
-		)
-
-		// Create controller
+		// Create controller (uses shared Netatmo client)
 		controller := control.New(
 			&cfg.ThermostatControl,
 			netatmoClient,

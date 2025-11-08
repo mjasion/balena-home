@@ -10,18 +10,18 @@ import (
 
 // Poller periodically fetches thermostat data from Netatmo and adds it to the buffer
 type Poller struct {
-	fetcher      *Fetcher
-	buffer       *buffer.RingBuffer
-	logger       *zap.Logger
+	client        *Client
+	buffer        *buffer.RingBuffer
+	logger        *zap.Logger
 	fetchInterval time.Duration
 }
 
 // NewPoller creates a new Netatmo poller
-func NewPoller(fetcher *Fetcher, buf *buffer.RingBuffer, fetchIntervalSeconds int, logger *zap.Logger) *Poller {
+func NewPoller(client *Client, buf *buffer.RingBuffer, fetchIntervalSeconds int, logger *zap.Logger) *Poller {
 	return &Poller{
-		fetcher:      fetcher,
-		buffer:       buf,
-		logger:       logger,
+		client:        client,
+		buffer:        buf,
+		logger:        logger,
 		fetchInterval: time.Duration(fetchIntervalSeconds) * time.Second,
 	}
 }
@@ -53,7 +53,7 @@ func (p *Poller) Start(ctx context.Context) {
 
 // fetchAndBuffer fetches thermostat data and adds it to the buffer
 func (p *Poller) fetchAndBuffer(ctx context.Context) {
-	readings, err := p.fetcher.FetchAllThermostats(ctx)
+	readings, err := p.client.FetchAllThermostats(ctx)
 	if err != nil {
 		p.logger.Error("failed to fetch Netatmo data",
 			zap.Error(err),
