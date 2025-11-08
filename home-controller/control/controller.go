@@ -28,6 +28,9 @@ type Controller struct {
 	logger        *zap.Logger
 	tracer        trace.Tracer
 
+	// Cached Netatmo home ID (doesn't change)
+	homeID string
+
 	// State tracking (thread-safe with mutex)
 	stateMu     sync.RWMutex
 	stateByRoom map[string]*ThermostatState // Key: RoomID
@@ -125,6 +128,10 @@ func (c *Controller) initializeRoomIDs(ctx context.Context) error {
 
 	// Use first home (most users have only one)
 	home := homesData.Body.Homes[0]
+
+	// Cache homeID for future control loops
+	c.homeID = home.ID
+
 	c.logger.Info("initializing room IDs from Netatmo",
 		zap.String("home_id", home.ID),
 		zap.String("home_name", home.Name),
@@ -193,42 +200,18 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 	)
 
 	// Fetch current Netatmo home status
-	// Get home ID from first mapping (all mappings are in the same home)
 	if len(c.config.Mappings) == 0 {
 		c.logger.Warn("no thermostat mappings configured, skipping control loop")
 		return
 	}
 
-	// Get home ID from Netatmo (use cached from initialization)
-	var homesData *netatmo.HomesDataResponse
-	var homeID string
-	var err error
-	{
-		_, fetchHomesSpan := c.tracer.Start(ctx, "fetch_netatmo_homes")
-		homesData, err = c.netatmoClient.GetHomesData(ctx)
-		if err != nil {
-			fetchHomesSpan.RecordError(err)
-			fetchHomesSpan.SetStatus(codes.Error, "failed to fetch homes data")
-			fetchHomesSpan.End()
-			c.logger.Error("failed to fetch homes data", zap.Error(err))
-			span.SetStatus(codes.Error, "failed to fetch homes data")
-			return
-		}
-		fetchHomesSpan.SetAttributes(attribute.Int("homes_count", len(homesData.Body.Homes)))
-		fetchHomesSpan.End()
+	// Use cached home ID from initialization
+	homeID := c.homeID
+	span.SetAttributes(attribute.String("home_id", homeID))
 
-		if len(homesData.Body.Homes) == 0 {
-			c.logger.Error("no homes found in Netatmo account")
-			span.SetStatus(codes.Error, "no homes found")
-			return
-		}
-
-		homeID = homesData.Body.Homes[0].ID
-		span.SetAttributes(attribute.String("home_id", homeID))
-	}
-
-	// Fetch home status
+	// Fetch home status (rate limiting and retry handled by client)
 	var homeStatus *netatmo.HomeStatusResponse
+	var err error
 	{
 		_, fetchStatusSpan := c.tracer.Start(ctx, "fetch_netatmo_home_status",
 			trace.WithAttributes(attribute.String("home_id", homeID)),

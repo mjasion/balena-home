@@ -8,7 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
+	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -19,7 +23,7 @@ const (
 	setThermPointURL  = "https://api.netatmo.com/api/setroomthermpoint"
 )
 
-// Client represents a Netatmo API client
+// Client represents a Netatmo API client with built-in rate limiting and retry logic
 type Client struct {
 	httpClient       *http.Client
 	clientID         string
@@ -28,9 +32,17 @@ type Client struct {
 	accessToken      string
 	tokenExpiry      time.Time
 	tokenURLOverride string // For testing only
+
+	// Rate limiting (global for all API calls)
+	rateLimiter *time.Ticker
+	rateMu      sync.Mutex
+	lastAPICall time.Time
+
+	// Logger for retry warnings
+	logger *zap.Logger
 }
 
-// NewClient creates a new Netatmo API client
+// NewClient creates a new Netatmo API client with rate limiting
 func NewClient(clientID, clientSecret, refreshToken string) *Client {
 	return &Client{
 		httpClient: &http.Client{
@@ -39,7 +51,13 @@ func NewClient(clientID, clientSecret, refreshToken string) *Client {
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		refreshToken: refreshToken,
+		logger:       zap.NewNop(), // Default no-op logger, can be set via SetLogger
 	}
+}
+
+// SetLogger sets the logger for the client (for retry warnings)
+func (c *Client) SetLogger(logger *zap.Logger) {
+	c.logger = logger
 }
 
 // tokenResponse represents the OAuth2 token response
@@ -106,40 +124,101 @@ func (c *Client) ensureToken(ctx context.Context) error {
 	return nil
 }
 
-// doRequest performs an authenticated API request
+// rateLimit enforces a minimum delay between API calls (thread-safe)
+func (c *Client) rateLimit() {
+	c.rateMu.Lock()
+	defer c.rateMu.Unlock()
+
+	// Enforce minimum 1 second between API calls
+	minDelay := 1 * time.Second
+	elapsed := time.Since(c.lastAPICall)
+	if elapsed < minDelay {
+		time.Sleep(minDelay - elapsed)
+	}
+	c.lastAPICall = time.Now()
+}
+
+// doRequest performs an authenticated API request with exponential backoff for rate limits
 func (c *Client) doRequest(ctx context.Context, method, url string, body io.Reader, result interface{}) error {
 	if err := c.ensureToken(ctx); err != nil {
 		return fmt.Errorf("failed to ensure token: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
+	// Apply rate limiting
+	c.rateLimit()
 
-	req.Header.Set("Authorization", "Bearer "+c.accessToken)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	}
+	// Retry with exponential backoff for 429 rate limit errors
+	maxRetries := 3
+	baseDelay := 2 * time.Second
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	if result != nil {
-		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-			return fmt.Errorf("failed to decode response: %w", err)
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Create request (need to recreate for each retry if body is involved)
+		req, err := http.NewRequestWithContext(ctx, method, url, body)
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
 		}
+
+		req.Header.Set("Authorization", "Bearer "+c.accessToken)
+		if body != nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("request failed: %w", err)
+		}
+
+		// Check status code
+		if resp.StatusCode == http.StatusOK {
+			// Success - decode and return
+			if result != nil {
+				if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+					resp.Body.Close()
+					return fmt.Errorf("failed to decode response: %w", err)
+				}
+			}
+			resp.Body.Close()
+			return nil
+		}
+
+		// Read error body
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		errMsg := string(bodyBytes)
+
+		// Check if it's a 429 rate limit error
+		if resp.StatusCode == 429 || strings.Contains(errMsg, "concurrency limited") {
+			if attempt < maxRetries {
+				// Calculate exponential backoff: 2s, 4s, 8s
+				delay := baseDelay * time.Duration(1<<uint(attempt))
+				c.logger.Warn("Netatmo API rate limit hit, retrying with backoff",
+					zap.String("url", url),
+					zap.Int("attempt", attempt+1),
+					zap.Int("max_retries", maxRetries+1),
+					zap.Duration("backoff_delay", delay),
+				)
+
+				select {
+				case <-time.After(delay):
+					// Continue to next attempt
+					continue
+				case <-ctx.Done():
+					return fmt.Errorf("context cancelled during rate limit backoff: %w", ctx.Err())
+				}
+			} else {
+				// Max retries exhausted
+				c.logger.Error("max retries exhausted for Netatmo API call",
+					zap.String("url", url),
+					zap.Int("attempts", attempt+1),
+				)
+			}
+		}
+
+		// Not a rate limit error or max retries exhausted
+		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, errMsg)
 	}
 
-	return nil
+	return fmt.Errorf("API request failed after %d retries", maxRetries+1)
 }
 
 // GetHomesData retrieves homes data including topology

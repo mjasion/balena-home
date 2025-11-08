@@ -133,12 +133,13 @@ func main() {
 	// This prevents OAuth token conflicts when multiple components use the same credentials
 	var netatmoClient *netatmo.Client
 	if cfg.Netatmo.Enabled || cfg.ThermostatControl.Enabled {
-		logger.Info("creating shared Netatmo API client")
+		logger.Info("creating shared Netatmo API client with rate limiting")
 		netatmoClient = netatmo.NewClient(
 			cfg.Netatmo.ClientID,
 			cfg.Netatmo.ClientSecret,
 			cfg.Netatmo.RefreshToken,
 		)
+		netatmoClient.SetLogger(logger)
 	}
 
 	// Start Netatmo poller if enabled (writes to metrics buffer only)
