@@ -105,8 +105,11 @@ func TestWeightedAverageTemperature(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name:        "No readings",
-			readings:    []struct{ timestamp time.Time; temp float64 }{},
+			name: "No readings",
+			readings: []struct {
+				timestamp time.Time
+				temp      float64
+			}{},
 			expectError: true,
 		},
 		{
@@ -127,7 +130,7 @@ func TestWeightedAverageTemperature(t *testing.T) {
 				temp      float64
 			}{
 				{timestamp: now.Add(-50 * time.Second), temp: 19.0}, // Old, weight ~0.17
-				{timestamp: now, temp: 21.0},                         // Recent, weight ~1.0
+				{timestamp: now, temp: 21.0},                        // Recent, weight ~1.0
 			},
 			expectedMin: 20.7, // Should be closer to 21.0 than 19.0
 			expectedMax: 21.1,
@@ -140,7 +143,7 @@ func TestWeightedAverageTemperature(t *testing.T) {
 			}{
 				{timestamp: now.Add(-60 * time.Second), temp: 19.0}, // weight 0
 				{timestamp: now.Add(-30 * time.Second), temp: 20.0}, // weight 0.5
-				{timestamp: now, temp: 21.0},                         // weight 1.0
+				{timestamp: now, temp: 21.0},                        // weight 1.0
 			},
 			expectedMin: 20.3, // (19*0 + 20*0.5 + 21*1) / (0 + 0.5 + 1) ≈ 20.67
 			expectedMax: 20.8,
@@ -640,4 +643,97 @@ func TestStateCopy(t *testing.T) {
 	if !copy.ExternallyModified {
 		t.Error("Copy ExternallyModified = false, want true (should be independent)")
 	}
+}
+
+// TestTemperatureFieldsPopulatedDuringSkip verifies that temperature fields
+// are populated in ControlDecision even when action is "skip" (e.g., during recheck delay)
+func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	cfg := &config.ThermostatControlConfig{
+		Enabled:                 true,
+		TemperatureThreshold:    0.5,
+		ControlIntervalSeconds:  60,
+		RecheckDelayMinutes:     5,
+		OverrideDurationMinutes: 10,
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
+		},
+	}
+
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+
+	// Initialize state with next recheck time in the future (will trigger skip)
+	c.stateMu.Lock()
+	c.stateByRoom["room1"] = &ThermostatState{
+		RoomID:          "room1",
+		RoomName:        "Living Room",
+		NextRecheckTime: time.Now().Add(5 * time.Minute), // Future time -> skip
+	}
+	c.stateMu.Unlock()
+
+	// Add sensor reading to buffer
+	now := time.Now()
+	controlBuffer.Add(&buffer.Reading{
+		Type: buffer.ReadingTypeBLE,
+		BLE: &buffer.SensorReading{
+			Timestamp:          now,
+			MAC:                "AA:BB:CC:DD:EE:FF",
+			TemperatureCelsius: 23.5,
+		},
+	})
+
+	// Create room status map with thermostat data
+	roomStatusMap := map[string]*netatmo.RoomStatus{
+		"room1": {
+			ID:                       "room1",
+			Reachable:                true,
+			ThermMeasuredTemperature: 24.2,
+			ThermSetpointTemperature: 22.0,
+			ThermSetpointMode:        "schedule",
+			ThermSetpointEndTime:     0,
+			ThermSetpointStartTime:   0,
+		},
+	}
+
+	// Evaluate room - should skip due to recheck delay but populate temperatures
+	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
+
+	// Verify action is skip
+	if decision.Action != "skip" {
+		t.Errorf("Expected action 'skip', got '%s'", decision.Action)
+	}
+
+	// Verify reason contains recheck delay
+	if !strings.Contains(decision.Reason, "waiting until next recheck time") {
+		t.Errorf("Expected reason to mention recheck delay, got: %s", decision.Reason)
+	}
+
+	// THE FIX: Verify temperature fields are populated (not zero)
+	if decision.XiaomiTemperature == 0 {
+		t.Error("Expected XiaomiTemperature to be populated (non-zero), got 0")
+	}
+	if decision.ThermostatMeasured == 0 {
+		t.Error("Expected ThermostatMeasured to be populated (non-zero), got 0")
+	}
+	if decision.ScheduledTemp == 0 {
+		t.Error("Expected ScheduledTemp to be populated (non-zero), got 0")
+	}
+
+	// Verify values match expected
+	if decision.XiaomiTemperature != 23.5 {
+		t.Errorf("XiaomiTemperature = %.1f, want 23.5", decision.XiaomiTemperature)
+	}
+	if decision.ThermostatMeasured != 24.2 {
+		t.Errorf("ThermostatMeasured = %.1f, want 24.2", decision.ThermostatMeasured)
+	}
+	if decision.ScheduledTemp != 22.0 {
+		t.Errorf("ScheduledTemp = %.1f, want 22.0", decision.ScheduledTemp)
+	}
+
+	t.Logf("✓ Temperature fields correctly populated during skip action:")
+	t.Logf("  xiaomi=%.1f°C, scheduled=%.1f°C, thermostat_measured=%.1f°C",
+		decision.XiaomiTemperature, decision.ScheduledTemp, decision.ThermostatMeasured)
 }

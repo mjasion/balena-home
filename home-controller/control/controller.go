@@ -281,11 +281,38 @@ func (c *Controller) evaluateRoom(
 	stateCopy := state.Copy()
 	c.stateMu.RUnlock()
 
+	// Get room status early to populate temperature fields in all cases
+	roomStatus, roomExists := roomStatusMap[mapping.RoomID]
+	if roomExists && roomStatus.Reachable {
+		// Populate thermostat measured temperature
+		decision.ThermostatMeasured = roomStatus.ThermMeasuredTemperature
+
+		// Calculate scheduled temperature (including hard overrides)
+		scheduledTemp := roomStatus.ThermSetpointTemperature
+		for _, override := range c.config.HardOverrides {
+			if override.RoomName == mapping.RoomName {
+				targetTemp, active := c.getHardOverrideTemp(override)
+				if active {
+					scheduledTemp = targetTemp
+					break
+				}
+			}
+		}
+		decision.ScheduledTemp = scheduledTemp
+
+		// Get Xiaomi sensor readings (last 60 seconds, weighted average)
+		sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
+		xiaomiTemp, err := c.getWeightedAverageTemperature(sensorMAC)
+		if err == nil {
+			decision.XiaomiTemperature = xiaomiTemp
+		}
+		// If sensor data unavailable, XiaomiTemperature remains 0 (logged but not critical for skip decisions)
+	}
+
 	// Check precedence hierarchy
 	// 1. External modification detected - skip control entirely
 	if stateCopy.ExternallyModified {
 		// Check reset conditions
-		roomStatus, roomExists := roomStatusMap[mapping.RoomID]
 		if roomExists {
 			// Reset ONLY if mode is "schedule" (user explicitly returned to schedule mode)
 			if roomStatus.ThermSetpointMode == "schedule" {
@@ -311,8 +338,7 @@ func (c *Controller) evaluateRoom(
 		return decision
 	}
 
-	// Get room status
-	roomStatus, roomExists := roomStatusMap[mapping.RoomID]
+	// Validate room status is available and reachable for control decisions
 	if !roomExists {
 		decision.Reason = "room not found in Netatmo status"
 		c.logger.Warn("room not found in Netatmo home status",
@@ -327,41 +353,34 @@ func (c *Controller) evaluateRoom(
 		return decision
 	}
 
-	// Get Xiaomi sensor readings (last 60 seconds, weighted average)
-	sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
-	xiaomiTemp, err := c.getWeightedAverageTemperature(sensorMAC)
-	if err != nil {
-		decision.Reason = fmt.Sprintf("sensor data unavailable: %v", err)
+	// Validate Xiaomi sensor data is available for control decisions
+	if decision.XiaomiTemperature == 0 {
+		sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
+		decision.Reason = "sensor data unavailable"
 		c.logger.Warn("sensor data unavailable for control",
 			zap.String("room_name", mapping.RoomName),
 			zap.String("sensor_mac", sensorMAC),
-			zap.Error(err),
 		)
 		return decision
 	}
 
-	decision.XiaomiTemperature = xiaomiTemp
-	decision.ThermostatMeasured = roomStatus.ThermMeasuredTemperature
-
-	// 2. Check for hard override schedule
-	scheduledTemp := roomStatus.ThermSetpointTemperature
+	// 2. Extract values for control logic (already populated in decision)
+	xiaomiTemp := decision.XiaomiTemperature
+	scheduledTemp := decision.ScheduledTemp
 	hardOverrideActive := false
 	for _, override := range c.config.HardOverrides {
 		if override.RoomName == mapping.RoomName {
-			targetTemp, active := c.getHardOverrideTemp(override)
+			_, active := c.getHardOverrideTemp(override)
 			if active {
-				scheduledTemp = targetTemp
 				hardOverrideActive = true
 				c.logger.Debug("hard override active",
 					zap.String("room_name", mapping.RoomName),
-					zap.Float64("override_temp", targetTemp),
+					zap.Float64("override_temp", scheduledTemp),
 				)
 				break
 			}
 		}
 	}
-
-	decision.ScheduledTemp = scheduledTemp
 
 	// 3. Calculate temperature difference
 	tempDiff := xiaomiTemp - scheduledTemp
