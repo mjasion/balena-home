@@ -73,7 +73,41 @@ func (c *Controller) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize room IDs: %w", err)
 	}
 
-	ticker := time.NewTicker(time.Duration(c.config.ControlIntervalSeconds) * time.Second)
+	// Calculate time until next aligned interval (e.g., :00, :05, :10 for 5-minute interval)
+	intervalDuration := time.Duration(c.config.ControlIntervalSeconds) * time.Second
+	now := time.Now()
+
+	// Calculate seconds since the start of current hour
+	secondsSinceHour := now.Minute()*60 + now.Second()
+
+	// Calculate seconds until next aligned interval
+	intervalSeconds := c.config.ControlIntervalSeconds
+	secondsUntilNext := intervalSeconds - (secondsSinceHour % intervalSeconds)
+
+	// If we're very close to the next interval (within 2 seconds), wait for the one after
+	if secondsUntilNext < 2 {
+		secondsUntilNext += intervalSeconds
+	}
+
+	initialWait := time.Duration(secondsUntilNext) * time.Second
+
+	c.logger.Info("waiting for next aligned interval",
+		zap.Duration("initial_wait", initialWait),
+		zap.Time("next_run", now.Add(initialWait)),
+	)
+
+	// Wait for first aligned interval
+	select {
+	case <-ctx.Done():
+		c.logger.Info("thermostat control loop stopped before first run")
+		return nil
+	case <-time.After(initialWait):
+		// Run control loop at aligned time
+		c.runControlLoop(ctx)
+	}
+
+	// Now use ticker for subsequent runs
+	ticker := time.NewTicker(intervalDuration)
 	defer ticker.Stop()
 
 	for {
