@@ -131,7 +131,7 @@ logging:
 
   # Log level: "debug", "info", "warn", "error"
   logLevel: "info"
- k
+
 # BLE Sensor Aggregator
 # Calculates weighted average temperatures for all sensors
 aggregator:
@@ -173,7 +173,7 @@ thermostatControl:
   # Recheck delay in minutes (default: 5)
   # After adjusting a thermostat, wait this long before re-evaluating
   # Prevents oscillation and excessive API calls
-  recheckDelayMinutes: 5
+  recheckDelayMinutes: 2
 
   # External modification reset timeout in hours (default: 24)
   # If thermostat manually changed, pause control for this duration
