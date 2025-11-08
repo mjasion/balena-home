@@ -530,16 +530,20 @@ func (c *Controller) getWeightedAverageTemperature(sensorMAC string) (float64, e
 		totalWeight += weight
 	}
 
+	var weightedAvg float64
 	if totalWeight == 0 {
 		// Fallback: use simple average
 		var sum float64
 		for _, reading := range sensorReadings {
 			sum += reading.Temperature
 		}
-		return sum / float64(len(sensorReadings)), nil
+		weightedAvg = sum / float64(len(sensorReadings))
+	} else {
+		weightedAvg = weightedSum / totalWeight
 	}
 
-	weightedAvg := weightedSum / totalWeight
+	// Round to 2 decimal places
+	weightedAvg = math.Round(weightedAvg*100) / 100
 
 	c.logger.Debug("calculated weighted average temperature",
 		zap.String("sensor_mac", sensorMAC),

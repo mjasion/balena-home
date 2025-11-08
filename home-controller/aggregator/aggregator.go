@@ -2,6 +2,7 @@ package aggregator
 
 import (
 	"context"
+	"math"
 	"strings"
 	"time"
 
@@ -144,16 +145,20 @@ func (a *Aggregator) calculateWeightedAverage(readings []sensorReading, cutoff, 
 		totalWeight += weight
 	}
 
+	var result float64
 	if totalWeight == 0 {
 		// Fallback: use simple average
 		var sum float64
 		for _, reading := range readings {
 			sum += reading.Temperature
 		}
-		return sum / float64(len(readings))
+		result = sum / float64(len(readings))
+	} else {
+		result = weightedSum / totalWeight
 	}
 
-	return weightedSum / totalWeight
+	// Round to 2 decimal places
+	return math.Round(result*100) / 100
 }
 
 // sensorReading is a lightweight struct for calculations
