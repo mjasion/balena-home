@@ -33,24 +33,38 @@ func InitTracer(ctx context.Context, cfg *config.OpenTelemetryConfig, logger *za
 		zap.Float64("sampling_rate", cfg.SamplingRate),
 	)
 
-	// Parse endpoint to extract host
+	// Parse endpoint to extract host and path
 	endpoint := cfg.Endpoint
+	var urlPath string
+
 	// Remove protocol prefix if present
 	if len(endpoint) > 8 && endpoint[:8] == "https://" {
 		endpoint = endpoint[8:]
 	} else if len(endpoint) > 7 && endpoint[:7] == "http://" {
 		endpoint = endpoint[7:]
 	}
-	// Remove path if present
+
+	// Extract path if present (e.g., "/otlp" from "host/otlp")
 	if idx := strings.Index(endpoint, "/"); idx > 0 {
-		endpoint = endpoint[:idx]
+		urlPath = endpoint[idx:] // e.g., "/otlp"
+		endpoint = endpoint[:idx]  // e.g., "host"
 	}
+
+	// Combine extracted path with /v1/traces
+	// If urlPath is "/otlp", result will be "/otlp/v1/traces"
+	// If urlPath is empty, result will be "/v1/traces"
+	fullPath := urlPath + "/v1/traces"
 
 	// Configure OTLP HTTP exporter options
 	opts := []otlptracehttp.Option{
 		otlptracehttp.WithEndpoint(endpoint),
-		otlptracehttp.WithURLPath("/v1/traces"),
+		otlptracehttp.WithURLPath(fullPath),
 	}
+
+	logger.Debug("parsed OTLP endpoint",
+		zap.String("host", endpoint),
+		zap.String("url_path", fullPath),
+	)
 
 	// Parse and add headers if configured
 	if cfg.Headers != "" {
