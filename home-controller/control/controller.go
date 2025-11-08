@@ -387,7 +387,8 @@ func (c *Controller) evaluateRoom(
 	calculatedSetpoint := scheduledTemp
 
 	// Check if setpoint matches schedule (within 0.1°C tolerance)
-	if math.Abs(calculatedSetpoint - scheduledTemp) < 0.1 {
+	// If so, no need for manual override
+	if math.Abs(calculatedSetpoint-scheduledTemp) < 0.1 {
 		decision.Action = "no_adjustment_needed"
 		decision.Reason = fmt.Sprintf("calculated setpoint (%.1f°C) matches schedule, no override needed", calculatedSetpoint)
 		return decision
@@ -440,10 +441,13 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 				zap.Float64("thermostat_measured", decision.ThermostatMeasured),
 			)
 		} else {
-			c.logger.Debug("control decision",
+			c.logger.Info("control decision",
 				zap.String("room_name", decision.RoomName),
 				zap.String("action", decision.Action),
 				zap.String("reason", decision.Reason),
+				zap.Float64("xiaomi_temp", decision.XiaomiTemperature),
+				zap.Float64("scheduled_temp", decision.ScheduledTemp),
+				zap.Float64("thermostat_measured", decision.ThermostatMeasured),
 			)
 		}
 		return
