@@ -652,9 +652,30 @@ func (c *Controller) getWeightedAverageTemperature(sensorMAC string) (float64, e
 func (c *Controller) getHardOverrideTemp(override config.HardOverride) (float64, bool) {
 	now := time.Now()
 	currentTime := now.Format("15:04")
+	currentDay := now.Weekday().String()[:3] // "Mon", "Tue", etc.
 
 	for _, window := range override.Schedule {
+		// Check if time matches
 		if currentTime >= window.StartTime && currentTime <= window.EndTime {
+			// If days are specified, check if current day matches
+			if len(window.Days) > 0 {
+				dayMatches := false
+				for _, day := range window.Days {
+					// Normalize to short form for comparison
+					normalizedDay := day
+					if len(day) > 3 {
+						normalizedDay = day[:3]
+					}
+					if normalizedDay == currentDay {
+						dayMatches = true
+						break
+					}
+				}
+				if !dayMatches {
+					continue // Skip this window, day doesn't match
+				}
+			}
+			// Time matches and (days match or no days specified)
 			return window.TargetTemperature, true
 		}
 	}

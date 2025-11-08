@@ -114,9 +114,10 @@ type HardOverride struct {
 
 // HardOverrideWindow defines a time window with target temperature
 type HardOverrideWindow struct {
-	StartTime         string  `yaml:"startTime"` // HH:MM format
-	EndTime           string  `yaml:"endTime"`   // HH:MM format
-	TargetTemperature float64 `yaml:"targetTemperature"`
+	StartTime         string   `yaml:"startTime"` // HH:MM format
+	EndTime           string   `yaml:"endTime"`   // HH:MM format
+	TargetTemperature float64  `yaml:"targetTemperature"`
+	Days              []string `yaml:"days"` // Optional: Days of week (e.g., ["Mon", "Tue", "Wed"]). If empty, applies to all days.
 }
 
 // AggregatorConfig contains configuration for the BLE sensor aggregator
@@ -369,6 +370,32 @@ func (c *Config) Validate() error {
 				// Validate target temperature
 				if window.TargetTemperature < 10.0 || window.TargetTemperature > 30.0 {
 					return fmt.Errorf("hard override %d (room: %s), window %d: target temperature must be between 10.0 and 30.0°C, got: %.1f", i, override.RoomName, j, window.TargetTemperature)
+				}
+
+				// Validate days of week (if specified)
+				if len(window.Days) > 0 {
+					validDays := map[string]bool{
+						"Mon": true, "Tue": true, "Wed": true, "Thu": true,
+						"Fri": true, "Sat": true, "Sun": true,
+						"Monday": true, "Tuesday": true, "Wednesday": true, "Thursday": true,
+						"Friday": true, "Saturday": true, "Sunday": true,
+					}
+					seenDays := make(map[string]bool)
+					for _, day := range window.Days {
+						// Check if day is valid
+						if !validDays[day] {
+							return fmt.Errorf("hard override %d (room: %s), window %d: invalid day '%s' (valid values: Mon, Tue, Wed, Thu, Fri, Sat, Sun, or full names)", i, override.RoomName, j, day)
+						}
+						// Check for duplicates (normalize to short form)
+						normalizedDay := day
+						if len(day) > 3 {
+							normalizedDay = day[:3]
+						}
+						if seenDays[normalizedDay] {
+							return fmt.Errorf("hard override %d (room: %s), window %d: duplicate day '%s'", i, override.RoomName, j, day)
+						}
+						seenDays[normalizedDay] = true
+					}
 				}
 
 				// Validate that start time is before end time (simple string comparison works for HH:MM)

@@ -18,6 +18,7 @@ A comprehensive Go-based service for home automation, monitoring LYWSD03MMC Blue
 - **Automatic Temperature Compensation**: Uses Xiaomi BLE sensors as source of truth, automatically adjusts Netatmo thermostat setpoints to compensate for measurement errors
 - **Weighted Average Algorithm**: Recent sensor readings have higher influence (linear time decay weighting over 60-second window)
 - **Hard Override Schedules**: Time-based temperature overrides (e.g., "warm up bedroom 22:00-07:00") take precedence over normal control
+  - **Day-of-Week Support**: Specify different schedules for weekdays vs. weekends (e.g., sleep-in on weekends)
 - **External Modification Detection**: Detects manual thermostat changes, pauses control for 24 hours or until schedule mode
 - **Auto-Expiring Overrides**: Temporary setpoint changes automatically revert after 10 minutes (configurable) for fail-safe operation
 - **Thread-Safe State Management**: Concurrent control of multiple thermostats without race conditions
@@ -175,7 +176,12 @@ thermostatControl:
         - startTime: "22:00"  # HH:MM format
           endTime: "07:00"
           targetTemperature: 19.0
-        - startTime: "06:30"
+          days: ["Mon", "Tue", "Wed", "Thu", "Fri"]  # Optional: specify days of week
+        - startTime: "23:00"  # Weekend schedule
+          endTime: "09:00"
+          targetTemperature: 18.5
+          days: ["Sat", "Sun"]  # Only on weekends
+        - startTime: "06:30"  # Every day (omit days field)
           endTime: "08:00"
           targetTemperature: 22.0
 ```
@@ -187,6 +193,10 @@ thermostatControl:
 - `mappings`: Associates each Netatmo room with a Xiaomi BLE sensor (one sensor can be shared by multiple rooms)
 - `roomID`: Optional - automatically populated at startup by fetching Netatmo home data
 - `hardOverrides`: Time-based temperature overrides that take precedence over normal control algorithm
+  - Each schedule window can optionally specify `days` (array of day names)
+  - Supported day formats: Short form (`Mon`, `Tue`, `Wed`, `Thu`, `Fri`, `Sat`, `Sun`) or full names (`Monday`, `Tuesday`, etc.)
+  - If `days` is omitted or empty, the override applies to all days of the week
+  - Use different schedule windows for weekday vs. weekend temperature preferences
 
 **Control Algorithm**:
 1. Read Xiaomi BLE sensor (weighted average of last 60 seconds, recent readings weighted higher)

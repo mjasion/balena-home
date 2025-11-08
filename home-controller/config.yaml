@@ -207,22 +207,46 @@ thermostatControl:
   # Hard override schedules (optional)
   # Time-based temperature overrides that take precedence over normal control
   # Use for predictable patterns (e.g., warm up bedroom before waking)
-  hardOverrides: []
+  hardOverrides:
     # Example configuration (uncomment and customize):
     # - roomName: "Sypialnia"
     #   schedule:
     #     - startTime: "22:00"  # HH:MM format (24-hour)
     #       endTime: "07:00"    # Can span midnight
     #       targetTemperature: 19.0
+    #       days: ["Mon", "Tue", "Wed", "Thu", "Fri"]  # Optional: specify days of week
     #     - startTime: "06:30"  # Multiple windows allowed
     #       endTime: "08:00"
     #       targetTemperature: 22.0
-    #
+    #       days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    #     - startTime: "23:00"  # Weekend schedule
+    #       endTime: "09:00"
+    #       targetTemperature: 18.5
+    #       days: ["Sat", "Sun"]  # Only on weekends
     # - roomName: "Salon"
     #   schedule:
     #     - startTime: "08:00"
     #       endTime: "10:00"
     #       targetTemperature: 22.0
+    #       # No days specified = applies every day
+   - roomName: "Łazienka"
+     schedule:
+       - startTime: "06:10"
+         endTime: "06:30"
+         targetTemperature: 26.5
+         days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
+   - roomName: "Hol"
+     schedule:
+       - startTime: "06:10"
+         endTime: "06:30"
+         targetTemperature: 24.0
+         days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
+   - roomName: "Sypialnia"
+     schedule:
+       - startTime: "06:10"
+         endTime: "07:30"
+         targetTemperature: 24.0
+         days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
 
 # USAGE NOTES:
 #
