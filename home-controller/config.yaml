@@ -159,7 +159,7 @@ thermostatControl:
   # Temperature difference threshold (°C) to trigger adjustment (default: 0.5)
   # Minimum difference between Xiaomi sensor and scheduled temperature to trigger action
   # Range: 0.1 to 5.0°C (lower = more aggressive, higher = more relaxed)
-  temperatureThreshold: 0.3
+  temperatureThreshold: 0.2
 
   # Control loop interval in seconds (default: 60)
   # How often to evaluate each room and potentially adjust thermostats

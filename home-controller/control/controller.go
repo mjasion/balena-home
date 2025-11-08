@@ -381,10 +381,25 @@ func (c *Controller) evaluateRoom(
 		return decision
 	}
 
-	// 4. Check if we need to set a manual override
-	// If the calculated setpoint would be the same as the scheduled temperature,
-	// there's no point in setting a manual override - skip it.
-	calculatedSetpoint := scheduledTemp
+	// 4. Calculate setpoint to compensate for sensor offset
+	// The Netatmo uses its own built-in sensor for control, which may differ from the Xiaomi sensor.
+	// We need to set a setpoint that ensures the Netatmo will heat/cool appropriately.
+	//
+	// Strategy:
+	// - If room is too cold (xiaomi < scheduled): set setpoint ABOVE thermostatMeasured + 0.5°C
+	// - If room is too warm (xiaomi > scheduled): set setpoint BELOW thermostatMeasured - 0.5°C
+	// - The 0.5°C offset ensures the thermostat actually triggers heating/cooling
+	var calculatedSetpoint float64
+
+	if tempDiff < 0 {
+		// Room too cold - need to heat
+		// Ensure setpoint is high enough to trigger heating on Netatmo's sensor
+		calculatedSetpoint = math.Max(scheduledTemp, decision.ThermostatMeasured+0.5)
+	} else {
+		// Room too warm - need to cool (or stop heating)
+		// Ensure setpoint is low enough to stop heating on Netatmo's sensor
+		calculatedSetpoint = math.Min(scheduledTemp, decision.ThermostatMeasured-0.5)
+	}
 
 	// Check if setpoint matches schedule (within 0.1°C tolerance)
 	// If so, no need for manual override
