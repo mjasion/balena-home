@@ -24,7 +24,7 @@ type Controller struct {
 	logger        *zap.Logger
 
 	// State tracking (thread-safe with mutex)
-	stateMu    sync.RWMutex
+	stateMu     sync.RWMutex
 	stateByRoom map[string]*ThermostatState // Key: RoomID
 
 	// Mapping of sensor MAC to room IDs
@@ -167,7 +167,7 @@ func (c *Controller) initializeRoomIDs(ctx context.Context) error {
 
 // runControlLoop executes one iteration of the control loop
 func (c *Controller) runControlLoop(ctx context.Context) {
-	c.logger.Info("control loop iteration started",
+	c.logger.Debug("control loop iteration started",
 		zap.Int("mapping_count", len(c.config.Mappings)),
 		zap.Bool("dry_run", c.config.DryRun),
 	)
@@ -422,11 +422,22 @@ func (c *Controller) evaluateRoom(
 // executeDecision executes the control decision
 func (c *Controller) executeDecision(ctx context.Context, homeID string, decision ControlDecision) {
 	if decision.Action == "skip" || decision.Action == "no_adjustment_needed" {
-		c.logger.Debug("control decision",
-			zap.String("room_name", decision.RoomName),
-			zap.String("action", decision.Action),
-			zap.String("reason", decision.Reason),
-		)
+		if c.config.DryRun {
+			c.logger.Info("[DRY-RUN] would NOT set temperature",
+				zap.String("room_name", decision.RoomName),
+				zap.String("action", decision.Action),
+				zap.String("reason", decision.Reason),
+				zap.Float64("xiaomi_temp", decision.XiaomiTemperature),
+				zap.Float64("scheduled_temp", decision.ScheduledTemp),
+				zap.Float64("thermostat_measured", decision.ThermostatMeasured),
+			)
+		} else {
+			c.logger.Debug("control decision",
+				zap.String("room_name", decision.RoomName),
+				zap.String("action", decision.Action),
+				zap.String("reason", decision.Reason),
+			)
+		}
 		return
 	}
 
@@ -455,7 +466,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 
 		// Dry-run mode: log what would be sent but don't call API
 		if c.config.DryRun {
-			c.logger.Info("[DRY-RUN] would send thermostat setpoint command (not actually sent)",
+			c.logger.Info("[DRY-RUN] WOULD set temperature (not actually sent)",
 				zap.String("room_name", decision.RoomName),
 				zap.String("room_id", decision.RoomID),
 				zap.Float64("new_setpoint", safeSetpoint),
