@@ -8,6 +8,7 @@ import (
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
 	"github.com/mjasion/balena-home/thermostats/scanner"
+	"github.com/mjasion/balena-home/thermostats/scheduler"
 	"go.uber.org/zap"
 )
 
@@ -44,6 +45,17 @@ func (a *Aggregator) Start(ctx context.Context) error {
 		zap.Int("sensor_count", len(a.sensors)),
 	)
 
+	// Wait for first aligned interval
+	initialWait := scheduler.WaitForAlignedInterval(a.interval, a.logger)
+	select {
+	case <-ctx.Done():
+		a.logger.Info("BLE aggregator stopped before first run")
+		return nil
+	case <-time.After(initialWait):
+		a.calculateWeightedAverages()
+	}
+
+	// Now use ticker for subsequent runs
 	ticker := time.NewTicker(a.interval)
 	defer ticker.Stop()
 

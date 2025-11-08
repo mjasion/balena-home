@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
+	"github.com/mjasion/balena-home/thermostats/scheduler"
 	"go.uber.org/zap"
 )
 
@@ -32,14 +33,20 @@ func (p *Poller) Start(ctx context.Context) {
 		zap.Duration("fetch_interval", p.fetchInterval),
 	)
 
-	// Create ticker for periodic fetching
+	// Wait for first aligned interval
+	initialWait := scheduler.WaitForAlignedInterval(p.fetchInterval, p.logger)
+	select {
+	case <-ctx.Done():
+		p.logger.Info("Netatmo poller stopped before first fetch")
+		return
+	case <-time.After(initialWait):
+		p.fetchAndBuffer(ctx)
+	}
+
+	// Now use ticker for subsequent fetches
 	ticker := time.NewTicker(p.fetchInterval)
 	defer ticker.Stop()
 
-	// Fetch immediately on start
-	p.fetchAndBuffer(ctx)
-
-	// Then fetch at regular intervals
 	for {
 		select {
 		case <-ctx.Done():

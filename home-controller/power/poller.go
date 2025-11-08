@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
+	"github.com/mjasion/balena-home/thermostats/scheduler"
 	"go.uber.org/zap"
 )
 
@@ -32,14 +33,20 @@ func (p *Poller) Start(ctx context.Context) {
 		zap.Duration("scrape_interval", p.scrapeInterval),
 	)
 
-	// Create ticker for periodic scraping
+	// Wait for first aligned interval
+	initialWait := scheduler.WaitForAlignedInterval(p.scrapeInterval, p.logger)
+	select {
+	case <-ctx.Done():
+		p.logger.Info("power meter poller stopped before first scrape")
+		return
+	case <-time.After(initialWait):
+		p.scrapeAndBuffer(ctx)
+	}
+
+	// Now use ticker for subsequent scrapes
 	ticker := time.NewTicker(p.scrapeInterval)
 	defer ticker.Stop()
 
-	// Scrape immediately on start
-	p.scrapeAndBuffer(ctx)
-
-	// Then scrape at regular intervals
 	for {
 		select {
 		case <-ctx.Done():
