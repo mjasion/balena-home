@@ -167,7 +167,10 @@ func (c *Controller) initializeRoomIDs(ctx context.Context) error {
 
 // runControlLoop executes one iteration of the control loop
 func (c *Controller) runControlLoop(ctx context.Context) {
-	c.logger.Debug("control loop iteration started")
+	c.logger.Info("control loop iteration started",
+		zap.Int("mapping_count", len(c.config.Mappings)),
+		zap.Bool("dry_run", c.config.DryRun),
+	)
 
 	// Fetch current Netatmo home status
 	// Get home ID from first mapping (all mappings are in the same home)
@@ -205,8 +208,22 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 	}
 
 	// Process each mapping
+	skipCount := 0
+	adjustCount := 0
+	noAdjustCount := 0
+
 	for _, mapping := range c.config.Mappings {
 		decision := c.evaluateRoom(ctx, mapping, roomStatusMap)
+
+		// Track decision types
+		switch decision.Action {
+		case "skip":
+			skipCount++
+		case "set_manual_override":
+			adjustCount++
+		case "no_adjustment_needed":
+			noAdjustCount++
+		}
 
 		// Push metrics for this decision
 		c.stateMu.RLock()
@@ -233,7 +250,12 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		c.executeDecision(ctx, homeID, decision)
 	}
 
-	c.logger.Debug("control loop iteration completed")
+	c.logger.Info("control loop iteration completed",
+		zap.Int("rooms_evaluated", len(c.config.Mappings)),
+		zap.Int("skipped", skipCount),
+		zap.Int("adjusted", adjustCount),
+		zap.Int("no_adjustment", noAdjustCount),
+	)
 }
 
 // evaluateRoom evaluates whether a room needs thermostat adjustment
