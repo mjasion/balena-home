@@ -381,9 +381,17 @@ func (c *Controller) evaluateRoom(
 		return decision
 	}
 
-	// 4. Calculate new setpoint using compensation algorithm
-	// newSetpoint = thermostatMeasured + (xiaomiTemp - scheduledTemp)
-	calculatedSetpoint := decision.ThermostatMeasured + tempDiff
+	// 4. Check if we need to set a manual override
+	// If the calculated setpoint would be the same as the scheduled temperature,
+	// there's no point in setting a manual override - skip it.
+	calculatedSetpoint := scheduledTemp
+
+	// Check if setpoint matches schedule (within 0.1°C tolerance)
+	if math.Abs(calculatedSetpoint - scheduledTemp) < 0.1 {
+		decision.Action = "no_adjustment_needed"
+		decision.Reason = fmt.Sprintf("calculated setpoint (%.1f°C) matches schedule, no override needed", calculatedSetpoint)
+		return decision
+	}
 
 	// Safety bounds: 7.0-30.0°C (Netatmo API limits)
 	if calculatedSetpoint < 7.0 {
