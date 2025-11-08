@@ -131,7 +131,7 @@ logging:
 
   # Log level: "debug", "info", "warn", "error"
   logLevel: "info"
-
+ k
 # BLE Sensor Aggregator
 # Calculates weighted average temperatures for all sensors
 aggregator:

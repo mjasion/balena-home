@@ -19,8 +19,21 @@ func WaitForAlignedInterval(interval time.Duration, logger *zap.Logger) time.Dur
 	// Calculate seconds until next aligned interval
 	secondsUntilNext := intervalSeconds - (secondsSinceHour % intervalSeconds)
 
-	// If we're very close to the next interval (within 2 seconds), wait for the one after
-	if secondsUntilNext < 2 {
+	// Skip to next interval if we're very close to the boundary to avoid race conditions
+	// Use a smaller threshold for short intervals
+	var skipThreshold int
+	if intervalSeconds <= 2 {
+		// For 1-2s intervals, don't skip (threshold = 0)
+		skipThreshold = 0
+	} else if intervalSeconds < 10 {
+		// For 3-9s intervals, skip if within 1s of boundary
+		skipThreshold = 1
+	} else {
+		// For 10s+ intervals, skip if within 2s of boundary
+		skipThreshold = 2
+	}
+
+	if skipThreshold > 0 && secondsUntilNext <= skipThreshold {
 		secondsUntilNext += intervalSeconds
 	}
 
