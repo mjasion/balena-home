@@ -62,10 +62,14 @@ func main() {
 	metricsBuffer := buffer.New(cfg.Prometheus.BufferSize, logger)
 	logger.Info("metrics buffer created", zap.Int("capacity", cfg.Prometheus.BufferSize))
 
-	// Control buffer: Used by control loop (retained for 60s+ history, never cleared)
-	controlBufferSize := 10000 // Sufficient for ~2.5 hours of BLE readings
-	controlBuffer := buffer.New(controlBufferSize, logger)
-	logger.Info("control buffer created", zap.Int("capacity", controlBufferSize))
+	// Control buffer: Used by control loop (auto-cleanup enabled, keeps last 5 minutes)
+	controlBufferSize := 10000 // Large capacity, but auto-cleanup keeps last 5 minutes
+	controlBuffer := buffer.NewWithAutoCleanup(controlBufferSize, logger)
+	logger.Info("control buffer created",
+		zap.Int("capacity", controlBufferSize),
+		zap.Bool("auto_cleanup", true),
+		zap.Duration("retention", 5*time.Minute),
+	)
 
 	// Create Prometheus pusher (uses metrics buffer)
 	pusher := metrics.New(

@@ -94,35 +94,55 @@ type Reading struct {
 
 // RingBuffer is a thread-safe circular buffer for sensor readings
 type RingBuffer struct {
-	data     []*Reading
-	capacity int
-	size     int
-	head     int
-	mu       sync.RWMutex
-	logger   *zap.Logger
+	data              []*Reading
+	capacity          int
+	size              int
+	head              int
+	mu                sync.RWMutex
+	logger            *zap.Logger
+	enableAutoCleanup bool // If true, automatically cleanup readings older than 5 minutes
 }
 
 // New creates a new ring buffer with the specified capacity
 func New(capacity int, logger *zap.Logger) *RingBuffer {
 	return &RingBuffer{
-		data:     make([]*Reading, capacity),
-		capacity: capacity,
-		size:     0,
-		head:     0,
-		logger:   logger,
+		data:              make([]*Reading, capacity),
+		capacity:          capacity,
+		size:              0,
+		head:              0,
+		logger:            logger,
+		enableAutoCleanup: false,
+	}
+}
+
+// NewWithAutoCleanup creates a new ring buffer with automatic cleanup of old readings (>5 minutes)
+func NewWithAutoCleanup(capacity int, logger *zap.Logger) *RingBuffer {
+	return &RingBuffer{
+		data:              make([]*Reading, capacity),
+		capacity:          capacity,
+		size:              0,
+		head:              0,
+		logger:            logger,
+		enableAutoCleanup: true,
 	}
 }
 
 // Add adds a new reading to the buffer
 // If the buffer is full, it overwrites the oldest entry
+// If auto-cleanup is enabled, removes readings older than 5 minutes
 func (rb *RingBuffer) Add(reading *Reading) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
+	// Cleanup old readings (>5 minutes) if auto-cleanup is enabled
+	if rb.enableAutoCleanup {
+		rb.cleanupOldReadings()
+	}
+
 	// Check if we're about to overwrite data
 	if rb.size == rb.capacity {
 		overwrittenType := rb.data[rb.head].Type
-		rb.logger.Warn("ring buffer full, overwriting oldest data",
+		rb.logger.Debug("ring buffer full, overwriting oldest data",
 			zap.Int("capacity", rb.capacity),
 			zap.String("overwritten_type", string(overwrittenType)),
 		)
@@ -135,6 +155,103 @@ func (rb *RingBuffer) Add(reading *Reading) {
 	// Update size
 	if rb.size < rb.capacity {
 		rb.size++
+	}
+}
+
+// cleanupOldReadings removes readings older than 5 minutes
+// Must be called with lock held
+func (rb *RingBuffer) cleanupOldReadings() {
+	if rb.size == 0 {
+		return
+	}
+
+	cutoff := time.Now().Add(-5 * time.Minute)
+	removed := 0
+
+	// Iterate through buffer from oldest to newest
+	// In a ring buffer, the oldest item is at (head - size) position
+	for i := 0; i < rb.size; i++ {
+		idx := (rb.head - rb.size + i + rb.capacity) % rb.capacity
+		r := rb.data[idx]
+
+		if r == nil {
+			continue
+		}
+
+		// Extract timestamp based on reading type
+		var timestamp time.Time
+		switch r.Type {
+		case ReadingTypeBLE:
+			if r.BLE != nil {
+				if ts, ok := r.BLE.Timestamp.(time.Time); ok {
+					timestamp = ts
+				}
+			}
+		case ReadingTypeNetatmo:
+			if r.Thermostat != nil {
+				if ts, ok := r.Thermostat.Timestamp.(time.Time); ok {
+					timestamp = ts
+				}
+			}
+		case ReadingTypePower:
+			if r.Power != nil {
+				if ts, ok := r.Power.Timestamp.(time.Time); ok {
+					timestamp = ts
+				}
+			}
+		case ReadingTypeControl:
+			if r.Control != nil {
+				if ts, ok := r.Control.Timestamp.(time.Time); ok {
+					timestamp = ts
+				}
+			}
+		case ReadingTypeBLEWeightedAvg:
+			if r.WeightedAvg != nil {
+				if ts, ok := r.WeightedAvg.Timestamp.(time.Time); ok {
+					timestamp = ts
+				}
+			}
+		}
+
+		// If timestamp is older than cutoff, remove this entry
+		if !timestamp.IsZero() && timestamp.Before(cutoff) {
+			rb.data[idx] = nil
+			removed++
+		} else {
+			// Once we hit a recent reading, all subsequent ones will be recent too
+			// (because we're iterating from oldest to newest)
+			break
+		}
+	}
+
+	// Compact the buffer by removing nil entries
+	if removed > 0 {
+		// Create new slice of valid readings
+		validReadings := make([]*Reading, 0, rb.size-removed)
+		for i := 0; i < rb.size; i++ {
+			idx := (rb.head - rb.size + i + rb.capacity) % rb.capacity
+			if rb.data[idx] != nil {
+				validReadings = append(validReadings, rb.data[idx])
+			}
+		}
+
+		// Reset buffer state
+		rb.size = len(validReadings)
+		rb.head = rb.size % rb.capacity
+
+		// Clear the data array and reinsert valid readings
+		for i := range rb.data {
+			rb.data[i] = nil
+		}
+		for i, r := range validReadings {
+			rb.data[i] = r
+		}
+
+		rb.logger.Debug("cleaned up old readings from buffer",
+			zap.Int("removed_count", removed),
+			zap.Int("remaining_count", rb.size),
+			zap.Duration("older_than", 5*time.Minute),
+		)
 	}
 }
 
