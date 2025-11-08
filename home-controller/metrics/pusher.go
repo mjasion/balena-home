@@ -11,6 +11,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
 	"github.com/mjasion/balena-home/thermostats/buffer"
+	"github.com/mjasion/balena-home/thermostats/scheduler"
 	"github.com/prometheus/prometheus/prompb"
 	"go.uber.org/zap"
 )
@@ -47,13 +48,25 @@ func New(url, username, password string, buf *buffer.RingBuffer, pushIntervalSec
 
 // Start begins the periodic metrics pushing in a goroutine
 func (p *Pusher) Start(ctx context.Context) {
-	ticker := time.NewTicker(p.pushInterval)
-	defer ticker.Stop()
-
 	p.logger.Info("prometheus pusher started",
 		zap.Duration("push_interval", p.pushInterval),
 		zap.Int("batch_size", p.batchSize),
 	)
+
+	// Wait for first aligned interval
+	initialWait := scheduler.WaitForAlignedInterval(p.pushInterval, p.logger)
+	select {
+	case <-ctx.Done():
+		p.logger.Info("prometheus pusher stopped before first push")
+		return
+	case <-time.After(initialWait):
+		// Push at aligned time
+		p.pushMetrics()
+	}
+
+	// Now use ticker for subsequent runs
+	ticker := time.NewTicker(p.pushInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
@@ -61,52 +74,59 @@ func (p *Pusher) Start(ctx context.Context) {
 			p.logger.Info("prometheus pusher stopping")
 			return
 		case <-ticker.C:
-			// Get all readings and clear buffer atomically
-			readings := p.buffer.GetAllAndClear()
-			if len(readings) == 0 {
-				p.logger.Debug("no readings to push")
-				continue
-			}
-
-			p.logger.Debug("pushing metrics to prometheus",
-				zap.Int("total_readings", len(readings)),
-				zap.Int("batch_size", p.batchSize),
-			)
-
-			// Process readings in batches
-			totalBatches := (len(readings) + p.batchSize - 1) / p.batchSize
-			for batchNum := 0; batchNum < totalBatches; batchNum++ {
-				start := batchNum * p.batchSize
-				end := start + p.batchSize
-				if end > len(readings) {
-					end = len(readings)
-				}
-				batch := readings[start:end]
-
-				p.logger.Debug("pushing batch",
-					zap.Int("batch_number", batchNum+1),
-					zap.Int("total_batches", totalBatches),
-					zap.Int("batch_readings", len(batch)),
-				)
-
-				err := p.Push(ctx, batch)
-				if err != nil {
-					p.logger.Error("failed to push batch, re-adding remaining readings to buffer",
-						zap.Error(err),
-						zap.Int("batch_number", batchNum+1),
-						zap.Int("failed_readings", len(readings)-start),
-					)
-					// Re-add the failed batch and all remaining batches
-					p.buffer.AddMultiple(readings[start:])
-					break
-				}
-
-				p.logger.Debug("successfully pushed batch",
-					zap.Int("batch_number", batchNum+1),
-					zap.Int("batch_readings", len(batch)),
-				)
-			}
+			p.pushMetrics()
 		}
+	}
+}
+
+// pushMetrics gets all readings from buffer and pushes them in batches
+func (p *Pusher) pushMetrics() {
+	// Get all readings and clear buffer atomically
+	readings := p.buffer.GetAllAndClear()
+	if len(readings) == 0 {
+		p.logger.Debug("no readings to push")
+		return
+	}
+
+	p.logger.Debug("pushing metrics to prometheus",
+		zap.Int("total_readings", len(readings)),
+		zap.Int("batch_size", p.batchSize),
+	)
+
+	// Process readings in batches
+	totalBatches := (len(readings) + p.batchSize - 1) / p.batchSize
+	ctx := context.Background() // Use background context for push operation
+
+	for batchNum := 0; batchNum < totalBatches; batchNum++ {
+		start := batchNum * p.batchSize
+		end := start + p.batchSize
+		if end > len(readings) {
+			end = len(readings)
+		}
+		batch := readings[start:end]
+
+		p.logger.Debug("pushing batch",
+			zap.Int("batch_number", batchNum+1),
+			zap.Int("total_batches", totalBatches),
+			zap.Int("batch_readings", len(batch)),
+		)
+
+		err := p.Push(ctx, batch)
+		if err != nil {
+			p.logger.Error("failed to push batch, re-adding remaining readings to buffer",
+				zap.Error(err),
+				zap.Int("batch_number", batchNum+1),
+				zap.Int("failed_readings", len(readings)-start),
+			)
+			// Re-add the failed batch and all remaining batches
+			p.buffer.AddMultiple(readings[start:])
+			break
+		}
+
+		p.logger.Debug("successfully pushed batch",
+			zap.Int("batch_number", batchNum+1),
+			zap.Int("batch_readings", len(batch)),
+		)
 	}
 }
 
