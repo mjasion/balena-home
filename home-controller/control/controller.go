@@ -497,6 +497,42 @@ func (c *Controller) evaluateRoom(
 		return decision
 	}
 
+	// Check if thermostat is already heating/cooling correctly despite sensor offset
+	// This avoids frost-guard errors when sensors disagree significantly
+	if tempDiff > 0 {
+		// Xiaomi says room is too warm, wants to cool down
+		// But if thermostat sensor shows it's already below target, heating is working correctly
+		if decision.ThermostatMeasured < scheduledTemp {
+			decision.Action = "no_adjustment_needed"
+			decision.Reason = "sensor offset detected, heating working correctly"
+			c.logger.Info("skipping override due to sensor offset",
+				zap.String("room_name", mapping.RoomName),
+				zap.Float64("xiaomi_temp", xiaomiTemp),
+				zap.Float64("thermostat_measured", decision.ThermostatMeasured),
+				zap.Float64("scheduled_temp", scheduledTemp),
+				zap.Float64("temp_diff", tempDiff),
+				zap.String("condition", "xiaomi shows warm but thermostat already below target"),
+			)
+			return decision
+		}
+	} else {
+		// Xiaomi says room is too cold, wants to heat
+		// But if thermostat sensor shows it's already above target, we don't need more heating
+		if decision.ThermostatMeasured > scheduledTemp {
+			decision.Action = "no_adjustment_needed"
+			decision.Reason = "sensor offset detected, no heating needed"
+			c.logger.Info("skipping override due to sensor offset",
+				zap.String("room_name", mapping.RoomName),
+				zap.Float64("xiaomi_temp", xiaomiTemp),
+				zap.Float64("thermostat_measured", decision.ThermostatMeasured),
+				zap.Float64("scheduled_temp", scheduledTemp),
+				zap.Float64("temp_diff", tempDiff),
+				zap.String("condition", "xiaomi shows cold but thermostat already above target"),
+			)
+			return decision
+		}
+	}
+
 	// Safety bounds: 7.0-30.0°C (Netatmo API limits)
 	if calculatedSetpoint < 7.0 {
 		calculatedSetpoint = 7.0
