@@ -192,7 +192,7 @@ thermostatControl:
   controlIntervalSeconds: 60
   overrideDurationMinutes: 10
   recheckDelayMinutes: 5
-  externalModificationResetHours: 24
+  externalModificationResetMinutes: 5
 
   mappings:
     - roomName: "Living Room"

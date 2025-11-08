@@ -92,7 +92,7 @@ type ThermostatControlConfig struct {
 	ControlIntervalSeconds          int                   `yaml:"controlIntervalSeconds" env:"CONTROL_INTERVAL_SECONDS" env-default:"60"`
 	OverrideDurationMinutes         int                   `yaml:"overrideDurationMinutes" env:"OVERRIDE_DURATION_MINUTES" env-default:"10"`
 	RecheckDelayMinutes             int                   `yaml:"recheckDelayMinutes" env:"RECHECK_DELAY_MINUTES" env-default:"5"`
-	ExternalModificationResetHours  int                   `yaml:"externalModificationResetHours" env:"EXTERNAL_MODIFICATION_RESET_HOURS" env-default:"24"`
+	ExternalModificationResetMinutes int                   `yaml:"externalModificationResetMinutes" env:"EXTERNAL_MODIFICATION_RESET_MINUTES" env-default:"5"`
 	MinSetpointCelsius              float64               `yaml:"minSetpointCelsius" env:"MIN_SETPOINT_CELSIUS" env-default:"10.0"`
 	MaxSetpointCelsius              float64               `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
 	Mappings                        []ThermostatMapping   `yaml:"mappings"`
@@ -304,9 +304,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("thermostat recheck delay must be at least 1 minute")
 		}
 
-		// Validate external modification reset hours
-		if c.ThermostatControl.ExternalModificationResetHours < 1 {
-			return fmt.Errorf("thermostat external modification reset hours must be at least 1 hour")
+		// Validate external modification reset minutes
+		if c.ThermostatControl.ExternalModificationResetMinutes < 1 {
+			return fmt.Errorf("thermostat external modification reset minutes must be at least 1 minute")
 		}
 
 		// Validate mappings
@@ -513,7 +513,7 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.Int("thermostat_control_interval_seconds", c.ThermostatControl.ControlIntervalSeconds),
 		zap.Int("thermostat_override_duration_minutes", c.ThermostatControl.OverrideDurationMinutes),
 		zap.Int("thermostat_recheck_delay_minutes", c.ThermostatControl.RecheckDelayMinutes),
-		zap.Int("thermostat_external_mod_reset_hours", c.ThermostatControl.ExternalModificationResetHours),
+		zap.Int("thermostat_external_mod_reset_minutes", c.ThermostatControl.ExternalModificationResetMinutes),
 		zap.Int("thermostat_mapping_count", len(c.ThermostatControl.Mappings)),
 		zap.Strings("thermostat_mappings", mappingInfo),
 		zap.Int("thermostat_hard_override_count", len(c.ThermostatControl.HardOverrides)),

@@ -264,7 +264,7 @@ thermostatControl:
   controlIntervalSeconds: 60  # Control loop frequency
   overrideDurationMinutes: 10  # How long each setpoint override lasts
   recheckDelayMinutes: 5  # Re-evaluate after this delay
-  externalModificationResetHours: 24  # Auto-reset external mod detection
+  externalModificationResetMinutes: 5  # Auto-reset external mod detection
 
   mappings:  # Which Xiaomi sensor controls which thermostat
     - roomName: "Living Room"  # Must match Netatmo room name

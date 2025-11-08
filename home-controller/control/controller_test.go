@@ -19,12 +19,12 @@ func TestControllerConstructor(t *testing.T) {
 	metricsBuffer := buffer.New(100, logger)
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled:                        true,
-		TemperatureThreshold:           0.5,
-		ControlIntervalSeconds:         60,
-		RecheckDelayMinutes:            5,
-		OverrideDurationMinutes:        10,
-		ExternalModificationResetHours: 24,
+		Enabled:                          true,
+		TemperatureThreshold:             0.5,
+		ControlIntervalSeconds:           60,
+		RecheckDelayMinutes:              5,
+		OverrideDurationMinutes:          10,
+		ExternalModificationResetMinutes: 5,
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
 			{RoomName: "Bedroom", SensorMAC: "11:22:33:44:55:66", RoomID: "room2"},

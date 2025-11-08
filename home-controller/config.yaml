@@ -173,12 +173,13 @@ thermostatControl:
   # Recheck delay in minutes (default: 5)
   # After adjusting a thermostat, wait this long before re-evaluating
   # Prevents oscillation and excessive API calls
-  recheckDelayMinutes: 2
+  recheckDelayMinutes: 10
 
-  # External modification reset timeout in hours (default: 24)
-  # If thermostat manually changed, pause control for this duration
-  # Control resumes after timeout OR when thermostat switched to schedule mode
-  externalModificationResetHours: 1
+  # External modification behavior:
+  # If thermostat is manually changed, automation pauses INDEFINITELY
+  # Automation resumes ONLY when thermostat is switched back to "schedule" mode
+  # This respects your manual temperature adjustments without time limits
+  # externalModificationResetMinutes: 5  # (Currently unused - kept for potential future timeout feature)
 
   # Safety limits for calculated setpoints
   # SAFETY: Setpoints are clamped to these limits to prevent extreme temperatures

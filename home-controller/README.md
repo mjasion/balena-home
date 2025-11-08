@@ -156,7 +156,7 @@ thermostatControl:
   controlIntervalSeconds: 60  # How often to evaluate (default: 60s)
   overrideDurationMinutes: 10  # Auto-expiring override duration (fail-safe)
   recheckDelayMinutes: 5  # Wait time after adjustment before re-evaluating
-  externalModificationResetHours: 24  # Pause duration after manual change
+  externalModificationResetMinutes: 5  # Pause duration after manual change
 
   # Map rooms to sensors
   mappings:

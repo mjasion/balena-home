@@ -287,25 +287,16 @@ func (c *Controller) evaluateRoom(
 		// Check reset conditions
 		roomStatus, roomExists := roomStatusMap[mapping.RoomID]
 		if roomExists {
-			// Reset if mode is "schedule"
+			// Reset ONLY if mode is "schedule" (user explicitly returned to schedule mode)
 			if roomStatus.ThermSetpointMode == "schedule" {
 				c.logger.Info("external modification cleared: thermostat returned to schedule mode",
 					zap.String("room_name", mapping.RoomName),
 				)
 				c.clearExternalModification(mapping.RoomID)
 			} else {
-				// Check timeout
-				timeout := time.Duration(c.config.ExternalModificationResetHours) * time.Hour
-				if time.Since(stateCopy.ExternalModificationTime) > timeout {
-					c.logger.Info("external modification cleared: timeout expired",
-						zap.String("room_name", mapping.RoomName),
-						zap.Duration("timeout", timeout),
-					)
-					c.clearExternalModification(mapping.RoomID)
-				} else {
-					decision.Reason = "externally modified, waiting for reset"
-					return decision
-				}
+				// Stay paused - respect manual override indefinitely
+				decision.Reason = "externally modified, respecting manual override"
+				return decision
 			}
 		} else {
 			decision.Reason = "externally modified, room status unavailable"
@@ -427,11 +418,19 @@ func (c *Controller) evaluateRoom(
 	if !stateCopy.LastSetpointTime.IsZero() &&
 		time.Since(stateCopy.LastSetpointTime) > 2*time.Minute {
 		// Check if current setpoint differs from what we sent
-		if math.Abs(roomStatus.ThermSetpointTemperature-stateCopy.LastSetpoint) > 0.1 {
-			c.logger.Warn("external modification detected",
+		delta := roomStatus.ThermSetpointTemperature - stateCopy.LastSetpoint
+		if math.Abs(delta) > 0.1 {
+			timeSinceLastCommand := time.Since(stateCopy.LastSetpointTime)
+
+			c.logger.Warn("external modification detected - backing off from automation indefinitely",
 				zap.String("room_name", mapping.RoomName),
 				zap.Float64("expected_setpoint", stateCopy.LastSetpoint),
 				zap.Float64("actual_setpoint", roomStatus.ThermSetpointTemperature),
+				zap.Float64("delta", delta),
+				zap.Duration("time_since_last_command", timeSinceLastCommand),
+				zap.Time("last_command_sent_at", stateCopy.LastSetpointTime),
+				zap.String("resume_condition", "automation will resume only when thermostat is switched back to 'schedule' mode"),
+				zap.String("reason", "thermostat was manually changed - respecting user preference indefinitely"),
 			)
 			c.markExternallyModified(mapping.RoomID)
 			decision.Action = "skip"

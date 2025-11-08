@@ -230,7 +230,7 @@ stateDiagram-v2
 | `controlIntervalSeconds` | 60s | How often to evaluate rooms |
 | `overrideDurationMinutes` | 10 min | Auto-expire time for overrides |
 | `recheckDelayMinutes` | 2 min | Wait time after adjustment |
-| `externalModificationResetHours` | 1 hour | Pause time after manual change |
+| `externalModificationResetMinutes` | 5 min | Pause time after manual change |
 | `minSetpointCelsius` | 10.0°C | Safety minimum |
 | `maxSetpointCelsius` | 30.0°C | Safety maximum |
 
