@@ -16,6 +16,7 @@ import (
 	"github.com/mjasion/balena-home/thermostats/control"
 	"github.com/mjasion/balena-home/thermostats/metrics"
 	"github.com/mjasion/balena-home/thermostats/netatmo"
+	"github.com/mjasion/balena-home/thermostats/otel"
 	"github.com/mjasion/balena-home/thermostats/power"
 	"github.com/mjasion/balena-home/thermostats/pyroscope"
 	"github.com/mjasion/balena-home/thermostats/scanner"
@@ -54,6 +55,18 @@ func main() {
 	defer func() {
 		if err := profiler.Stop(); err != nil {
 			logger.Error("failed to stop pyroscope profiler", zap.Error(err))
+		}
+	}()
+
+	// Initialize OpenTelemetry tracer if enabled
+	shutdownTracer, err := otel.InitTracer(context.Background(), &cfg.OpenTelemetry, logger)
+	if err != nil {
+		logger.Error("failed to initialize opentelemetry tracer", zap.Error(err))
+		os.Exit(1)
+	}
+	defer func() {
+		if err := shutdownTracer(context.Background()); err != nil {
+			logger.Error("failed to shutdown opentelemetry tracer", zap.Error(err))
 		}
 	}()
 

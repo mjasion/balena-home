@@ -97,6 +97,39 @@ pyroscope:
   # Example: environment, version, hostname
   tags: {}
 
+# OpenTelemetry tracing configuration
+opentelemetry:
+  # Enable OpenTelemetry tracing
+  enabled: true
+
+  # OTLP endpoint URL for traces
+  # For Grafana Cloud: https://otlp-gateway-prod-XX-YY.grafana.net/otlp
+  # For local: http://localhost:4318
+  endpoint: "https://otlp-gateway-prod-us-central-0.grafana.net/otlp"  # or use OTEL_EXPORTER_OTLP_ENDPOINT env var
+
+  # OTLP protocol: "grpc", "http/protobuf", or "http/json"
+  # For Grafana Cloud: use "http/protobuf"
+  protocol: "http/protobuf"  # or use OTEL_EXPORTER_OTLP_PROTOCOL env var
+
+  # OTLP headers for authentication
+  # Format: "key1=value1,key2=value2"
+  # For Grafana Cloud with basic auth: "Authorization=Basic <base64_credentials>"
+  # IMPORTANT: Use OTEL_EXPORTER_OTLP_HEADERS environment variable for sensitive data
+  headers: ""  # or use OTEL_EXPORTER_OTLP_HEADERS env var
+
+  # Service name for tracing
+  # This will appear in Grafana Tempo for filtering
+  serviceName: "home-controller"  # or use OTEL_SERVICE_NAME env var
+
+  # Sample rate (0.0-1.0): fraction of traces to send
+  # 1.0 = send all traces (default), 0.1 = send 10% of traces
+  # Reduce for high-volume production to save costs
+  samplingRate: 1.0  # or use OTEL_SAMPLING_RATE env var
+
+  # Additional resource attributes
+  # Example: environment, version, hostname
+  resourceAttributes: {}
+
 # Prometheus metrics push configuration
 prometheus:
   # Interval between metric pushes in seconds (minimum: 1)

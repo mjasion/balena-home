@@ -18,6 +18,7 @@ type Config struct {
 	Netatmo           NetatmoConfig           `yaml:"netatmo"`
 	Power             PowerConfig             `yaml:"power"`
 	Pyroscope         PyroscopeConfig         `yaml:"pyroscope"`
+	OpenTelemetry     OpenTelemetryConfig     `yaml:"opentelemetry"`
 	Prometheus        PrometheusConfig        `yaml:"prometheus"`
 	Logging           LoggingConfig           `yaml:"logging"`
 	ThermostatControl ThermostatControlConfig `yaml:"thermostatControl"`
@@ -65,6 +66,17 @@ type PyroscopeConfig struct {
 	BlockProfileRate  int               `yaml:"blockProfileRate" env:"PYROSCOPE_BLOCK_PROFILE_RATE" env-default:"0"`
 	DisableGCRuns     bool              `yaml:"disableGCRuns" env:"PYROSCOPE_DISABLE_GC_RUNS" env-default:"false"`
 	Tags              map[string]string `yaml:"tags"`
+}
+
+// OpenTelemetryConfig contains OpenTelemetry tracing configuration
+type OpenTelemetryConfig struct {
+	Enabled            bool              `yaml:"enabled" env:"OTEL_ENABLED" env-default:"false"`
+	Endpoint           string            `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+	Protocol           string            `yaml:"protocol" env:"OTEL_EXPORTER_OTLP_PROTOCOL" env-default:"http/protobuf"`
+	Headers            string            `yaml:"headers" env:"OTEL_EXPORTER_OTLP_HEADERS"` // Format: "key1=value1,key2=value2"
+	ServiceName        string            `yaml:"serviceName" env:"OTEL_SERVICE_NAME" env-default:"home-controller"`
+	SamplingRate       float64           `yaml:"samplingRate" env:"OTEL_SAMPLING_RATE" env-default:"1.0"`
+	ResourceAttributes map[string]string `yaml:"resourceAttributes"`
 }
 
 // PrometheusConfig contains Prometheus metrics push configuration
@@ -243,6 +255,19 @@ func (c *Config) Validate() error {
 					return fmt.Errorf("invalid pyroscope profile type: %s (must be one of: cpu, alloc_objects, alloc_space, inuse_objects, inuse_space, goroutines, mutex, block)", pt)
 				}
 			}
+		}
+	}
+
+	// Validate OpenTelemetry configuration if enabled
+	if c.OpenTelemetry.Enabled {
+		if c.OpenTelemetry.Endpoint == "" {
+			return fmt.Errorf("opentelemetry endpoint is required when tracing is enabled")
+		}
+		if c.OpenTelemetry.ServiceName == "" {
+			return fmt.Errorf("opentelemetry service name is required when tracing is enabled")
+		}
+		if c.OpenTelemetry.SamplingRate < 0.0 || c.OpenTelemetry.SamplingRate > 1.0 {
+			return fmt.Errorf("opentelemetry sampling rate must be between 0.0 and 1.0, got: %.2f", c.OpenTelemetry.SamplingRate)
 		}
 	}
 
@@ -526,6 +551,12 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.String("pyroscope_application_name", c.Pyroscope.ApplicationName),
 		zap.Bool("pyroscope_auth_configured", c.Pyroscope.BasicAuthUser != "" && c.Pyroscope.BasicAuthPassword != ""),
 		zap.Strings("pyroscope_profile_types", c.Pyroscope.ProfileTypes),
+		zap.Bool("opentelemetry_enabled", c.OpenTelemetry.Enabled),
+		zap.String("opentelemetry_endpoint", c.OpenTelemetry.Endpoint),
+		zap.String("opentelemetry_protocol", c.OpenTelemetry.Protocol),
+		zap.String("opentelemetry_service_name", c.OpenTelemetry.ServiceName),
+		zap.Bool("opentelemetry_headers_configured", c.OpenTelemetry.Headers != ""),
+		zap.Float64("opentelemetry_sampling_rate", c.OpenTelemetry.SamplingRate),
 		zap.Int("push_interval_seconds", c.Prometheus.PushIntervalSeconds),
 		zap.String("prometheus_url", c.Prometheus.URL),
 		zap.String("prometheus_username", c.Prometheus.Username),

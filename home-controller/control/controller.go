@@ -12,6 +12,10 @@ import (
 	"github.com/mjasion/balena-home/thermostats/config"
 	"github.com/mjasion/balena-home/thermostats/netatmo"
 	"github.com/mjasion/balena-home/thermostats/scheduler"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -22,6 +26,7 @@ type Controller struct {
 	controlBuffer *buffer.RingBuffer
 	metricsBuffer *buffer.RingBuffer // For pushing control metrics to Prometheus
 	logger        *zap.Logger
+	tracer        trace.Tracer
 
 	// State tracking (thread-safe with mutex)
 	stateMu     sync.RWMutex
@@ -51,12 +56,16 @@ func New(
 		sensorToRooms[mac] = append(sensorToRooms[mac], roomID)
 	}
 
+	// Get tracer from global provider
+	tracer := otel.Tracer("home-controller/control")
+
 	return &Controller{
 		config:        cfg,
 		netatmoClient: netatmoClient,
 		controlBuffer: controlBuffer,
 		metricsBuffer: metricsBuffer,
 		logger:        logger,
+		tracer:        tracer,
 		stateByRoom:   make(map[string]*ThermostatState),
 		sensorToRooms: sensorToRooms,
 	}
@@ -167,9 +176,20 @@ func (c *Controller) initializeRoomIDs(ctx context.Context) error {
 
 // runControlLoop executes one iteration of the control loop
 func (c *Controller) runControlLoop(ctx context.Context) {
+	// Start a new trace span for this control loop iteration
+	ctx, span := c.tracer.Start(ctx, "control_loop_iteration",
+		trace.WithAttributes(
+			attribute.Int("mapping_count", len(c.config.Mappings)),
+			attribute.Bool("dry_run", c.config.DryRun),
+		),
+	)
+	defer span.End()
+
 	c.logger.Debug("control loop iteration started",
 		zap.Int("mapping_count", len(c.config.Mappings)),
 		zap.Bool("dry_run", c.config.DryRun),
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.String("span_id", span.SpanContext().SpanID().String()),
 	)
 
 	// Fetch current Netatmo home status
@@ -180,24 +200,50 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 	}
 
 	// Get home ID from Netatmo (use cached from initialization)
-	homesData, err := c.netatmoClient.GetHomesData(ctx)
-	if err != nil {
-		c.logger.Error("failed to fetch homes data", zap.Error(err))
-		return
-	}
+	var homesData *netatmo.HomesDataResponse
+	var homeID string
+	var err error
+	{
+		_, fetchHomesSpan := c.tracer.Start(ctx, "fetch_netatmo_homes")
+		homesData, err = c.netatmoClient.GetHomesData(ctx)
+		if err != nil {
+			fetchHomesSpan.RecordError(err)
+			fetchHomesSpan.SetStatus(codes.Error, "failed to fetch homes data")
+			fetchHomesSpan.End()
+			c.logger.Error("failed to fetch homes data", zap.Error(err))
+			span.SetStatus(codes.Error, "failed to fetch homes data")
+			return
+		}
+		fetchHomesSpan.SetAttributes(attribute.Int("homes_count", len(homesData.Body.Homes)))
+		fetchHomesSpan.End()
 
-	if len(homesData.Body.Homes) == 0 {
-		c.logger.Error("no homes found in Netatmo account")
-		return
-	}
+		if len(homesData.Body.Homes) == 0 {
+			c.logger.Error("no homes found in Netatmo account")
+			span.SetStatus(codes.Error, "no homes found")
+			return
+		}
 
-	homeID := homesData.Body.Homes[0].ID
+		homeID = homesData.Body.Homes[0].ID
+		span.SetAttributes(attribute.String("home_id", homeID))
+	}
 
 	// Fetch home status
-	homeStatus, err := c.netatmoClient.GetHomeStatus(ctx, homeID)
-	if err != nil {
-		c.logger.Error("failed to fetch home status", zap.Error(err))
-		return
+	var homeStatus *netatmo.HomeStatusResponse
+	{
+		_, fetchStatusSpan := c.tracer.Start(ctx, "fetch_netatmo_home_status",
+			trace.WithAttributes(attribute.String("home_id", homeID)),
+		)
+		homeStatus, err = c.netatmoClient.GetHomeStatus(ctx, homeID)
+		if err != nil {
+			fetchStatusSpan.RecordError(err)
+			fetchStatusSpan.SetStatus(codes.Error, "failed to fetch home status")
+			fetchStatusSpan.End()
+			c.logger.Error("failed to fetch home status", zap.Error(err))
+			span.SetStatus(codes.Error, "failed to fetch home status")
+			return
+		}
+		fetchStatusSpan.SetAttributes(attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)))
+		fetchStatusSpan.End()
 	}
 
 	// Build map of room ID to room status
@@ -250,7 +296,16 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		c.executeDecision(ctx, homeID, decision)
 	}
 
+	// Record summary attributes on span
+	span.SetAttributes(
+		attribute.Int("rooms_evaluated", len(c.config.Mappings)),
+		attribute.Int("skipped", skipCount),
+		attribute.Int("adjusted", adjustCount),
+		attribute.Int("no_adjustment", noAdjustCount),
+	)
+
 	c.logger.Info("control loop iteration completed",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.Int("rooms_evaluated", len(c.config.Mappings)),
 		zap.Int("skipped", skipCount),
 		zap.Int("adjusted", adjustCount),
@@ -264,11 +319,34 @@ func (c *Controller) evaluateRoom(
 	mapping config.ThermostatMapping,
 	roomStatusMap map[string]*netatmo.RoomStatus,
 ) ControlDecision {
+	ctx, span := c.tracer.Start(ctx, "evaluate_room",
+		trace.WithAttributes(
+			attribute.String("room_name", mapping.RoomName),
+			attribute.String("room_id", mapping.RoomID),
+			attribute.String("sensor_mac", mapping.SensorMAC),
+		),
+	)
+
 	decision := ControlDecision{
 		RoomID:   mapping.RoomID,
 		RoomName: mapping.RoomName,
 		Action:   "skip",
 	}
+
+	defer func() {
+		// Record decision attributes before span ends
+		span.SetAttributes(
+			attribute.String("decision_action", decision.Action),
+			attribute.String("decision_reason", decision.Reason),
+			attribute.Float64("xiaomi_temperature", decision.XiaomiTemperature),
+			attribute.Float64("scheduled_temperature", decision.ScheduledTemp),
+			attribute.Float64("thermostat_measured", decision.ThermostatMeasured),
+		)
+		if decision.Action == "set_manual_override" {
+			span.SetAttributes(attribute.Float64("calculated_setpoint", decision.CalculatedSetpoint))
+		}
+		span.End()
+	}()
 
 	// Get current state (defensive copy)
 	c.stateMu.RLock()
@@ -463,9 +541,19 @@ func (c *Controller) evaluateRoom(
 
 // executeDecision executes the control decision
 func (c *Controller) executeDecision(ctx context.Context, homeID string, decision ControlDecision) {
+	ctx, span := c.tracer.Start(ctx, "execute_decision",
+		trace.WithAttributes(
+			attribute.String("room_name", decision.RoomName),
+			attribute.String("room_id", decision.RoomID),
+			attribute.String("action", decision.Action),
+		),
+	)
+	defer span.End()
+
 	if decision.Action == "skip" || decision.Action == "no_adjustment_needed" {
 		if c.config.DryRun {
 			c.logger.Info("[DRY-RUN] would NOT set temperature",
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
 				zap.String("room_name", decision.RoomName),
 				zap.String("action", decision.Action),
 				zap.String("reason", decision.Reason),
@@ -475,6 +563,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 			)
 		} else {
 			c.logger.Info("control decision",
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
 				zap.String("room_name", decision.RoomName),
 				zap.String("action", decision.Action),
 				zap.String("reason", decision.Reason),
@@ -512,6 +601,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 		// Dry-run mode: log what would be sent but don't call API
 		if c.config.DryRun {
 			c.logger.Info("[DRY-RUN] WOULD set temperature (not actually sent)",
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
 				zap.String("room_name", decision.RoomName),
 				zap.String("room_id", decision.RoomID),
 				zap.Float64("new_setpoint", safeSetpoint),
@@ -535,6 +625,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 		}
 
 		c.logger.Info("setting thermostat override",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
 			zap.String("room_name", decision.RoomName),
 			zap.Float64("new_setpoint", safeSetpoint),
 			zap.Float64("original_calculated_setpoint", decision.CalculatedSetpoint),
@@ -546,17 +637,36 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 		)
 
 		// Call Netatmo API
-		err := c.netatmoClient.SetRoomThermpoint(
-			ctx,
-			homeID,
-			decision.RoomID,
-			"manual",
-			safeSetpoint,
-			decision.OverrideEndTime,
-		)
+		var err error
+		{
+			_, setTempSpan := c.tracer.Start(ctx, "set_netatmo_thermostat",
+				trace.WithAttributes(
+					attribute.String("home_id", homeID),
+					attribute.String("room_id", decision.RoomID),
+					attribute.Float64("setpoint", safeSetpoint),
+					attribute.String("mode", "manual"),
+				),
+			)
+			err = c.netatmoClient.SetRoomThermpoint(
+				ctx,
+				homeID,
+				decision.RoomID,
+				"manual",
+				safeSetpoint,
+				decision.OverrideEndTime,
+			)
+			if err != nil {
+				setTempSpan.RecordError(err)
+				setTempSpan.SetStatus(codes.Error, "failed to set thermostat setpoint")
+			}
+			setTempSpan.End()
+		}
 
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to set thermostat setpoint")
 			c.logger.Error("failed to set thermostat setpoint",
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
 				zap.String("room_name", decision.RoomName),
 				zap.Error(err),
 			)
@@ -573,6 +683,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 		c.stateMu.Unlock()
 
 		c.logger.Info("thermostat override set successfully",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
 			zap.String("room_name", decision.RoomName),
 			zap.Float64("setpoint", safeSetpoint),
 			zap.Time("next_recheck", time.Now().Add(time.Duration(c.config.RecheckDelayMinutes)*time.Minute)),
@@ -582,6 +693,11 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 
 // getWeightedAverageTemperature calculates the weighted average temperature from sensor readings in the last 60 seconds
 func (c *Controller) getWeightedAverageTemperature(sensorMAC string) (float64, error) {
+	_, span := c.tracer.Start(context.Background(), "get_weighted_average_temperature",
+		trace.WithAttributes(attribute.String("sensor_mac", sensorMAC)),
+	)
+	defer span.End()
+
 	now := time.Now()
 	cutoff := now.Add(-60 * time.Second)
 
@@ -638,6 +754,13 @@ func (c *Controller) getWeightedAverageTemperature(sensorMAC string) (float64, e
 
 	// Round to 2 decimal places
 	weightedAvg = math.Round(weightedAvg*100) / 100
+
+	// Record span attributes
+	span.SetAttributes(
+		attribute.Int("reading_count", len(sensorReadings)),
+		attribute.Float64("weighted_average", weightedAvg),
+		attribute.Int("time_window_seconds", 60),
+	)
 
 	c.logger.Debug("calculated weighted average temperature",
 		zap.String("sensor_mac", sensorMAC),
