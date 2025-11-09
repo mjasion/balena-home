@@ -15,7 +15,7 @@ type ControlMetrics struct {
 	ScheduledTemperature  float64
 	ThermostatMeasured    float64
 	CalculatedSetpoint    float64
-	TemperatureDifference float64 // xiaomiTemp - scheduledTemp
+	TemperatureDifference float64 // xiaomiTemp - thermostatMeasured
 	SetpointAdjustment    float64 // calculatedSetpoint - thermostatMeasured
 	ExternallyModified    bool
 	HardOverrideActive    bool
@@ -24,7 +24,7 @@ type ControlMetrics struct {
 // pushControlMetrics pushes control decision metrics to the metrics buffer
 func (c *Controller) pushControlMetrics(decision ControlDecision, hardOverrideActive bool, externallyModified bool) {
 	// Calculate derived metrics
-	tempDiff := decision.XiaomiTemperature - decision.ScheduledTemp
+	tempDiff := decision.XiaomiTemperature - decision.ThermostatMeasured
 	setpointAdj := 0.0
 	if decision.Action == "set_manual_override" {
 		setpointAdj = decision.CalculatedSetpoint - decision.ThermostatMeasured
