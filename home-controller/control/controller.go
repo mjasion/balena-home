@@ -418,8 +418,10 @@ func (c *Controller) evaluateRoom(
 
 	// Check if we're in recheck delay period
 	if time.Now().Before(stateCopy.NextRecheckTime) {
-		decision.Reason = fmt.Sprintf("waiting until next recheck time (%s)",
-			stateCopy.NextRecheckTime.Format("15:04:05"))
+		warsawTime := stateCopy.NextRecheckTime.In(c.warsawLocation())
+		minutesLeft := int(time.Until(stateCopy.NextRecheckTime).Minutes())
+		decision.Reason = fmt.Sprintf("waiting until next recheck time (%s, %d minutes left)",
+			warsawTime.Format("15:04:05"), minutesLeft)
 		return decision
 	}
 
@@ -541,7 +543,7 @@ func (c *Controller) evaluateRoom(
 				zap.Float64("actual_setpoint", roomStatus.ThermSetpointTemperature),
 				zap.Float64("delta", delta),
 				zap.Duration("time_since_last_command", timeSinceLastCommand),
-				zap.Time("last_command_sent_at", stateCopy.LastSetpointTime),
+				zap.Time("last_command_sent_at", stateCopy.LastSetpointTime.In(c.warsawLocation())),
 				zap.String("resume_condition", "automation will resume only when thermostat is switched back to 'schedule' mode"),
 				zap.String("reason", "thermostat was manually changed - respecting user preference indefinitely"),
 			)
@@ -702,11 +704,12 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 		}
 		c.stateMu.Unlock()
 
+		nextRecheckTime := time.Now().Add(time.Duration(c.config.RecheckDelayMinutes) * time.Minute).In(c.warsawLocation())
 		c.logger.Info("thermostat override set successfully",
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
 			zap.String("room_name", decision.RoomName),
 			zap.Float64("setpoint", safeSetpoint),
-			zap.Time("next_recheck", time.Now().Add(time.Duration(c.config.RecheckDelayMinutes)*time.Minute)),
+			zap.Time("next_recheck", nextRecheckTime),
 		)
 	}
 }
@@ -793,7 +796,7 @@ func (c *Controller) getWeightedAverageTemperature(sensorMAC string) (float64, e
 
 // getHardOverrideTemp checks if a hard override is currently active and returns the target temperature
 func (c *Controller) getHardOverrideTemp(override config.HardOverride) (float64, bool) {
-	now := time.Now()
+	now := time.Now().In(c.warsawLocation())
 	currentTime := now.Format("15:04")
 	currentDay := now.Weekday().String()[:3] // "Mon", "Tue", etc.
 
@@ -855,4 +858,15 @@ func getMapKeys(m map[string]string) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// warsawLocation returns the Europe/Warsaw timezone location
+func (c *Controller) warsawLocation() *time.Location {
+	loc, err := time.LoadLocation("Europe/Warsaw")
+	if err != nil {
+		// Fallback to UTC if Warsaw timezone cannot be loaded
+		c.logger.Warn("failed to load Europe/Warsaw timezone, using UTC", zap.Error(err))
+		return time.UTC
+	}
+	return loc
 }
