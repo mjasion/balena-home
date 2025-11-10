@@ -26,6 +26,7 @@ The system monitors **two temperature sources** but only one drives control deci
 - **Type**: Built-in temperature sensor on Netatmo thermostat
 - **Usage**: Captured for logging, monitoring, and metrics only
 - **NOT used for control**: Only Xiaomi sensors drive temperature-based decisions
+- **Known Issue**: Netatmo sensors are **systematically inaccurate**, often reading 2-3°C higher than actual room temperature
 - **Purpose**:
   - Comparison and validation (detecting sensor drift)
   - Debugging and troubleshooting
@@ -35,9 +36,12 @@ The system monitors **two temperature sources** but only one drives control deci
 **Why Two Sources?**
 
 The Netatmo thermostat's built-in sensor is read from the API (`ThermMeasuredTemperature`) but intentionally **not used** for control because:
+- **Hardware inaccuracy**: Netatmo sensors consistently read higher than actual temperature (known defect)
 - Thermostats are often mounted near doors, corners, or heat sources (poor placement)
 - Xiaomi sensors can be positioned at optimal locations (center of room, away from drafts)
 - Built-in sensors may be influenced by the thermostat's own electronics
+
+**This is why the controller exists**: To compensate for Netatmo's faulty sensors by using accurate Xiaomi sensors as the source of truth.
 
 **Example Decision Log:**
 ```
@@ -172,8 +176,10 @@ calculatedSetpoint = min(scheduledTemp, thermostatMeasured - 0.5°C)
 **Rationale:**
 - The Netatmo uses its **own built-in sensor** to decide when to heat/cool
 - The built-in sensor often reads differently than the Xiaomi sensor (different location)
+- **Netatmo sensors are known to be faulty**, consistently reading 2-3°C higher than actual temperature
 - We must set a setpoint that triggers the correct action **on the Netatmo's sensor**
 - The **0.5°C offset** ensures the thermostat actually starts/stops heating
+- **Large offsets (2-5°C) are expected and normal** due to Netatmo's sensor inaccuracy - the algorithm compensates without limits
 
 **Example 1: Room Too Cold (Sensor Offset)**
 - Xiaomi reads: 23.6°C (too cold)
@@ -497,12 +503,12 @@ Why no override is needed:
 
 ### Scenario 6: Room Too Cold, Large Sensor Offset (Manual Override Required)
 
-This demonstrates a large offset where both sensors agree on direction (cold) but the magnitude requires intervention.
+This demonstrates a large offset where both sensors agree on direction (cold) but the magnitude requires intervention. **This is a common scenario** because Netatmo sensors are known to read 2-3°C higher than actual temperature.
 
 ```
 Input:
-- Xiaomi sensor: 20.0°C (authoritative - room is cold)
-- Netatmo thermostat sensor: 24.0°C (reads 4°C warmer - very poor placement)
+- Xiaomi sensor: 20.0°C (authoritative - room is cold, accurate reading)
+- Netatmo thermostat sensor: 24.0°C (reads 4°C warmer - FAULTY SENSOR)
 - Scheduled temperature: 22.0°C
 - Threshold: 0.5°C
 
@@ -525,9 +531,54 @@ Result:
 - Override expires after 10 minutes, returns to schedule
 
 Note:
-- Large sensor offset (4°C difference) requires significant compensation
-- Even though both sensors agree room is cold, the offset prevents natural heating
-- Without override: Schedule would be 22°C, but thermostat reads 24°C → no heating
+- Large sensor offset (4°C difference) is **EXPECTED** due to Netatmo's faulty sensors
+- This is exactly why this controller exists - to compensate for broken Netatmo sensors
+- The algorithm has **no upper limit** on offset compensation because large offsets are normal
+- Without override: Schedule would be 22°C, but thermostat reads 24°C → no heating (room stays cold)
+```
+
+### Scenario 6b: Extreme Large Sensor Offset (Real-World Example)
+
+This is a real scenario that was logged in production, demonstrating why unlimited offset compensation is necessary.
+
+```
+Input:
+- Xiaomi sensor: 23.5°C (authoritative - room slightly cold)
+- Netatmo thermostat sensor: 26.0°C (reads 2.5°C warmer - FAULTY SENSOR)
+- Scheduled temperature: 24.0°C
+- Threshold: 0.3°C
+
+The Problem (Before Fix):
+The system previously had a "safety check" that would skip adjustment when sensors disagreed about
+whether the room was above/below target. This caused the following bad behavior:
+- Xiaomi: 23.5°C < 24.0°C (room is cold, needs heating)
+- Netatmo: 26.0°C > 24.0°C (thermostat thinks room is warm)
+- Old logic: SKIP adjustment (sensors disagree)
+- Result: Room stays cold ❌
+
+Our Algorithm's Solution (After Fix):
+- tempDiff = 23.5 - 24.0 = -0.5°C
+- abs(-0.5) > 0.3 ✓ (exceeds threshold)
+- Room is too cold, so: calculatedSetpoint = max(24.0, 26.0 + 0.5)
+- calculatedSetpoint = max(24.0, 26.5) = 26.5°C
+- calculatedSetpoint != scheduledTemp (26.5 != 24.0)
+
+Decision: Set manual override to 26.5°C for 10 minutes
+Reason: "xiaomi=23.5°C, target=24.0°C, diff=-0.50°C"
+
+Result:
+- Override sent: 26.5°C
+- Netatmo sees: its sensor reads 26.0°C, target is 26.5°C
+- Netatmo decision: 26.0 < 26.5 → START HEATING ✓
+- Room heats up from actual 23.5°C
+- When Netatmo sensor reaches 26.5°C, Xiaomi should read ~24.0°C ✓
+- Override expires after 10 minutes, returns to schedule
+
+Why This Works:
+- Xiaomi is ALWAYS the source of truth
+- Netatmo's faulty sensor reading is irrelevant for decision-making
+- The algorithm compensates for ANY size offset (no limits)
+- This is the entire purpose of this controller
 ```
 
 ### Scenario 7: Within Threshold - No Action Required

@@ -737,3 +737,94 @@ func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
 	t.Logf("  xiaomi=%.1f°C, scheduled=%.1f°C, thermostat_measured=%.1f°C",
 		decision.XiaomiTemperature, decision.ScheduledTemp, decision.ThermostatMeasured)
 }
+
+// TestLargeSensorOffsetCompensation tests that the controller compensates for large sensor offsets
+// by using Xiaomi as the source of truth, even when Netatmo reads significantly higher
+func TestLargeSensorOffsetCompensation(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	cfg := &config.ThermostatControlConfig{
+		Enabled:                 true,
+		TemperatureThreshold:    0.3, // Low threshold to trigger action
+		ControlIntervalSeconds:  60,
+		RecheckDelayMinutes:     5,
+		OverrideDurationMinutes: 10,
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Hol", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
+		},
+	}
+
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+
+	// Initialize state (no recheck delay, so evaluation will proceed)
+	c.stateMu.Lock()
+	c.stateByRoom["room1"] = &ThermostatState{
+		RoomID:          "room1",
+		RoomName:        "Hol",
+		NextRecheckTime: time.Now().Add(-1 * time.Minute), // Past time, no delay
+	}
+	c.stateMu.Unlock()
+
+	// Add sensor reading: Xiaomi shows 23.5°C (below 24°C target)
+	now := time.Now()
+	controlBuffer.Add(&buffer.Reading{
+		Type: buffer.ReadingTypeBLE,
+		BLE: &buffer.SensorReading{
+			Timestamp:          now,
+			MAC:                "AA:BB:CC:DD:EE:FF",
+			TemperatureCelsius: 23.5,
+		},
+	})
+
+	// Create room status: Netatmo shows 26°C (2.5°C offset from Xiaomi)
+	roomStatusMap := map[string]*netatmo.RoomStatus{
+		"room1": {
+			ID:                       "room1",
+			Reachable:                true,
+			ThermMeasuredTemperature: 26.0, // Large offset: 2.5°C higher than Xiaomi
+			ThermSetpointTemperature: 24.0, // Scheduled target
+			ThermSetpointMode:        "schedule",
+			ThermSetpointEndTime:     0,
+			ThermSetpointStartTime:   0,
+		},
+	}
+
+	// Evaluate room - should calculate setpoint to compensate for sensor offset
+	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
+
+	// Verify action is to set manual override
+	if decision.Action != "set_manual_override" {
+		t.Errorf("Expected action 'set_manual_override', got '%s'. Reason: %s", decision.Action, decision.Reason)
+	}
+
+	// Verify calculated setpoint compensates for sensor offset
+	// Xiaomi reads 23.5°C (0.5°C below target of 24°C)
+	// Netatmo reads 26°C (2°C above target)
+	// To make Xiaomi reach 24°C, we need to set Netatmo higher
+	// calculatedSetpoint = max(scheduledTemp, thermostatMeasured + 0.5)
+	// calculatedSetpoint = max(24, 26 + 0.5) = 26.5°C
+	expectedSetpoint := 26.5
+	if decision.CalculatedSetpoint != expectedSetpoint {
+		t.Errorf("CalculatedSetpoint = %.1f, want %.1f", decision.CalculatedSetpoint, expectedSetpoint)
+	}
+
+	// Verify temperature fields
+	if decision.XiaomiTemperature != 23.5 {
+		t.Errorf("XiaomiTemperature = %.1f, want 23.5", decision.XiaomiTemperature)
+	}
+	if decision.ThermostatMeasured != 26.0 {
+		t.Errorf("ThermostatMeasured = %.1f, want 26.0", decision.ThermostatMeasured)
+	}
+	if decision.ScheduledTemp != 24.0 {
+		t.Errorf("ScheduledTemp = %.1f, want 24.0", decision.ScheduledTemp)
+	}
+
+	t.Logf("✓ Large sensor offset compensation test passed:")
+	t.Logf("  Xiaomi: %.1f°C (source of truth)", decision.XiaomiTemperature)
+	t.Logf("  Netatmo measured: %.1f°C (%.1f°C offset)", decision.ThermostatMeasured, decision.ThermostatMeasured-decision.XiaomiTemperature)
+	t.Logf("  Target: %.1f°C", decision.ScheduledTemp)
+	t.Logf("  Calculated setpoint: %.1f°C (compensates for offset)", decision.CalculatedSetpoint)
+	t.Logf("  Reason: %s", decision.Reason)
+}

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
+	"go.uber.org/zap"
 )
 
 // ControlMetrics represents metrics for a control decision that should be pushed to Prometheus
@@ -23,6 +24,15 @@ type ControlMetrics struct {
 
 // pushControlMetrics pushes control decision metrics to the metrics buffer
 func (c *Controller) pushControlMetrics(decision ControlDecision, hardOverrideActive bool, externallyModified bool) {
+	// Skip pushing metrics if XiaomiTemperature is 0 (indicates error or no sensor data)
+	// This prevents pushing invalid metrics when sensor data is unavailable
+	if decision.XiaomiTemperature == 0 {
+		c.logger.Debug("skipping control metrics push: sensor temperature is 0 (no data or error)",
+			zap.String("room_name", decision.RoomName),
+		)
+		return
+	}
+
 	// Calculate derived metrics
 	tempDiff := decision.XiaomiTemperature - decision.ThermostatMeasured
 	setpointAdj := 0.0
