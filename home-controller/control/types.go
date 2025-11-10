@@ -36,13 +36,14 @@ type SensorReading struct {
 
 // ControlDecision represents a decision made by the control algorithm
 type ControlDecision struct {
-	RoomID             string
-	RoomName           string
-	Action             string  // "skip", "no_adjustment_needed", "set_manual_override"
-	Reason             string  // Human-readable reason for the action
-	XiaomiTemperature  float64 // Weighted average from sensor
-	ScheduledTemp      float64 // Target temperature (from schedule or hard override)
-	ThermostatMeasured float64 // Temperature reported by thermostat
-	CalculatedSetpoint float64 // New setpoint (if action is set_manual_override)
-	OverrideEndTime    int64   // Unix timestamp for override expiration
+	RoomID              string
+	RoomName            string
+	Action              string  // "skip", "no_adjustment_needed", "set_manual_override"
+	Reason              string  // Human-readable reason for the action
+	XiaomiTemperature   float64 // Weighted average from sensor
+	ScheduledTemp       float64 // Target temperature from Netatmo schedule (when in "schedule" mode)
+	SetpointTemperature float64 // Current setpoint temperature (could be schedule or manual override)
+	ThermostatMeasured  float64 // Temperature reported by thermostat's built-in sensor
+	CalculatedSetpoint  float64 // New setpoint (if action is set_manual_override)
+	OverrideEndTime     int64   // Unix timestamp for override expiration
 }

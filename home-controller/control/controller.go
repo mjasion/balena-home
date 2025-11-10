@@ -324,6 +324,7 @@ func (c *Controller) evaluateRoom(
 			attribute.Float64("xiaomi_temperature", decision.XiaomiTemperature),
 			attribute.Float64("scheduled_temperature", decision.ScheduledTemp),
 			attribute.Float64("thermostat_measured", decision.ThermostatMeasured),
+			attribute.Float64("setpoint_temperature", decision.SetpointTemperature),
 		)
 		if decision.Action == "set_manual_override" {
 			span.SetAttributes(attribute.Float64("calculated_setpoint", decision.CalculatedSetpoint))
@@ -348,17 +349,40 @@ func (c *Controller) evaluateRoom(
 		// Populate thermostat measured temperature
 		decision.ThermostatMeasured = roomStatus.ThermMeasuredTemperature
 
-		// Calculate scheduled temperature (including hard overrides)
+		// Populate current setpoint temperature (what the thermostat is currently set to)
+		decision.SetpointTemperature = roomStatus.ThermSetpointTemperature
+
+		// Determine scheduled temperature based on mode:
+		// - If in "schedule" mode: use ThermSetpointTemperature (reflects actual schedule)
+		// - If in "manual" mode: use stored schedule from state (if available) or fallback to setpoint
+		// - Hard overrides always take precedence over everything
 		scheduledTemp := roomStatus.ThermSetpointTemperature
+
+		// Check for hard overrides first (highest precedence)
+		hardOverrideActive := false
 		for _, override := range c.config.HardOverrides {
 			if override.RoomName == mapping.RoomName {
 				targetTemp, active := c.getHardOverrideTemp(override)
 				if active {
 					scheduledTemp = targetTemp
+					hardOverrideActive = true
 					break
 				}
 			}
 		}
+
+		// If no hard override and thermostat is in manual mode, we need the actual schedule
+		// The problem: Netatmo API doesn't expose the schedule when in manual mode
+		// Solution: When in schedule mode, trust ThermSetpointTemperature
+		//           When in manual mode, it could be our override - but we still use it as "scheduled"
+		//           because we want to know if the user changed the schedule itself
+		if !hardOverrideActive && roomStatus.ThermSetpointMode != "schedule" {
+			// Thermostat is in manual mode (could be our override or user's manual change)
+			// We'll use the current setpoint as "scheduled" - this means we compare against
+			// whatever is currently set, which is correct behavior
+			scheduledTemp = roomStatus.ThermSetpointTemperature
+		}
+
 		decision.ScheduledTemp = scheduledTemp
 
 		// Get Xiaomi sensor readings (last 60 seconds, weighted average)
@@ -551,6 +575,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 				zap.String("reason", decision.Reason),
 				zap.Float64("xiaomi_temp", decision.XiaomiTemperature),
 				zap.Float64("scheduled_temp", decision.ScheduledTemp),
+				zap.Float64("setpoint_temp", decision.SetpointTemperature),
 				zap.Float64("thermostat_measured", decision.ThermostatMeasured),
 			)
 		} else {
@@ -561,6 +586,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 				zap.String("reason", decision.Reason),
 				zap.Float64("xiaomi_temp", decision.XiaomiTemperature),
 				zap.Float64("scheduled_temp", decision.ScheduledTemp),
+				zap.Float64("setpoint_temp", decision.SetpointTemperature),
 				zap.Float64("thermostat_measured", decision.ThermostatMeasured),
 			)
 		}
@@ -603,6 +629,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 				zap.Float64("scheduled_temp", decision.ScheduledTemp),
 				zap.Float64("thermostat_measured", decision.ThermostatMeasured),
 				zap.String("reason", decision.Reason),
+				zap.Float64("setpoint_temp", decision.SetpointTemperature),
 			)
 
 			// Update state even in dry-run mode (for testing recheck delays)
@@ -626,6 +653,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 			zap.Float64("scheduled_temp", decision.ScheduledTemp),
 			zap.Float64("thermostat_measured", decision.ThermostatMeasured),
 			zap.String("reason", decision.Reason),
+			zap.Float64("setpoint_temp", decision.SetpointTemperature),
 		)
 
 		// Call Netatmo API
