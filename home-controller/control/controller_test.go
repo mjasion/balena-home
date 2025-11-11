@@ -1060,7 +1060,7 @@ func TestCancelOverride(t *testing.T) {
 			ID:                       "room1",
 			Reachable:                true,
 			ThermMeasuredTemperature: 24.5,
-			ThermSetpointTemperature: 24.0,
+			ThermSetpointTemperature: 26.0, // Setpoint > measured (heating still active, needs to be turned down)
 			ThermSetpointMode:        "manual",
 			ThermSetpointEndTime:     time.Now().Add(30 * time.Minute).Unix(),
 		},
@@ -1219,7 +1219,7 @@ func TestEvaluateRoom_SkipUnchangedSetpoint(t *testing.T) {
 		RoomID:                roomID,
 		RoomName:              "Living Room",
 		OriginalScheduledTemp: 24.0,
-		LastSetpoint:          24.0, // Last sent setpoint
+		LastSetpoint:          25.5, // Last sent setpoint = 25.5
 		LastSetpointTime:      time.Now().Add(-3 * time.Minute),
 		ScheduleEndTime:       time.Now().Add(1 * time.Hour),
 	}
@@ -1227,7 +1227,7 @@ func TestEvaluateRoom_SkipUnchangedSetpoint(t *testing.T) {
 
 	// Add Xiaomi sensor reading (room too warm: 24.9°C > 24.5°C threshold)
 	// This will trigger "room too warm" logic which calculates: thermostat_measured - 0.5
-	// With thermostat_measured = 24.5, calculated setpoint = 24.0°C
+	// With thermostat_measured = 26.0, calculated setpoint = 25.5°C
 	now := time.Now()
 	controlBuffer.Add(&buffer.Reading{
 		Type: buffer.ReadingTypeBLE,
@@ -1239,12 +1239,13 @@ func TestEvaluateRoom_SkipUnchangedSetpoint(t *testing.T) {
 	})
 
 	// Create room status map
+	// Note: setpoint (26.0) > measured (26.0) so heating is active (trying to maintain)
 	roomStatusMap := map[string]*netatmo.RoomStatus{
 		roomID: {
 			ID:                       roomID,
 			Reachable:                true,
-			ThermMeasuredTemperature: 24.5, // Netatmo sensor reading
-			ThermSetpointTemperature: 24.0, // Current setpoint matches last sent
+			ThermMeasuredTemperature: 26.0, // Netatmo sensor reading
+			ThermSetpointTemperature: 26.0, // Setpoint equals measured (reached target, but still "on")
 			ThermSetpointMode:        "manual",
 			ThermSetpointEndTime:     time.Now().Add(1 * time.Hour).Unix(),
 		},
@@ -1254,7 +1255,7 @@ func TestEvaluateRoom_SkipUnchangedSetpoint(t *testing.T) {
 	ctx := context.Background()
 	decision := c.evaluateRoom(ctx, cfg.Mappings[0], roomStatusMap)
 
-	// Should skip API call because calculated setpoint (24.0) == last setpoint (24.0)
+	// Should skip API call because calculated setpoint (25.5) == last setpoint (25.5)
 	if decision.Action != "no_adjustment_needed" {
 		t.Errorf("Expected action 'no_adjustment_needed', got '%s'", decision.Action)
 	}
@@ -1263,14 +1264,14 @@ func TestEvaluateRoom_SkipUnchangedSetpoint(t *testing.T) {
 		t.Errorf("Expected reason to contain 'setpoint unchanged', got: %s", decision.Reason)
 	}
 
-	if decision.CalculatedSetpoint != 24.0 {
-		t.Errorf("Expected calculated setpoint 24.0, got %.1f", decision.CalculatedSetpoint)
+	if decision.CalculatedSetpoint != 25.5 {
+		t.Errorf("Expected calculated setpoint 25.5, got %.1f", decision.CalculatedSetpoint)
 	}
 
 	t.Logf("✓ Skip unchanged setpoint test passed:")
 	t.Logf("  Room too warm (xiaomi=24.9°C > scheduled=24.0°C)")
 	t.Logf("  Calculated setpoint: %.1f°C", decision.CalculatedSetpoint)
-	t.Logf("  Last setpoint: 24.0°C")
+	t.Logf("  Last setpoint: 25.5°C")
 	t.Logf("  Action: %s (no API call)", decision.Action)
 	t.Logf("  Reason: %s", decision.Reason)
 }
@@ -1361,5 +1362,92 @@ func TestEvaluateRoom_SendChangedSetpoint(t *testing.T) {
 	t.Logf("  Calculated setpoint: %.1f°C", decision.CalculatedSetpoint)
 	t.Logf("  Last setpoint: 25.0°C")
 	t.Logf("  Action: %s (API call will be made)", decision.Action)
+	t.Logf("  Reason: %s", decision.Reason)
+}
+
+// TestEvaluateRoom_SkipWhenHeatingAlreadyOff tests that the controller skips action
+// when room is too warm but setpoint is already below thermostat_measured (heating off)
+func TestEvaluateRoom_SkipWhenHeatingAlreadyOff(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	roomID := "room1"
+	sensorMAC := "AA:BB:CC:DD:EE:FF"
+
+	cfg := &config.ThermostatControlConfig{
+		Enabled:                          true,
+		TemperatureThreshold:             0.5,
+		ControlIntervalSeconds:           60,
+		ManualModeTakeoverMinutes:        60,
+		ExternalModificationResetMinutes: 5,
+		MinSetpointCelsius:               7.0,
+		MaxSetpointCelsius:               30.0,
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Bathroom", SensorMAC: sensorMAC, RoomID: roomID},
+		},
+	}
+
+	client := netatmo.NewClient("test-client-id", "test-secret", "test-refresh-token")
+	c := New(cfg, client, controlBuffer, metricsBuffer, logger)
+
+	// Initialize state with a previous command sent 3 minutes ago
+	c.stateMu.Lock()
+	c.stateByRoom[roomID] = &ThermostatState{
+		RoomID:                roomID,
+		RoomName:              "Bathroom",
+		OriginalScheduledTemp: 24.0,
+		LastSetpoint:          26.0,
+		LastSetpointTime:      time.Now().Add(-3 * time.Minute),
+		ScheduleEndTime:       time.Now().Add(1 * time.Hour),
+	}
+	c.stateMu.Unlock()
+
+	// Add Xiaomi sensor reading - room too warm (26°C > 24°C target)
+	now := time.Now()
+	controlBuffer.Add(&buffer.Reading{
+		Type: buffer.ReadingTypeBLE,
+		BLE: &buffer.SensorReading{
+			Timestamp:          now,
+			MAC:                strings.ToUpper(sensorMAC),
+			TemperatureCelsius: 26.0,
+		},
+	})
+
+	// Create room status map
+	// Key: setpoint (24) < thermostat_measured (26.5) - heating already off!
+	roomStatusMap := map[string]*netatmo.RoomStatus{
+		roomID: {
+			ID:                       roomID,
+			Reachable:                true,
+			ThermMeasuredTemperature: 26.5, // Thermostat measures high
+			ThermSetpointTemperature: 24.0, // But setpoint is low - heating off
+			ThermSetpointMode:        "manual",
+			ThermSetpointEndTime:     time.Now().Add(1 * time.Hour).Unix(),
+		},
+	}
+
+	// Evaluate room
+	ctx := context.Background()
+	decision := c.evaluateRoom(ctx, cfg.Mappings[0], roomStatusMap)
+
+	// Should skip because heating is already off (setpoint < measured)
+	if decision.Action != "skip" {
+		t.Errorf("Expected action 'skip', got '%s'", decision.Action)
+	}
+
+	if !strings.Contains(decision.Reason, "heating already off") {
+		t.Errorf("Expected reason to contain 'heating already off', got: %s", decision.Reason)
+	}
+
+	if !strings.Contains(decision.Reason, "letting cool naturally") {
+		t.Errorf("Expected reason to contain 'letting cool naturally', got: %s", decision.Reason)
+	}
+
+	t.Logf("✓ Skip when heating already off test passed:")
+	t.Logf("  Room too warm: xiaomi=26.0°C > scheduled=24.0°C")
+	t.Logf("  Setpoint: 24.0°C < Thermostat measured: 26.5°C")
+	t.Logf("  Heating already off, letting room cool naturally")
+	t.Logf("  Action: %s (no API call)", decision.Action)
 	t.Logf("  Reason: %s", decision.Reason)
 }

@@ -500,15 +500,24 @@ func (c *Controller) evaluateRoom(
 	// Calculate temperature difference
 	tempDiff := xiaomiTemp - scheduledTemp
 
-	// CASE 1: Room too warm - actively cool down
+	// CASE 1: Room too warm - skip if setpoint already low enough
 	if tempDiff > c.config.TemperatureThreshold {
-		span.AddEvent("v2_cancel_override",
+		span.AddEvent("v2_room_too_warm",
 			trace.WithAttributes(
 				attribute.Float64("temp_diff", tempDiff),
 				attribute.String("reason", "room_too_warm"),
 			),
 		)
-		// Actively cool: set 0.5°C below current thermostat reading
+
+		// If setpoint is already below thermostat_measured, heating is off - skip action
+		if decision.SetpointTemperature < decision.ThermostatMeasured {
+			decision.Action = "skip"
+			decision.Reason = fmt.Sprintf("room too warm but heating already off: xiaomi=%.1f°C > scheduled=%.1f°C, setpoint=%.1f°C < measured=%.1f°C, letting cool naturally",
+				xiaomiTemp, scheduledTemp, decision.SetpointTemperature, decision.ThermostatMeasured)
+			return decision
+		}
+
+		// Otherwise, actively cool: set 0.5°C below current thermostat reading
 		calculatedSetpoint := roomStatus.ThermMeasuredTemperature - 0.5
 
 		// Skip API call if setpoint hasn't changed
