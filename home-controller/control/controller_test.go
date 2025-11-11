@@ -22,8 +22,8 @@ func TestControllerConstructor(t *testing.T) {
 		Enabled:                          true,
 		TemperatureThreshold:             0.5,
 		ControlIntervalSeconds:           60,
-		RecheckDelayMinutes:              5,
-		OverrideDurationMinutes:          10,
+		ExtensionThresholdMinutes:        2,
+		OverrideDurationMinutes:          30,
 		ExternalModificationResetMinutes: 5,
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
@@ -623,7 +623,7 @@ func TestStateCopy(t *testing.T) {
 		RoomName:                 "Living Room",
 		LastSetpoint:             21.0,
 		LastSetpointTime:         time.Now(),
-		NextRecheckTime:          time.Now().Add(5 * time.Minute),
+		OverrideEndTime:          time.Now().Add(30 * time.Minute),
 		ExternallyModified:       true,
 		ExternalModificationTime: time.Now().Add(-1 * time.Hour),
 	}
@@ -646,18 +646,18 @@ func TestStateCopy(t *testing.T) {
 }
 
 // TestTemperatureFieldsPopulatedDuringSkip verifies that temperature fields
-// are populated in ControlDecision even when action is "skip" (e.g., during recheck delay)
+// are populated in ControlDecision even when action is "skip" (e.g., external modification)
 func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	controlBuffer := buffer.New(100, logger)
 	metricsBuffer := buffer.New(100, logger)
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled:                 true,
-		TemperatureThreshold:    0.5,
-		ControlIntervalSeconds:  60,
-		RecheckDelayMinutes:     5,
-		OverrideDurationMinutes: 10,
+		Enabled:                   true,
+		TemperatureThreshold:      0.5,
+		ControlIntervalSeconds:    60,
+		ExtensionThresholdMinutes: 2,
+		OverrideDurationMinutes:   30,
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
 		},
@@ -665,12 +665,12 @@ func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
 
 	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
 
-	// Initialize state with next recheck time in the future (will trigger skip)
+	// Initialize state with externally modified flag (will trigger skip)
 	c.stateMu.Lock()
 	c.stateByRoom["room1"] = &ThermostatState{
-		RoomID:          "room1",
-		RoomName:        "Living Room",
-		NextRecheckTime: time.Now().Add(5 * time.Minute), // Future time -> skip
+		RoomID:             "room1",
+		RoomName:           "Living Room",
+		ExternallyModified: true, // Will trigger skip
 	}
 	c.stateMu.Unlock()
 
@@ -685,20 +685,20 @@ func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
 		},
 	})
 
-	// Create room status map with thermostat data
+	// Create room status map with thermostat in manual mode (keeps external modification active)
 	roomStatusMap := map[string]*netatmo.RoomStatus{
 		"room1": {
 			ID:                       "room1",
 			Reachable:                true,
 			ThermMeasuredTemperature: 24.2,
 			ThermSetpointTemperature: 22.0,
-			ThermSetpointMode:        "schedule",
+			ThermSetpointMode:        "manual", // Manual mode keeps external modification flag
 			ThermSetpointEndTime:     0,
 			ThermSetpointStartTime:   0,
 		},
 	}
 
-	// Evaluate room - should skip due to recheck delay but populate temperatures
+	// Evaluate room - should skip due to external modification but populate temperatures
 	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
 
 	// Verify action is skip
@@ -706,9 +706,9 @@ func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
 		t.Errorf("Expected action 'skip', got '%s'", decision.Action)
 	}
 
-	// Verify reason contains recheck delay
-	if !strings.Contains(decision.Reason, "waiting until next recheck time") {
-		t.Errorf("Expected reason to mention recheck delay, got: %s", decision.Reason)
+	// Verify reason contains external modification
+	if !strings.Contains(decision.Reason, "externally modified") {
+		t.Errorf("Expected reason to mention external modification, got: %s", decision.Reason)
 	}
 
 	// THE FIX: Verify temperature fields are populated (not zero)
@@ -738,6 +738,163 @@ func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
 		decision.XiaomiTemperature, decision.ScheduledTemp, decision.ThermostatMeasured)
 }
 
+// TestOverrideExtension tests that the controller extends existing overrides
+// when they are about to expire and temperature still requires control
+func TestOverrideExtension(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	cfg := &config.ThermostatControlConfig{
+		Enabled:                   true,
+		TemperatureThreshold:      0.3,
+		ControlIntervalSeconds:    60,
+		ExtensionThresholdMinutes: 2,  // Extend when < 2 minutes left
+		OverrideDurationMinutes:   30, // Each override lasts 30 minutes
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
+		},
+	}
+
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+
+	// Initialize state with an override that's about to expire (1 minute left)
+	c.stateMu.Lock()
+	c.stateByRoom["room1"] = &ThermostatState{
+		RoomID:          "room1",
+		RoomName:        "Living Room",
+		LastSetpoint:    24.0,
+		LastSetpointTime: time.Now().Add(-29 * time.Minute), // Sent 29 minutes ago
+		OverrideEndTime: time.Now().Add(1 * time.Minute),    // Expires in 1 minute
+	}
+	c.stateMu.Unlock()
+
+	// Add sensor reading: Xiaomi shows 23.5°C (below 24°C target)
+	now := time.Now()
+	controlBuffer.Add(&buffer.Reading{
+		Type: buffer.ReadingTypeBLE,
+		BLE: &buffer.SensorReading{
+			Timestamp:          now,
+			MAC:                "AA:BB:CC:DD:EE:FF",
+			TemperatureCelsius: 23.5,
+		},
+	})
+
+	// Create room status: Temperature still requires control
+	roomStatusMap := map[string]*netatmo.RoomStatus{
+		"room1": {
+			ID:                       "room1",
+			Reachable:                true,
+			ThermMeasuredTemperature: 26.0, // Netatmo sensor offset
+			ThermSetpointTemperature: 24.0, // Current setpoint matches last command
+			ThermSetpointMode:        "manual",
+			ThermSetpointEndTime:     0,
+			ThermSetpointStartTime:   0,
+		},
+	}
+
+	// Evaluate room - should extend override
+	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
+
+	// Verify action is set_manual_override (extension)
+	if decision.Action != "set_manual_override" {
+		t.Errorf("Expected action 'set_manual_override', got '%s'", decision.Action)
+	}
+
+	// Verify reason mentions extension
+	if !strings.Contains(decision.Reason, "extending") {
+		t.Errorf("Expected reason to mention 'extending', got: %s", decision.Reason)
+	}
+
+	// Verify calculated setpoint makes sense
+	if decision.CalculatedSetpoint == 0 {
+		t.Error("Expected CalculatedSetpoint to be non-zero")
+	}
+
+	t.Logf("✓ Override extension test passed:")
+	t.Logf("  Override was about to expire (1 minute left)")
+	t.Logf("  Temperature still requires control: xiaomi=%.1f°C, target=%.1f°C",
+		decision.XiaomiTemperature, decision.ScheduledTemp)
+	t.Logf("  System extended override with new setpoint: %.1f°C", decision.CalculatedSetpoint)
+	t.Logf("  Reason: %s", decision.Reason)
+}
+
+// TestOverrideNotExtendedWhenNotNeeded tests that the controller does not extend
+// overrides when there is plenty of time left
+func TestOverrideNotExtendedWhenNotNeeded(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	cfg := &config.ThermostatControlConfig{
+		Enabled:                   true,
+		TemperatureThreshold:      0.3,
+		ControlIntervalSeconds:    60,
+		ExtensionThresholdMinutes: 2,  // Extend when < 2 minutes left
+		OverrideDurationMinutes:   30, // Each override lasts 30 minutes
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
+		},
+	}
+
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+
+	// Initialize state with an override that has plenty of time left (25 minutes)
+	c.stateMu.Lock()
+	c.stateByRoom["room1"] = &ThermostatState{
+		RoomID:           "room1",
+		RoomName:         "Living Room",
+		LastSetpoint:     24.0,
+		LastSetpointTime: time.Now().Add(-5 * time.Minute),  // Sent 5 minutes ago
+		OverrideEndTime:  time.Now().Add(25 * time.Minute), // Expires in 25 minutes
+	}
+	c.stateMu.Unlock()
+
+	// Add sensor reading: Temperature matches target (no action needed)
+	now := time.Now()
+	controlBuffer.Add(&buffer.Reading{
+		Type: buffer.ReadingTypeBLE,
+		BLE: &buffer.SensorReading{
+			Timestamp:          now,
+			MAC:                "AA:BB:CC:DD:EE:FF",
+			TemperatureCelsius: 24.1, // Close to target
+		},
+	})
+
+	// Create room status
+	roomStatusMap := map[string]*netatmo.RoomStatus{
+		"room1": {
+			ID:                       "room1",
+			Reachable:                true,
+			ThermMeasuredTemperature: 24.5,
+			ThermSetpointTemperature: 24.0,
+			ThermSetpointMode:        "manual",
+			ThermSetpointEndTime:     0,
+			ThermSetpointStartTime:   0,
+		},
+	}
+
+	// Evaluate room - should not extend (temperature is within threshold)
+	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
+
+	// Verify action is no_adjustment_needed
+	if decision.Action != "no_adjustment_needed" {
+		t.Errorf("Expected action 'no_adjustment_needed', got '%s'", decision.Action)
+	}
+
+	// Verify reason does NOT mention extension
+	if strings.Contains(decision.Reason, "extending") {
+		t.Errorf("Expected reason NOT to mention 'extending', got: %s", decision.Reason)
+	}
+
+	t.Logf("✓ Override not extended when not needed test passed:")
+	t.Logf("  Override has plenty of time left (25 minutes)")
+	t.Logf("  Temperature within threshold: xiaomi=%.1f°C, target=%.1f°C, diff=%.2f°C",
+		decision.XiaomiTemperature, decision.ScheduledTemp,
+		decision.XiaomiTemperature-decision.ScheduledTemp)
+	t.Logf("  No extension needed, action: %s", decision.Action)
+}
+
 // TestLargeSensorOffsetCompensation tests that the controller compensates for large sensor offsets
 // by using Xiaomi as the source of truth, even when Netatmo reads significantly higher
 func TestLargeSensorOffsetCompensation(t *testing.T) {
@@ -746,11 +903,11 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 	metricsBuffer := buffer.New(100, logger)
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled:                 true,
-		TemperatureThreshold:    0.3, // Low threshold to trigger action
-		ControlIntervalSeconds:  60,
-		RecheckDelayMinutes:     5,
-		OverrideDurationMinutes: 10,
+		Enabled:                   true,
+		TemperatureThreshold:      0.3, // Low threshold to trigger action
+		ControlIntervalSeconds:    60,
+		ExtensionThresholdMinutes: 2,
+		OverrideDurationMinutes:   30,
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Hol", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
 		},
@@ -758,12 +915,11 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 
 	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
 
-	// Initialize state (no recheck delay, so evaluation will proceed)
+	// Initialize state (evaluation will proceed normally)
 	c.stateMu.Lock()
 	c.stateByRoom["room1"] = &ThermostatState{
-		RoomID:          "room1",
-		RoomName:        "Hol",
-		NextRecheckTime: time.Now().Add(-1 * time.Minute), // Past time, no delay
+		RoomID:   "room1",
+		RoomName: "Hol",
 	}
 	c.stateMu.Unlock()
 

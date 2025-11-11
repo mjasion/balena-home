@@ -10,7 +10,7 @@ type ThermostatState struct {
 	RoomName                 string
 	LastSetpoint             float64   // Last setpoint we commanded
 	LastSetpointTime         time.Time // When we sent the last command
-	NextRecheckTime          time.Time // When to re-evaluate (after delay)
+	OverrideEndTime          time.Time // When the current override expires
 	ExternallyModified       bool      // Flag indicating manual override detected
 	ExternalModificationTime time.Time // When external modification was detected
 }
@@ -22,7 +22,7 @@ func (s *ThermostatState) Copy() ThermostatState {
 		RoomName:                 s.RoomName,
 		LastSetpoint:             s.LastSetpoint,
 		LastSetpointTime:         s.LastSetpointTime,
-		NextRecheckTime:          s.NextRecheckTime,
+		OverrideEndTime:          s.OverrideEndTime,
 		ExternallyModified:       s.ExternallyModified,
 		ExternalModificationTime: s.ExternalModificationTime,
 	}

@@ -420,13 +420,19 @@ func (c *Controller) evaluateRoom(
 		}
 	}
 
-	// Check if we're in recheck delay period
-	if time.Now().Before(stateCopy.NextRecheckTime) {
-		warsawTime := stateCopy.NextRecheckTime.In(c.warsawLocation())
-		minutesLeft := int(time.Until(stateCopy.NextRecheckTime).Minutes())
-		decision.Reason = fmt.Sprintf("waiting until next recheck time (%s, %d minutes left)",
-			warsawTime.Format("15:04:05"), minutesLeft)
-		return decision
+	// Check if we should extend an existing override
+	// Extension happens when:
+	// 1. We previously sent an override (OverrideEndTime is set)
+	// 2. The override is about to expire (within extensionThresholdMinutes)
+	// 3. Temperature still requires control
+	shouldExtend := false
+	var timeUntilExpiry time.Duration
+	if !stateCopy.OverrideEndTime.IsZero() {
+		timeUntilExpiry = time.Until(stateCopy.OverrideEndTime)
+		extensionThreshold := time.Duration(c.config.ExtensionThresholdMinutes) * time.Minute
+		if timeUntilExpiry > 0 && timeUntilExpiry < extensionThreshold {
+			shouldExtend = true
+		}
 	}
 
 	// Validate room status is available and reachable for control decisions
@@ -511,11 +517,20 @@ func (c *Controller) evaluateRoom(
 	}
 
 	// Check if setpoint matches schedule (within 0.1°C tolerance)
-	// If so, no need for manual override
+	// If so, normally no need for manual override
+	// EXCEPTION: If we need to extend an existing override, send it anyway
 	if math.Abs(calculatedSetpoint-scheduledTemp) < 0.1 {
-		decision.Action = "no_adjustment_needed"
-		decision.Reason = fmt.Sprintf("calculated setpoint (%.1f°C) matches schedule, no override needed", calculatedSetpoint)
-		return decision
+		if !shouldExtend {
+			decision.Action = "no_adjustment_needed"
+			decision.Reason = fmt.Sprintf("calculated setpoint (%.1f°C) matches schedule, no override needed", calculatedSetpoint)
+			return decision
+		}
+		// Override is about to expire and needs extension
+		c.logger.Debug("extending override even though setpoint matches schedule",
+			zap.String("room_name", mapping.RoomName),
+			zap.Float64("calculated_setpoint", calculatedSetpoint),
+			zap.Duration("time_until_expiry", timeUntilExpiry),
+		)
 	}
 
 
@@ -529,9 +544,16 @@ func (c *Controller) evaluateRoom(
 	decision.Action = "set_manual_override"
 	decision.CalculatedSetpoint = calculatedSetpoint
 	decision.OverrideEndTime = time.Now().Add(time.Duration(c.config.OverrideDurationMinutes) * time.Minute).Unix()
+
+	// Build reason message
+	reasonSuffix := ""
+	if hardOverrideActive {
+		reasonSuffix = " (hard override)"
+	} else if shouldExtend {
+		reasonSuffix = fmt.Sprintf(" (extending, %.0fm left)", timeUntilExpiry.Minutes())
+	}
 	decision.Reason = fmt.Sprintf("xiaomi=%.1f°C, target=%.1f°C, diff=%.2f°C%s",
-		xiaomiTemp, scheduledTemp, tempDiff,
-		map[bool]string{true: " (hard override)", false: ""}[hardOverrideActive])
+		xiaomiTemp, scheduledTemp, tempDiff, reasonSuffix)
 
 	// Detect external modification (if we previously sent a command)
 	// IMPORTANT: Only check for external modifications when thermostat is in MANUAL mode.
@@ -540,8 +562,7 @@ func (c *Controller) evaluateRoom(
 	//
 	// Also skip check if override duration has expired - the thermostat should naturally return to schedule.
 	timeSinceLastCommand := time.Since(stateCopy.LastSetpointTime)
-	overrideDuration := time.Duration(c.config.OverrideDurationMinutes) * time.Minute
-	overrideExpired := timeSinceLastCommand > overrideDuration
+	overrideExpired := !stateCopy.OverrideEndTime.IsZero() && time.Now().After(stateCopy.OverrideEndTime)
 
 	if !stateCopy.LastSetpointTime.IsZero() &&
 		timeSinceLastCommand > 2*time.Minute &&
@@ -550,7 +571,8 @@ func (c *Controller) evaluateRoom(
 		// Check if current setpoint differs from what we sent
 		delta := roomStatus.ThermSetpointTemperature - stateCopy.LastSetpoint
 		if math.Abs(delta) > 0.1 {
-			c.logger.Warn("external modification detected - backing off from automation indefinitely",
+			// Log override end time if available
+			logFields := []zap.Field{
 				zap.String("room_name", mapping.RoomName),
 				zap.Float64("expected_setpoint", stateCopy.LastSetpoint),
 				zap.Float64("actual_setpoint", roomStatus.ThermSetpointTemperature),
@@ -558,10 +580,16 @@ func (c *Controller) evaluateRoom(
 				zap.Duration("time_since_last_command", timeSinceLastCommand),
 				zap.Time("last_command_sent_at", stateCopy.LastSetpointTime.In(c.warsawLocation())),
 				zap.String("thermostat_mode", roomStatus.ThermSetpointMode),
-				zap.Duration("override_duration", overrideDuration),
 				zap.String("resume_condition", "automation will resume only when thermostat is switched back to 'schedule' mode"),
 				zap.String("reason", "thermostat was manually changed - respecting user preference indefinitely"),
-			)
+			}
+			if !stateCopy.OverrideEndTime.IsZero() {
+				logFields = append(logFields,
+					zap.Time("override_end_time", stateCopy.OverrideEndTime.In(c.warsawLocation())),
+					zap.Duration("time_until_expiry", time.Until(stateCopy.OverrideEndTime)),
+				)
+			}
+			c.logger.Warn("external modification detected - backing off from automation indefinitely", logFields...)
 			c.markExternallyModified(mapping.RoomID)
 			decision.Action = "skip"
 			decision.Reason = "external modification detected"
@@ -637,6 +665,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 
 		// Dry-run mode: log what would be sent but don't call API
 		if c.config.DryRun {
+			overrideEndTime := time.Unix(decision.OverrideEndTime, 0)
 			c.logger.Info("[DRY-RUN] WOULD set temperature (not actually sent)",
 				zap.String("trace_id", span.SpanContext().TraceID().String()),
 				zap.String("room_name", decision.RoomName),
@@ -650,14 +679,16 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 				zap.String("reason", decision.Reason),
 				zap.Float64("setpoint_temp", decision.SetpointTemperature),
 				zap.String("thermostat_mode", decision.ThermostatMode),
+				zap.Time("override_end_time", overrideEndTime.In(c.warsawLocation())),
+				zap.Duration("override_duration", time.Until(overrideEndTime)),
 			)
 
-			// Update state even in dry-run mode (for testing recheck delays)
+			// Update state even in dry-run mode (for testing override extension)
 			c.stateMu.Lock()
 			if state, exists := c.stateByRoom[decision.RoomID]; exists {
 				state.LastSetpoint = safeSetpoint
 				state.LastSetpointTime = time.Now()
-				state.NextRecheckTime = time.Now().Add(time.Duration(c.config.RecheckDelayMinutes) * time.Minute)
+				state.OverrideEndTime = overrideEndTime
 			}
 			c.stateMu.Unlock()
 			return
@@ -715,20 +746,21 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 		}
 
 		// Update state
+		overrideEndTime := time.Unix(decision.OverrideEndTime, 0)
 		c.stateMu.Lock()
 		if state, exists := c.stateByRoom[decision.RoomID]; exists {
 			state.LastSetpoint = safeSetpoint
 			state.LastSetpointTime = time.Now()
-			state.NextRecheckTime = time.Now().Add(time.Duration(c.config.RecheckDelayMinutes) * time.Minute)
+			state.OverrideEndTime = overrideEndTime
 		}
 		c.stateMu.Unlock()
 
-		nextRecheckTime := time.Now().Add(time.Duration(c.config.RecheckDelayMinutes) * time.Minute).In(c.warsawLocation())
 		c.logger.Info("thermostat override set successfully",
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
 			zap.String("room_name", decision.RoomName),
 			zap.Float64("setpoint", safeSetpoint),
-			zap.Time("next_recheck", nextRecheckTime),
+			zap.Time("override_end_time", overrideEndTime.In(c.warsawLocation())),
+			zap.Duration("override_duration", time.Until(overrideEndTime)),
 		)
 	}
 }

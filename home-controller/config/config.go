@@ -98,17 +98,17 @@ type LoggingConfig struct {
 
 // ThermostatControlConfig contains thermostat control configuration
 type ThermostatControlConfig struct {
-	Enabled                         bool                  `yaml:"enabled" env:"THERMOSTAT_CONTROL_ENABLED" env-default:"false"`
-	DryRun                          bool                  `yaml:"dryRun" env:"THERMOSTAT_CONTROL_DRY_RUN" env-default:"false"`
-	TemperatureThreshold            float64               `yaml:"temperatureThreshold" env:"TEMPERATURE_THRESHOLD" env-default:"0.5"`
-	ControlIntervalSeconds          int                   `yaml:"controlIntervalSeconds" env:"CONTROL_INTERVAL_SECONDS" env-default:"60"`
-	OverrideDurationMinutes         int                   `yaml:"overrideDurationMinutes" env:"OVERRIDE_DURATION_MINUTES" env-default:"10"`
-	RecheckDelayMinutes             int                   `yaml:"recheckDelayMinutes" env:"RECHECK_DELAY_MINUTES" env-default:"5"`
-	ExternalModificationResetMinutes int                   `yaml:"externalModificationResetMinutes" env:"EXTERNAL_MODIFICATION_RESET_MINUTES" env-default:"5"`
-	MinSetpointCelsius              float64               `yaml:"minSetpointCelsius" env:"MIN_SETPOINT_CELSIUS" env-default:"10.0"`
-	MaxSetpointCelsius              float64               `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
-	Mappings                        []ThermostatMapping   `yaml:"mappings"`
-	HardOverrides                   []HardOverride        `yaml:"hardOverrides"`
+	Enabled                          bool                `yaml:"enabled" env:"THERMOSTAT_CONTROL_ENABLED" env-default:"false"`
+	DryRun                           bool                `yaml:"dryRun" env:"THERMOSTAT_CONTROL_DRY_RUN" env-default:"false"`
+	TemperatureThreshold             float64             `yaml:"temperatureThreshold" env:"TEMPERATURE_THRESHOLD" env-default:"0.5"`
+	ControlIntervalSeconds           int                 `yaml:"controlIntervalSeconds" env:"CONTROL_INTERVAL_SECONDS" env-default:"60"`
+	OverrideDurationMinutes          int                 `yaml:"overrideDurationMinutes" env:"OVERRIDE_DURATION_MINUTES" env-default:"10"`
+	ExtensionThresholdMinutes        int                 `yaml:"extensionThresholdMinutes" env:"EXTENSION_THRESHOLD_MINUTES" env-default:"2"`
+	ExternalModificationResetMinutes int                 `yaml:"externalModificationResetMinutes" env:"EXTERNAL_MODIFICATION_RESET_MINUTES" env-default:"5"`
+	MinSetpointCelsius               float64             `yaml:"minSetpointCelsius" env:"MIN_SETPOINT_CELSIUS" env-default:"10.0"`
+	MaxSetpointCelsius               float64             `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
+	Mappings                         []ThermostatMapping `yaml:"mappings"`
+	HardOverrides                    []HardOverride      `yaml:"hardOverrides"`
 }
 
 // ThermostatMapping maps a Netatmo room to a Xiaomi sensor
@@ -241,14 +241,14 @@ func (c *Config) Validate() error {
 		// Validate profile types if specified
 		if len(c.Pyroscope.ProfileTypes) > 0 {
 			validTypes := map[string]bool{
-				"cpu":            true,
-				"alloc_objects":  true,
-				"alloc_space":    true,
-				"inuse_objects":  true,
-				"inuse_space":    true,
-				"goroutines":     true,
-				"mutex":          true,
-				"block":          true,
+				"cpu":           true,
+				"alloc_objects": true,
+				"alloc_space":   true,
+				"inuse_objects": true,
+				"inuse_space":   true,
+				"goroutines":    true,
+				"mutex":         true,
+				"block":         true,
 			}
 			for _, pt := range c.Pyroscope.ProfileTypes {
 				if !validTypes[pt] {
@@ -325,9 +325,15 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("thermostat override duration must be at least 1 minute")
 		}
 
-		// Validate recheck delay
-		if c.ThermostatControl.RecheckDelayMinutes < 1 {
-			return fmt.Errorf("thermostat recheck delay must be at least 1 minute")
+		// Validate extension threshold
+		if c.ThermostatControl.ExtensionThresholdMinutes < 1 {
+			return fmt.Errorf("thermostat extension threshold must be at least 1 minute")
+		}
+
+		// Validate that extension threshold is less than override duration
+		if c.ThermostatControl.ExtensionThresholdMinutes >= c.ThermostatControl.OverrideDurationMinutes {
+			return fmt.Errorf("thermostat extension threshold (%d minutes) must be less than override duration (%d minutes)",
+				c.ThermostatControl.ExtensionThresholdMinutes, c.ThermostatControl.OverrideDurationMinutes)
 		}
 
 		// Validate external modification reset minutes
@@ -570,7 +576,7 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.Float64("thermostat_temperature_threshold", c.ThermostatControl.TemperatureThreshold),
 		zap.Int("thermostat_control_interval_seconds", c.ThermostatControl.ControlIntervalSeconds),
 		zap.Int("thermostat_override_duration_minutes", c.ThermostatControl.OverrideDurationMinutes),
-		zap.Int("thermostat_recheck_delay_minutes", c.ThermostatControl.RecheckDelayMinutes),
+		zap.Int("thermostat_extension_threshold_minutes", c.ThermostatControl.ExtensionThresholdMinutes),
 		zap.Int("thermostat_external_mod_reset_minutes", c.ThermostatControl.ExternalModificationResetMinutes),
 		zap.Int("thermostat_mapping_count", len(c.ThermostatControl.Mappings)),
 		zap.Strings("thermostat_mappings", mappingInfo),

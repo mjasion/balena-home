@@ -201,12 +201,14 @@ thermostatControl:
   # Override duration in minutes (default: 10)
   # SAFETY: All setpoint changes auto-expire after this duration (fail-safe)
   # After expiration, thermostat reverts to schedule mode
-  overrideDurationMinutes: 30
+  # System will automatically extend the override if temperature still requires control
+  overrideDurationMinutes: 10
 
-  # Recheck delay in minutes (default: 5)
-  # After adjusting a thermostat, wait this long before re-evaluating
-  # Prevents oscillation and excessive API calls
-  recheckDelayMinutes: 10
+  # Extension threshold in minutes (default: 2)
+  # When override has less than this time remaining, extend it automatically
+  # This prevents the thermostat from briefly switching back to schedule mode
+  # Must be less than overrideDurationMinutes
+  extensionThresholdMinutes: 2
 
   # External modification behavior:
   # If thermostat is manually changed, automation pauses INDEFINITELY
@@ -296,8 +298,9 @@ thermostatControl:
 #    - If |xiaomiTemp - scheduledTemp| > threshold:
 #      - Calculates: newSetpoint = thermostatMeasured + (xiaomiTemp - scheduledTemp)
 #      - Clamps to safety limits (10-30°C)
-#      - Sends 10-minute temporary override to Netatmo
-#    - Waits recheckDelayMinutes before re-evaluating
+#      - Sends temporary override to Netatmo (default: 30 minutes)
+#    - Automatically extends override before it expires (prevents mode switching)
+#    - Evaluates every controlIntervalSeconds (default: 60s)
 #
 # 3. PRECEDENCE HIERARCHY:
 #    1. External modification detected → Pause control for 24h or until schedule mode
@@ -313,5 +316,5 @@ thermostatControl:
 # 5. TROUBLESHOOTING:
 #    - "sensor data unavailable" → Check BLE sensor broadcasting
 #    - "room not found" → Verify room name matches Netatmo
-#    - "externally modified" → Wait 24h or switch thermostat to schedule mode
-#    - "waiting until next recheck time" → Normal after adjustment
+#    - "externally modified" → Switch thermostat to schedule mode to resume automation
+#    - "(extending, Xm left)" in logs → Normal behavior, extending existing override
