@@ -960,7 +960,7 @@ func TestMaintainMode(t *testing.T) {
 		RoomID:                "room1",
 		RoomName:              "Living Room",
 		OriginalScheduledTemp: 24.0,
-		LastSetpoint:          26.0,
+		LastSetpoint:          25.0, // Different from current 26.0, so should send command
 		LastSetpointTime:      time.Now().Add(-2 * time.Minute),
 	}
 	c.stateMu.Unlock()
@@ -1038,7 +1038,7 @@ func TestCancelOverride(t *testing.T) {
 		RoomID:                "room1",
 		RoomName:              "Living Room",
 		OriginalScheduledTemp: 22.0,
-		LastSetpoint:          24.0,
+		LastSetpoint:          25.0, // Different from calculated 24.0, so should send command
 		LastSetpointTime:      time.Now().Add(-5 * time.Minute),
 		ScheduleEndTime:       time.Now().Add(1 * time.Hour),
 	}
@@ -1185,4 +1185,181 @@ func TestManualModeTakeover(t *testing.T) {
 	t.Logf("  Took control, using current setpoint (26.0°C) as baseline")
 	t.Logf("  Action: %s", decision.Action)
 	t.Logf("  Calculated setpoint: %.1f°C", decision.CalculatedSetpoint)
+}
+
+// TestEvaluateRoom_SkipUnchangedSetpoint tests that the controller skips API calls
+// when the calculated setpoint matches the last sent setpoint
+func TestEvaluateRoom_SkipUnchangedSetpoint(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	roomID := "room1"
+	sensorMAC := "AA:BB:CC:DD:EE:FF"
+
+	cfg := &config.ThermostatControlConfig{
+		Enabled:                          true,
+		TemperatureThreshold:             0.5,
+		ControlIntervalSeconds:           60,
+		ManualModeTakeoverMinutes:        60,
+		ExternalModificationResetMinutes: 5,
+		MinSetpointCelsius:               7.0,
+		MaxSetpointCelsius:               30.0,
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Living Room", SensorMAC: sensorMAC, RoomID: roomID},
+		},
+	}
+
+	client := netatmo.NewClient("test-client-id", "test-secret", "test-refresh-token")
+	c := New(cfg, client, controlBuffer, metricsBuffer, logger)
+
+	// Initialize state with a previous command sent 3 minutes ago
+	c.stateMu.Lock()
+	c.stateByRoom[roomID] = &ThermostatState{
+		RoomID:                roomID,
+		RoomName:              "Living Room",
+		OriginalScheduledTemp: 24.0,
+		LastSetpoint:          24.0, // Last sent setpoint
+		LastSetpointTime:      time.Now().Add(-3 * time.Minute),
+		ScheduleEndTime:       time.Now().Add(1 * time.Hour),
+	}
+	c.stateMu.Unlock()
+
+	// Add Xiaomi sensor reading (room too warm: 24.9°C > 24.5°C threshold)
+	// This will trigger "room too warm" logic which calculates: thermostat_measured - 0.5
+	// With thermostat_measured = 24.5, calculated setpoint = 24.0°C
+	now := time.Now()
+	controlBuffer.Add(&buffer.Reading{
+		Type: buffer.ReadingTypeBLE,
+		BLE: &buffer.SensorReading{
+			Timestamp:          now,
+			MAC:                strings.ToUpper(sensorMAC),
+			TemperatureCelsius: 24.9,
+		},
+	})
+
+	// Create room status map
+	roomStatusMap := map[string]*netatmo.RoomStatus{
+		roomID: {
+			ID:                       roomID,
+			Reachable:                true,
+			ThermMeasuredTemperature: 24.5, // Netatmo sensor reading
+			ThermSetpointTemperature: 24.0, // Current setpoint matches last sent
+			ThermSetpointMode:        "manual",
+			ThermSetpointEndTime:     time.Now().Add(1 * time.Hour).Unix(),
+		},
+	}
+
+	// Evaluate room
+	ctx := context.Background()
+	decision := c.evaluateRoom(ctx, cfg.Mappings[0], roomStatusMap)
+
+	// Should skip API call because calculated setpoint (24.0) == last setpoint (24.0)
+	if decision.Action != "no_adjustment_needed" {
+		t.Errorf("Expected action 'no_adjustment_needed', got '%s'", decision.Action)
+	}
+
+	if !strings.Contains(decision.Reason, "setpoint unchanged") {
+		t.Errorf("Expected reason to contain 'setpoint unchanged', got: %s", decision.Reason)
+	}
+
+	if decision.CalculatedSetpoint != 24.0 {
+		t.Errorf("Expected calculated setpoint 24.0, got %.1f", decision.CalculatedSetpoint)
+	}
+
+	t.Logf("✓ Skip unchanged setpoint test passed:")
+	t.Logf("  Room too warm (xiaomi=24.9°C > scheduled=24.0°C)")
+	t.Logf("  Calculated setpoint: %.1f°C", decision.CalculatedSetpoint)
+	t.Logf("  Last setpoint: 24.0°C")
+	t.Logf("  Action: %s (no API call)", decision.Action)
+	t.Logf("  Reason: %s", decision.Reason)
+}
+
+// TestEvaluateRoom_SendChangedSetpoint tests that the controller DOES call API
+// when the calculated setpoint differs from the last sent setpoint
+func TestEvaluateRoom_SendChangedSetpoint(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	roomID := "room1"
+	sensorMAC := "AA:BB:CC:DD:EE:FF"
+
+	cfg := &config.ThermostatControlConfig{
+		Enabled:                          true,
+		TemperatureThreshold:             0.5,
+		ControlIntervalSeconds:           60,
+		ManualModeTakeoverMinutes:        60,
+		ExternalModificationResetMinutes: 5,
+		MinSetpointCelsius:               7.0,
+		MaxSetpointCelsius:               30.0,
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Living Room", SensorMAC: sensorMAC, RoomID: roomID},
+		},
+	}
+
+	client := netatmo.NewClient("test-client-id", "test-secret", "test-refresh-token")
+	c := New(cfg, client, controlBuffer, metricsBuffer, logger)
+
+	// Initialize state with a previous command sent 3 minutes ago
+	c.stateMu.Lock()
+	c.stateByRoom[roomID] = &ThermostatState{
+		RoomID:                roomID,
+		RoomName:              "Living Room",
+		OriginalScheduledTemp: 24.0,
+		LastSetpoint:          25.0, // Last sent setpoint was 25.0
+		LastSetpointTime:      time.Now().Add(-3 * time.Minute),
+		ScheduleEndTime:       time.Now().Add(1 * time.Hour),
+	}
+	c.stateMu.Unlock()
+
+	// Add Xiaomi sensor reading (room too warm: 24.9°C > 24.5°C threshold)
+	// This will trigger "room too warm" logic which calculates: thermostat_measured - 0.5
+	// With thermostat_measured = 24.5, calculated setpoint = 24.0°C
+	// This DIFFERS from last setpoint (25.0), so should send API call
+	now := time.Now()
+	controlBuffer.Add(&buffer.Reading{
+		Type: buffer.ReadingTypeBLE,
+		BLE: &buffer.SensorReading{
+			Timestamp:          now,
+			MAC:                strings.ToUpper(sensorMAC),
+			TemperatureCelsius: 24.9,
+		},
+	})
+
+	// Create room status map
+	roomStatusMap := map[string]*netatmo.RoomStatus{
+		roomID: {
+			ID:                       roomID,
+			Reachable:                true,
+			ThermMeasuredTemperature: 24.5, // Netatmo sensor reading
+			ThermSetpointTemperature: 25.0, // Current setpoint
+			ThermSetpointMode:        "manual",
+			ThermSetpointEndTime:     time.Now().Add(1 * time.Hour).Unix(),
+		},
+	}
+
+	// Evaluate room
+	ctx := context.Background()
+	decision := c.evaluateRoom(ctx, cfg.Mappings[0], roomStatusMap)
+
+	// Should send API call because calculated setpoint (24.0) != last setpoint (25.0)
+	if decision.Action != "cancel_override" {
+		t.Errorf("Expected action 'cancel_override', got '%s'", decision.Action)
+	}
+
+	if !strings.Contains(decision.Reason, "room too warm") {
+		t.Errorf("Expected reason to contain 'room too warm', got: %s", decision.Reason)
+	}
+
+	if decision.CalculatedSetpoint != 24.0 {
+		t.Errorf("Expected calculated setpoint 24.0, got %.1f", decision.CalculatedSetpoint)
+	}
+
+	t.Logf("✓ Send changed setpoint test passed:")
+	t.Logf("  Room too warm (xiaomi=24.9°C > scheduled=24.0°C)")
+	t.Logf("  Calculated setpoint: %.1f°C", decision.CalculatedSetpoint)
+	t.Logf("  Last setpoint: 25.0°C")
+	t.Logf("  Action: %s (API call will be made)", decision.Action)
+	t.Logf("  Reason: %s", decision.Reason)
 }

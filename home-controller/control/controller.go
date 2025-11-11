@@ -508,9 +508,20 @@ func (c *Controller) evaluateRoom(
 				attribute.String("reason", "room_too_warm"),
 			),
 		)
-		decision.Action = "cancel_override"
 		// Actively cool: set 0.5°C below current thermostat reading
-		decision.CalculatedSetpoint = roomStatus.ThermMeasuredTemperature - 0.5
+		calculatedSetpoint := roomStatus.ThermMeasuredTemperature - 0.5
+
+		// Skip API call if setpoint hasn't changed
+		if !stateCopy.LastSetpointTime.IsZero() &&
+			math.Abs(calculatedSetpoint-stateCopy.LastSetpoint) < 0.1 {
+			decision.Action = "no_adjustment_needed"
+			decision.CalculatedSetpoint = calculatedSetpoint
+			decision.Reason = fmt.Sprintf("room too warm but setpoint unchanged at %.1f°C, no API call needed", calculatedSetpoint)
+			return decision
+		}
+
+		decision.Action = "cancel_override"
+		decision.CalculatedSetpoint = calculatedSetpoint
 		// Override until schedule end to ensure cooling completes
 		decision.OverrideEndTime = scheduleEndTime.Unix()
 		decision.ScheduleEndTime = scheduleEndTime.Unix()
@@ -527,8 +538,19 @@ func (c *Controller) evaluateRoom(
 				attribute.Float64("threshold", c.config.TemperatureThreshold),
 			),
 		)
+		calculatedSetpoint := decision.ThermostatMeasured // Maintain current
+
+		// Skip API call if setpoint hasn't changed
+		if !stateCopy.LastSetpointTime.IsZero() &&
+			math.Abs(calculatedSetpoint-stateCopy.LastSetpoint) < 0.1 {
+			decision.Action = "no_adjustment_needed"
+			decision.CalculatedSetpoint = calculatedSetpoint
+			decision.Reason = fmt.Sprintf("temperature OK but setpoint unchanged at %.1f°C, no API call needed", calculatedSetpoint)
+			return decision
+		}
+
 		decision.Action = "set_manual_override"
-		decision.CalculatedSetpoint = decision.ThermostatMeasured // Maintain current
+		decision.CalculatedSetpoint = calculatedSetpoint
 		decision.OverrideEndTime = scheduleEndTime.Unix()
 		decision.ScheduleEndTime = scheduleEndTime.Unix()
 		decision.Reason = fmt.Sprintf("temperature OK: xiaomi=%.1f°C ≈ scheduled=%.1f°C (diff=%.2f°C), maintaining at %.1f°C",
@@ -575,6 +597,14 @@ func (c *Controller) evaluateRoom(
 		decision.CalculatedSetpoint = c.config.MinSetpointCelsius
 	} else if decision.CalculatedSetpoint > c.config.MaxSetpointCelsius {
 		decision.CalculatedSetpoint = c.config.MaxSetpointCelsius
+	}
+
+	// Skip API call if setpoint hasn't changed (avoid unnecessary API calls)
+	if !stateCopy.LastSetpointTime.IsZero() &&
+		math.Abs(decision.CalculatedSetpoint-stateCopy.LastSetpoint) < 0.1 {
+		decision.Action = "no_adjustment_needed"
+		decision.Reason = fmt.Sprintf("setpoint unchanged at %.1f°C, no API call needed", decision.CalculatedSetpoint)
+		return decision
 	}
 
 	// Detect external modification (if we sent a command before and it changed)
