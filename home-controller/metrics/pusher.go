@@ -3,6 +3,7 @@ package metrics
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,10 @@ import (
 	"github.com/mjasion/balena-home/thermostats/buffer"
 	"github.com/mjasion/balena-home/thermostats/scheduler"
 	"github.com/prometheus/prometheus/prompb"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -131,44 +136,123 @@ func (p *Pusher) pushMetrics() {
 }
 
 // Push pushes sensor readings to Prometheus
-func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
+func (p *Pusher) Push(originalCtx context.Context, readings []*buffer.Reading) error {
 	if len(readings) == 0 {
 		p.logger.Debug("no readings to push")
 		return nil
 	}
 
+	// Start a new trace with custom 10% sampling
+	// Each push gets a new trace ID by creating a new root span
+	tracer := otel.Tracer("metrics")
+
+	// Create a new trace context with a new root trace ID
+	traceCtx, span := tracer.Start(
+		context.Background(), // New root for trace
+		"metrics.push",
+		trace.WithNewRoot(), // Force new trace ID
+	)
+	defer span.End()
+
+	// Merge contexts: use trace context for tracing, but respect original context's cancellation
+	// We need to create a context that:
+	// 1. Has the trace information from traceCtx
+	// 2. Is cancelled when originalCtx is cancelled
+	ctx, cancel := context.WithCancel(traceCtx)
+	defer cancel()
+
+	// Start a goroutine to forward cancellation from original context
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		select {
+		case <-originalCtx.Done():
+			cancel()
+		case <-done:
+			// Push completed, cleanup goroutine
+		}
+	}()
+
 	// Build write request
 	writeReq, err := p.buildWriteRequest(readings)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to build write request")
 		return fmt.Errorf("failed to build write request: %w", err)
+	}
+
+	// Count readings by type
+	bleCount := 0
+	netatmoCount := 0
+	powerCount := 0
+	controlCount := 0
+	weightedAvgCount := 0
+	for _, r := range readings {
+		switch r.Type {
+		case buffer.ReadingTypeBLE:
+			bleCount++
+		case buffer.ReadingTypeNetatmo:
+			netatmoCount++
+		case buffer.ReadingTypePower:
+			powerCount++
+		case buffer.ReadingTypeControl:
+			controlCount++
+		case buffer.ReadingTypeBLEWeightedAvg:
+			weightedAvgCount++
+		}
+	}
+
+	// Add reading counts to span
+	span.SetAttributes(
+		attribute.Int("metrics.total_readings", len(readings)),
+		attribute.Int("metrics.ble_count", bleCount),
+		attribute.Int("metrics.netatmo_count", netatmoCount),
+		attribute.Int("metrics.power_count", powerCount),
+		attribute.Int("metrics.control_count", controlCount),
+		attribute.Int("metrics.weighted_avg_count", weightedAvgCount),
+		attribute.Int("metrics.time_series_count", len(writeReq.Timeseries)),
+	)
+
+	// Include sample of pushed data in trace (first 5 time series)
+	if len(writeReq.Timeseries) > 0 {
+		sampleSize := 5
+		if len(writeReq.Timeseries) < sampleSize {
+			sampleSize = len(writeReq.Timeseries)
+		}
+
+		sampleData := make([]map[string]interface{}, 0, sampleSize)
+		for i := 0; i < sampleSize; i++ {
+			ts := writeReq.Timeseries[i]
+			labels := make(map[string]string)
+			for _, label := range ts.Labels {
+				labels[label.Name] = label.Value
+			}
+
+			sampleData = append(sampleData, map[string]interface{}{
+				"labels":        labels,
+				"sample_count":  len(ts.Samples),
+				"first_sample":  ts.Samples[0].Value,
+				"first_timestamp": ts.Samples[0].Timestamp,
+			})
+		}
+
+		// Convert to JSON for span attribute
+		if jsonData, err := json.Marshal(sampleData); err == nil {
+			span.SetAttributes(attribute.String("metrics.sample_data", string(jsonData)))
+		}
 	}
 
 	// Try to push with retries
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
+		span.AddEvent("push_attempt", trace.WithAttributes(
+			attribute.Int("attempt_number", attempt),
+		))
+
 		err := p.pushOnce(ctx, writeReq)
 		if err == nil {
 			p.lastPush = time.Now()
-
-			bleCount := 0
-			netatmoCount := 0
-			powerCount := 0
-			controlCount := 0
-			weightedAvgCount := 0
-			for _, r := range readings {
-				switch r.Type {
-				case buffer.ReadingTypeBLE:
-					bleCount++
-				case buffer.ReadingTypeNetatmo:
-					netatmoCount++
-				case buffer.ReadingTypePower:
-					powerCount++
-				case buffer.ReadingTypeControl:
-					controlCount++
-				case buffer.ReadingTypeBLEWeightedAvg:
-					weightedAvgCount++
-				}
-			}
 
 			p.logger.Info("successfully pushed metrics",
 				zap.Int("ble_data_points", bleCount),
@@ -179,6 +263,9 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 				zap.Int("total_data_points", len(readings)),
 				zap.Int("attempt", attempt),
 			)
+
+			span.SetStatus(codes.Ok, "successfully pushed metrics")
+			span.SetAttributes(attribute.Int("metrics.successful_attempt", attempt))
 			return nil
 		}
 
@@ -188,17 +275,26 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 			zap.Error(err),
 		)
 
+		span.AddEvent("push_failed", trace.WithAttributes(
+			attribute.Int("attempt_number", attempt),
+			attribute.String("error", err.Error()),
+		))
+
 		// Exponential backoff: 1s, 2s, 4s
 		if attempt < 3 {
 			backoff := time.Duration(1<<(attempt-1)) * time.Second
 			select {
 			case <-ctx.Done():
+				span.RecordError(ctx.Err())
+				span.SetStatus(codes.Error, "context cancelled")
 				return ctx.Err()
 			case <-time.After(backoff):
 			}
 		}
 	}
 
+	span.RecordError(lastErr)
+	span.SetStatus(codes.Error, "failed after all retries")
 	return fmt.Errorf("failed to push metrics after 3 attempts: %w", lastErr)
 }
 

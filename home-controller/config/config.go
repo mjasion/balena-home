@@ -70,13 +70,14 @@ type PyroscopeConfig struct {
 
 // OpenTelemetryConfig contains OpenTelemetry tracing configuration
 type OpenTelemetryConfig struct {
-	Enabled            bool              `yaml:"enabled" env:"OTEL_ENABLED" env-default:"false"`
-	Endpoint           string            `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
-	Protocol           string            `yaml:"protocol" env:"OTEL_EXPORTER_OTLP_PROTOCOL" env-default:"http/protobuf"`
-	Headers            string            `yaml:"headers" env:"OTEL_EXPORTER_OTLP_HEADERS"` // Format: "key1=value1,key2=value2"
-	ServiceName        string            `yaml:"serviceName" env:"OTEL_SERVICE_NAME" env-default:"home-controller"`
-	SamplingRate       float64           `yaml:"samplingRate" env:"OTEL_SAMPLING_RATE" env-default:"1.0"`
-	ResourceAttributes map[string]string `yaml:"resourceAttributes"`
+	Enabled             bool              `yaml:"enabled" env:"OTEL_ENABLED" env-default:"false"`
+	Endpoint            string            `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+	Protocol            string            `yaml:"protocol" env:"OTEL_EXPORTER_OTLP_PROTOCOL" env-default:"http/protobuf"`
+	Headers             string            `yaml:"headers" env:"OTEL_EXPORTER_OTLP_HEADERS"` // Format: "key1=value1,key2=value2"
+	ServiceName         string            `yaml:"serviceName" env:"OTEL_SERVICE_NAME" env-default:"home-controller"`
+	SamplingRate        float64           `yaml:"samplingRate" env:"OTEL_SAMPLING_RATE" env-default:"1.0"`
+	MetricsSamplingRate float64           `yaml:"metricsSamplingRate" env:"OTEL_METRICS_SAMPLING_RATE" env-default:"0.05"`
+	ResourceAttributes  map[string]string `yaml:"resourceAttributes"`
 }
 
 // PrometheusConfig contains Prometheus metrics push configuration

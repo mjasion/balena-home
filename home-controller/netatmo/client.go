@@ -12,6 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -139,9 +143,61 @@ func (c *Client) rateLimit() {
 }
 
 // doRequest performs an authenticated API request with exponential backoff for rate limits
-func (c *Client) doRequest(ctx context.Context, method, url string, body io.Reader, result interface{}) error {
+func (c *Client) doRequest(ctx context.Context, method, requestURL string, body io.Reader, result interface{}) error {
+	tracer := otel.Tracer("netatmo")
+
+	// Parse URL to extract endpoint information
+	parsedURL, _ := url.Parse(requestURL)
+	endpoint := "unknown"
+	if parsedURL != nil && parsedURL.Path != "" {
+		// Extract last segment of path as endpoint name
+		pathParts := strings.Split(strings.TrimPrefix(parsedURL.Path, "/api/"), "/")
+		if len(pathParts) > 0 {
+			endpoint = pathParts[0]
+		}
+	}
+
+	ctx, span := tracer.Start(ctx, "netatmo.api_request",
+		trace.WithAttributes(
+			attribute.String("http.method", method),
+			attribute.String("http.url", requestURL),
+			attribute.String("netatmo.endpoint", endpoint),
+		),
+	)
+	defer span.End()
+
+	// Add additional URL components as attributes
+	if parsedURL != nil {
+		span.SetAttributes(
+			attribute.String("http.scheme", parsedURL.Scheme),
+			attribute.String("http.host", parsedURL.Host),
+			attribute.String("http.target", parsedURL.Path),
+		)
+		if parsedURL.RawQuery != "" {
+			span.SetAttributes(attribute.String("http.query", parsedURL.RawQuery))
+		}
+	}
+
 	if err := c.ensureToken(ctx); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to ensure token")
 		return fmt.Errorf("failed to ensure token: %w", err)
+	}
+
+	// Read request body once for retries and tracing
+	var bodyBytes []byte
+	if body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(body)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to read request body")
+			return fmt.Errorf("failed to read request body: %w", err)
+		}
+		// Add request body to span (for POST requests with form data)
+		if len(bodyBytes) > 0 {
+			span.SetAttributes(attribute.String("http.request.body", string(bodyBytes)))
+		}
 	}
 
 	// Apply rate limiting
@@ -152,39 +208,79 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body io.Read
 	baseDelay := 2 * time.Second
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		// Create request (need to recreate for each retry if body is involved)
-		req, err := http.NewRequestWithContext(ctx, method, url, body)
+		span.AddEvent("attempt", trace.WithAttributes(
+			attribute.Int("attempt_number", attempt+1),
+			attribute.Int("max_retries", maxRetries+1),
+		))
+
+		// Create request body reader for this attempt
+		var bodyReader io.Reader
+		if bodyBytes != nil {
+			bodyReader = bytes.NewReader(bodyBytes)
+		}
+
+		// Create request (recreate for each retry)
+		req, err := http.NewRequestWithContext(ctx, method, requestURL, bodyReader)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to create request")
 			return fmt.Errorf("failed to create request: %w", err)
 		}
 
 		req.Header.Set("Authorization", "Bearer "+c.accessToken)
-		if body != nil {
+		if bodyBytes != nil {
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		}
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "request failed")
 			return fmt.Errorf("request failed: %w", err)
 		}
 
+		span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+
+		// Read full response body for logging
+		respBodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
 		// Check status code
 		if resp.StatusCode == http.StatusOK {
+			// Log full response at debug level
+			c.logger.Debug("Netatmo API response",
+				zap.String("url", requestURL),
+				zap.String("method", method),
+				zap.Int("status_code", resp.StatusCode),
+				zap.String("response_body", string(respBodyBytes)),
+			)
+
+			// Add response body to span
+			span.SetAttributes(attribute.String("http.response.body", string(respBodyBytes)))
+
 			// Success - decode and return
 			if result != nil {
-				if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-					resp.Body.Close()
+				if err := json.Unmarshal(respBodyBytes, result); err != nil {
+					span.RecordError(err)
+					span.SetStatus(codes.Error, "failed to decode response")
 					return fmt.Errorf("failed to decode response: %w", err)
 				}
 			}
-			resp.Body.Close()
+			span.SetStatus(codes.Ok, "success")
 			return nil
 		}
 
-		// Read error body
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		errMsg := string(bodyBytes)
+		errMsg := string(respBodyBytes)
+
+		// Log error response
+		c.logger.Warn("Netatmo API error response",
+			zap.String("url", requestURL),
+			zap.String("method", method),
+			zap.Int("status_code", resp.StatusCode),
+			zap.String("response_body", errMsg),
+		)
+
+		span.SetAttributes(attribute.String("http.response.body", errMsg))
 
 		// Check if it's a 429 rate limit error
 		if resp.StatusCode == 429 || strings.Contains(errMsg, "concurrency limited") {
@@ -192,33 +288,46 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body io.Read
 				// Calculate exponential backoff: 2s, 4s, 8s
 				delay := baseDelay * time.Duration(1<<uint(attempt))
 				c.logger.Warn("Netatmo API rate limit hit, retrying with backoff",
-					zap.String("url", url),
+					zap.String("url", requestURL),
 					zap.Int("attempt", attempt+1),
 					zap.Int("max_retries", maxRetries+1),
 					zap.Duration("backoff_delay", delay),
 				)
+
+				span.AddEvent("rate_limit_backoff", trace.WithAttributes(
+					attribute.Int64("backoff_delay_ms", delay.Milliseconds()),
+				))
 
 				select {
 				case <-time.After(delay):
 					// Continue to next attempt
 					continue
 				case <-ctx.Done():
-					return fmt.Errorf("context cancelled during rate limit backoff: %w", ctx.Err())
+					err := fmt.Errorf("context cancelled during rate limit backoff: %w", ctx.Err())
+					span.RecordError(err)
+					span.SetStatus(codes.Error, "context cancelled")
+					return err
 				}
 			} else {
 				// Max retries exhausted
 				c.logger.Error("max retries exhausted for Netatmo API call",
-					zap.String("url", url),
+					zap.String("url", requestURL),
 					zap.Int("attempts", attempt+1),
 				)
 			}
 		}
 
 		// Not a rate limit error or max retries exhausted
-		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, errMsg)
+		err = fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, errMsg)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, fmt.Sprintf("status %d", resp.StatusCode))
+		return err
 	}
 
-	return fmt.Errorf("API request failed after %d retries", maxRetries+1)
+	err := fmt.Errorf("API request failed after %d retries", maxRetries+1)
+	span.RecordError(err)
+	span.SetStatus(codes.Error, "max retries exhausted")
+	return err
 }
 
 // GetHomesData retrieves homes data including topology

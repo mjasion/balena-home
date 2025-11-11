@@ -213,10 +213,10 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 	var homeStatus *netatmo.HomeStatusResponse
 	var err error
 	{
-		_, fetchStatusSpan := c.tracer.Start(ctx, "fetch_netatmo_home_status",
+		fetchCtx, fetchStatusSpan := c.tracer.Start(ctx, "fetch_netatmo_home_status",
 			trace.WithAttributes(attribute.String("home_id", homeID)),
 		)
-		homeStatus, err = c.netatmoClient.GetHomeStatus(ctx, homeID)
+		homeStatus, err = c.netatmoClient.GetHomeStatus(fetchCtx, homeID)
 		if err != nil {
 			fetchStatusSpan.RecordError(err)
 			fetchStatusSpan.SetStatus(codes.Error, "failed to fetch home status")
@@ -308,7 +308,7 @@ func (c *Controller) evaluateRoom(
 	mapping config.ThermostatMapping,
 	roomStatusMap map[string]*netatmo.RoomStatus,
 ) ControlDecision {
-	ctx, span := c.tracer.Start(ctx, "evaluate_room",
+	ctx, span := c.tracer.Start(ctx, "evaluate_room_"+mapping.RoomName,
 		trace.WithAttributes(
 			attribute.String("room_name", mapping.RoomName),
 			attribute.String("room_id", mapping.RoomID),
@@ -641,7 +641,7 @@ func (c *Controller) evaluateRoom(
 	return decision
 }
 func (c *Controller) executeDecision(ctx context.Context, homeID string, decision ControlDecision) {
-	ctx, span := c.tracer.Start(ctx, "execute_decision",
+	ctx, span := c.tracer.Start(ctx, "execute_decision_"+decision.RoomName,
 		trace.WithAttributes(
 			attribute.String("room_name", decision.RoomName),
 			attribute.String("room_id", decision.RoomID),
@@ -754,7 +754,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 		// Call Netatmo API
 		var err error
 		{
-			_, setTempSpan := c.tracer.Start(ctx, "set_netatmo_thermostat",
+			setTempCtx, setTempSpan := c.tracer.Start(ctx, "set_netatmo_thermostat",
 				trace.WithAttributes(
 					attribute.String("home_id", homeID),
 					attribute.String("room_id", decision.RoomID),
@@ -763,7 +763,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 				),
 			)
 			err = c.netatmoClient.SetRoomThermpoint(
-				ctx,
+				setTempCtx,
 				homeID,
 				decision.RoomID,
 				"manual",
