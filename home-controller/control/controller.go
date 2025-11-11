@@ -534,8 +534,12 @@ func (c *Controller) evaluateRoom(
 		map[bool]string{true: " (hard override)", false: ""}[hardOverrideActive])
 
 	// Detect external modification (if we previously sent a command)
+	// IMPORTANT: Only check for external modifications when thermostat is in MANUAL mode.
+	// When in schedule mode, setpoint changes are expected (schedule changes throughout the day).
+	// Comparing current setpoint to a command sent hours ago would incorrectly flag schedule changes as external mods.
 	if !stateCopy.LastSetpointTime.IsZero() &&
-		time.Since(stateCopy.LastSetpointTime) > 2*time.Minute {
+		time.Since(stateCopy.LastSetpointTime) > 2*time.Minute &&
+		roomStatus.ThermSetpointMode != "schedule" {
 		// Check if current setpoint differs from what we sent
 		delta := roomStatus.ThermSetpointTemperature - stateCopy.LastSetpoint
 		if math.Abs(delta) > 0.1 {
@@ -548,6 +552,7 @@ func (c *Controller) evaluateRoom(
 				zap.Float64("delta", delta),
 				zap.Duration("time_since_last_command", timeSinceLastCommand),
 				zap.Time("last_command_sent_at", stateCopy.LastSetpointTime.In(c.warsawLocation())),
+				zap.String("thermostat_mode", roomStatus.ThermSetpointMode),
 				zap.String("resume_condition", "automation will resume only when thermostat is switched back to 'schedule' mode"),
 				zap.String("reason", "thermostat was manually changed - respecting user preference indefinitely"),
 			)
