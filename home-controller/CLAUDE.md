@@ -43,27 +43,28 @@ This service consolidates multiple data sources into a unified monitoring platfo
 │  - Pyroscope profiling (optional)                   │
 └─────────────────────────────────────────────────────┘
          │
-         ├──────────────┬──────────────┬──────────────┐
-         ▼              ▼              ▼              ▼
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│ BLE Scanner  │ │ Netatmo      │ │ Power Meter  │ │ Metrics      │
-│ (scanner/)   │ │ Poller       │ │ Scraper      │ │ Pusher       │
-│              │ │ (netatmo/)   │ │ (power/)     │ │ (metrics/)   │
-│ - Passive    │ │ - OAuth2     │ │ - HTTP       │ │ - Protobuf   │
-│   BLE scan   │ │ - Fetch API  │ │   polling    │ │ - Snappy     │
-│ - ATC decode │ │ - Thermostat │ │ - Energy     │ │ - Batch push │
-│ - MAC filter │ │   data       │ │   metrics    │ │ - Remote     │
-│              │ │ - Room temps │ │              │ │   write API  │
-└──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
-         │              │              │              │
-         └──────────────┴──────────────┴──────────────┘
-                        ▼
-               ┌─────────────────┐
-               │   Ring Buffer    │
-               │  (buffer/)       │
-               │  - Thread-safe   │
-               │  - Concurrent    │
-               │  - 100K capacity │
+         ├──────────────┬──────────────┬──────────────┬──────────────┐
+         ▼              ▼              ▼              ▼              ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│ BLE Scanner  │ │ Netatmo      │ │ Power Meter  │ │ Thermostat   │ │ Metrics      │
+│ (scanner/)   │ │ Poller       │ │ Scraper      │ │ Controller   │ │ Pusher       │
+│              │ │ (netatmo/)   │ │ (power/)     │ │ (control/)   │ │ (metrics/)   │
+│ - Passive    │ │ - OAuth2     │ │ - HTTP       │ │ - Decision   │ │ - Protobuf   │
+│   BLE scan   │ │ - Fetch API  │ │   polling    │ │   engine     │ │ - Snappy     │
+│ - ATC decode │ │ - Thermostat │ │ - Energy     │ │ - External   │ │ - Batch push │
+│ - MAC filter │ │   data       │ │   metrics    │ │   mod detect │ │ - Remote     │
+│              │ │ - Room temps │ │              │ │ - Auto mode  │ │   write API  │
+└──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
+         │              │              │              │              │
+         └──────────────┴──────────────┴──────────────┴──────────────┘
+                        │                             │
+                        ▼                             ▼
+               ┌─────────────────┐          ┌─────────────────┐
+               │   Ring Buffer    │          │  Netatmo API    │
+               │  (buffer/)       │          │  - SetThermpoint│
+               │  - Thread-safe   │          │  - Manual mode  │
+               │  - Concurrent    │          │  - Schedule mode│
+               │  - 100K capacity │          └─────────────────┘
                └─────────────────┘
                         │
                         ▼
@@ -89,9 +90,15 @@ This service consolidates multiple data sources into a unified monitoring platfo
 1. **BLE Scanner**: Continuously scans for ATC_MiThermometer advertisements, decodes temperature/humidity/battery data
 2. **Netatmo Poller**: Periodically fetches thermostat data via OAuth2 API
 3. **Power Meter Scraper**: Polls HTTP endpoints for energy consumption metrics
-4. **All readings** → Ring buffer (thread-safe, 100K capacity)
-5. **Metrics Pusher**: Batch pushes to Prometheus every 30 seconds
-6. **Pyroscope Profiler** (optional): Continuous profiling of CPU, memory, goroutines to Grafana Cloud
+4. **Thermostat Controller**:
+   - Reads BLE sensor data from ring buffer (weighted average over 60s)
+   - Fetches thermostat state from Netatmo API
+   - Evaluates control decisions based on temperature difference
+   - Sends manual override commands to Netatmo API when needed
+   - Respects external modifications (manual user changes)
+5. **All readings** → Ring buffer (thread-safe, 100K capacity)
+6. **Metrics Pusher**: Batch pushes to Prometheus every 30 seconds
+7. **Pyroscope Profiler** (optional): Continuous profiling of CPU, memory, goroutines to Grafana Cloud
 
 ## Project Structure
 
@@ -113,6 +120,11 @@ home-controller/
 │   ├── fetcher.go         # API data fetching
 │   ├── poller.go          # Periodic polling logic
 │   └── types.go           # Netatmo API types
+├── control/
+│   ├── controller.go      # Thermostat control logic
+│   ├── types.go           # Control decision types
+│   ├── metrics.go         # Control metrics push
+│   └── *_test.go          # Control tests
 ├── power/
 │   ├── scraper.go         # HTTP scraper for power meters
 │   ├── poller.go          # Periodic polling logic
@@ -133,6 +145,65 @@ home-controller/
 └── README.md              # Detailed documentation
 ```
 
+## Thermostat Control (Active Feature)
+
+The service includes **intelligent thermostat control** that compensates for inaccurate Netatmo sensors by using accurate Xiaomi BLE sensors as the source of truth.
+
+### How It Works
+
+1. **Monitoring**: Reads accurate temperature from Xiaomi BLE sensors
+2. **Comparison**: Compares against target temperature from schedule
+3. **Compensation**: Calculates adjusted setpoint to compensate for Netatmo sensor offset
+4. **Override**: Sends manual override to Netatmo API to achieve desired room temperature
+
+### External Modification Detection
+
+The system detects and respects manual thermostat changes to avoid fighting with user preferences:
+
+**Detection Logic** - External modification is detected when **ALL** of these are true:
+1. A command was previously sent (not first run)
+2. At least 2 minutes have passed (allows API propagation)
+3. Override duration has NOT expired (within expected override window)
+4. Thermostat is in **manual mode** (not schedule mode)
+5. Current setpoint differs from what was sent (>0.1°C)
+
+**Safeguards**:
+- ✅ **Schedule changes ignored**: When thermostat is in schedule mode, setpoint changes are expected (schedule changes throughout the day)
+- ✅ **Expired overrides ignored**: After override duration expires, thermostat naturally returns to schedule without triggering detection
+- ✅ **Manual changes respected**: When user manually changes temperature (switches to manual mode), automation pauses indefinitely
+
+**Resume Condition**: Automation only resumes when thermostat is switched back to "schedule" mode
+
+### Configuration Options
+
+**Thermostat Control** (in `config.yaml`):
+- `enabled`: Enable/disable thermostat control
+- `temperatureThreshold`: Minimum temperature difference to trigger action (default: 0.5°C)
+- `controlIntervalSeconds`: How often to evaluate control decisions (default: 60s)
+- `overrideDurationMinutes`: How long manual overrides last (default: 10 minutes)
+- `recheckDelayMinutes`: Delay before re-evaluating after sending override (default: 5 minutes)
+- `minSetpointCelsius`/`maxSetpointCelsius`: Safety limits (default: 7-30°C)
+- `mappings`: List of room-to-sensor mappings (RoomName, SensorMAC, RoomID)
+- `hardOverrides`: Time-based temperature overrides (schedule, days, targetTemperature)
+- `dryRun`: Test mode without actually sending API commands
+
+### Metrics and Observability
+
+All control decisions are logged with:
+- `thermostat_mode`: Current mode (schedule/manual/away/hg)
+- `xiaomi_temp`: Accurate temperature from BLE sensor
+- `scheduled_temp`: Target temperature from schedule
+- `setpoint_temp`: Current thermostat setpoint
+- `thermostat_measured`: Temperature reported by Netatmo sensor
+- `action`: Decision taken (skip/no_adjustment_needed/set_manual_override)
+- `reason`: Human-readable explanation
+
+Prometheus metrics include all temperature readings plus:
+- `thermostat_control_action`: Control action taken (0=skip, 1=no_adjustment, 2=override)
+- `thermostat_control_temperature_difference_celsius`: Xiaomi vs scheduled temp
+- `thermostat_control_setpoint_adjustment_celsius`: Calculated adjustment
+- Labels: `room_name`, `thermostat_mode`
+
 ## Configuration
 
 The service uses `config.yaml` with environment variable overrides via cleanenv:
@@ -141,6 +212,7 @@ The service uses `config.yaml` with environment variable overrides via cleanenv:
 
 **BLE Sensors**: List of LYWSD03MMC sensors with MAC addresses
 **Netatmo**: OAuth2 credentials, fetch interval (60s default)
+**Thermostat Control**: Temperature thresholds, control intervals, room mappings (see Thermostat Control section)
 **Power Meter**: HTTP endpoint, scrape interval
 **Pyroscope**: Continuous profiling configuration (CPU, memory, goroutines, mutex, block)
 **Prometheus**: Push interval (30s), endpoint URL, credentials, buffer/batch sizes
@@ -274,16 +346,27 @@ Enable profiling by setting `pyroscope.enabled: true` in `config.yaml` and provi
 - Use tags (hostname, environment, version) for filtering in Pyroscope UI
 - Monitor overhead in production (typically <5% with default settings)
 
-## Future Plans
+## Current Status and Future Plans
 
-This service is designed as the foundation for intelligent climate control:
-1. **Current**: Monitoring only (BLE sensors, Netatmo, power meters) + continuous profiling
-2. **Next**: Decision-making logic to open/close thermostats based on:
-   - Temperature targets
-   - Energy prices
-   - Occupancy detection
-   - Weather forecasts
-3. **Future**: ML-based optimization for comfort vs. energy efficiency
+### Implemented (Active)
+- ✅ **Climate Monitoring**: BLE sensors, Netatmo, power meters
+- ✅ **Thermostat Control**: Automated temperature control with sensor offset compensation
+- ✅ **External Modification Detection**: Respects manual user overrides
+- ✅ **Continuous Profiling**: Pyroscope integration for performance monitoring
+- ✅ **Metrics Push**: All data to Prometheus/Grafana Cloud
+
+### Future Enhancements
+1. **Smart Scheduling**:
+   - Energy price integration (adjust heating based on electricity costs)
+   - Occupancy detection (reduce heating when rooms are empty)
+   - Weather forecasts (pre-heat before cold snaps)
+2. **ML-Based Optimization**:
+   - Learn heating patterns and thermal characteristics of rooms
+   - Predict optimal pre-heating times
+   - Balance comfort vs. energy efficiency
+3. **Multi-Room Coordination**:
+   - Zone-based heating strategies
+   - Heat distribution optimization across rooms
 
 ## Common Development Tasks
 
@@ -308,6 +391,34 @@ This service is designed as the foundation for intelligent climate control:
 - Grant capabilities: `sudo setcap cap_net_admin+eip ./home-controller`
 - Verify MAC addresses match ATC firmware sensors
 - Check RSSI values in logs for signal strength
+
+### Debugging Thermostat Control Issues
+
+**Automation not taking action:**
+1. Check if external modification detected:
+   - Look for "external modification detected" in logs
+   - Resume by switching thermostat to "schedule" mode in Netatmo app
+2. Verify sensor data available:
+   - Check logs for "sensor data unavailable"
+   - Ensure BLE sensor is in range and broadcasting
+3. Check temperature threshold:
+   - Temperature difference must exceed `temperatureThreshold` (default 0.5°C)
+   - View logs: `xiaomi_temp`, `scheduled_temp`, `diff`
+
+**Automation incorrectly pausing:**
+- Check `thermostat_mode` in logs (should show schedule/manual/away/hg)
+- If mode is "schedule" and still detecting external mod → bug (report issue)
+- If override duration expired → automation should resume automatically
+
+**Understanding control decisions:**
+- All decisions logged with full context:
+  - `action`: skip/no_adjustment_needed/set_manual_override
+  - `reason`: Human-readable explanation
+  - `thermostat_mode`: Current mode
+  - `xiaomi_temp`: Accurate sensor reading
+  - `scheduled_temp`: Target from schedule
+  - `thermostat_measured`: Netatmo sensor reading (often inaccurate)
+  - `setpoint_temp`: What thermostat is currently set to
 
 ## Related Documentation
 
