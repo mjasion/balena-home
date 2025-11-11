@@ -500,7 +500,7 @@ func (c *Controller) evaluateRoom(
 	// Calculate temperature difference
 	tempDiff := xiaomiTemp - scheduledTemp
 
-	// CASE 1: Room too warm - cancel override
+	// CASE 1: Room too warm - actively cool down
 	if tempDiff > c.config.TemperatureThreshold {
 		span.AddEvent("v2_cancel_override",
 			trace.WithAttributes(
@@ -509,11 +509,13 @@ func (c *Controller) evaluateRoom(
 			),
 		)
 		decision.Action = "cancel_override"
-		decision.CalculatedSetpoint = scheduledTemp // Set back to schedule
-		decision.OverrideEndTime = time.Now().Add(1 * time.Minute).Unix() // Expire in 1 min
+		// Actively cool: set 0.5°C below current thermostat reading
+		decision.CalculatedSetpoint = roomStatus.ThermMeasuredTemperature - 0.5
+		// Override until schedule end to ensure cooling completes
+		decision.OverrideEndTime = scheduleEndTime.Unix()
 		decision.ScheduleEndTime = scheduleEndTime.Unix()
-		decision.Reason = fmt.Sprintf("room too warm: xiaomi=%.1f°C > scheduled=%.1f°C (diff=+%.2f°C)",
-			xiaomiTemp, scheduledTemp, tempDiff)
+		decision.Reason = fmt.Sprintf("room too warm: xiaomi=%.1f°C > scheduled=%.1f°C (diff=+%.2f°C), cooling to %.1f°C",
+			xiaomiTemp, scheduledTemp, tempDiff, decision.CalculatedSetpoint)
 		return decision
 	}
 

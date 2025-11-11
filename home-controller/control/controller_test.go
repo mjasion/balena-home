@@ -1012,7 +1012,7 @@ func TestMaintainMode(t *testing.T) {
 }
 
 // TestCancelOverride tests V2 cancel override logic:
-// When room too warm, cancel override by expiring in 1 minute
+// When room too warm, actively cool by setting setpoint below current temp
 func TestCancelOverride(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	controlBuffer := buffer.New(100, logger)
@@ -1040,6 +1040,7 @@ func TestCancelOverride(t *testing.T) {
 		OriginalScheduledTemp: 22.0,
 		LastSetpoint:          24.0,
 		LastSetpointTime:      time.Now().Add(-5 * time.Minute),
+		ScheduleEndTime:       time.Now().Add(1 * time.Hour),
 	}
 	c.stateMu.Unlock()
 
@@ -1072,29 +1073,34 @@ func TestCancelOverride(t *testing.T) {
 		t.Errorf("Expected action 'cancel_override', got '%s'", decision.Action)
 	}
 
-	// Should set back to schedule temperature
-	if decision.CalculatedSetpoint != 22.0 {
-		t.Errorf("CalculatedSetpoint = %.1f, want 22.0 (schedule temp)",
-			decision.CalculatedSetpoint)
+	// Should actively cool: thermostatMeasured - 0.5 = 24.5 - 0.5 = 24.0°C
+	expectedSetpoint := 24.0
+	if decision.CalculatedSetpoint != expectedSetpoint {
+		t.Errorf("CalculatedSetpoint = %.1f, want %.1f (thermostat - 0.5°C for active cooling)",
+			decision.CalculatedSetpoint, expectedSetpoint)
 	}
 
-	// Override should expire in ~1 minute
+	// Override should extend to schedule end time (not just 1 minute)
 	overrideEndTime := time.Unix(decision.OverrideEndTime, 0)
 	timeUntilExpiry := time.Until(overrideEndTime)
-	if timeUntilExpiry < 30*time.Second || timeUntilExpiry > 90*time.Second {
-		t.Errorf("Override end time = %v (in %v), want ~1 minute from now",
+	if timeUntilExpiry < 45*time.Minute || timeUntilExpiry > 75*time.Minute {
+		t.Errorf("Override end time = %v (in %v), want ~1 hour from now (schedule end)",
 			overrideEndTime, timeUntilExpiry)
 	}
 
-	// Verify reason mentions room too warm
+	// Verify reason mentions room too warm and cooling
 	if !strings.Contains(decision.Reason, "room too warm") {
 		t.Errorf("Expected reason to mention 'room too warm', got: %s", decision.Reason)
+	}
+	if !strings.Contains(decision.Reason, "cooling") {
+		t.Errorf("Expected reason to mention 'cooling', got: %s", decision.Reason)
 	}
 
 	t.Logf("✓ Cancel override test passed:")
 	t.Logf("  Room too warm: xiaomi=25.0°C > target=22.0°C")
-	t.Logf("  Action: Cancel override, expire in ~1 minute")
-	t.Logf("  Set to schedule: 22.0°C")
+	t.Logf("  Action: Cancel override with active cooling")
+	t.Logf("  Set to: 24.0°C (thermostat - 0.5°C)")
+	t.Logf("  Override until schedule end (~1 hour)")
 	t.Logf("  Reason: %s", decision.Reason)
 }
 
