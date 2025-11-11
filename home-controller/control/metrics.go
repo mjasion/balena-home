@@ -50,6 +50,7 @@ func (c *Controller) pushControlMetrics(decision ControlDecision, hardOverrideAc
 			XiaomiTemperature:     decision.XiaomiTemperature,
 			ScheduledTemperature:  decision.ScheduledTemp,
 			ThermostatMeasured:    decision.ThermostatMeasured,
+			ThermostatMode:        decision.ThermostatMode,
 			CalculatedSetpoint:    decision.CalculatedSetpoint,
 			TemperatureDifference: tempDiff,
 			SetpointAdjustment:    setpointAdj,

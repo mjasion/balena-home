@@ -44,6 +44,7 @@ type ControlDecision struct {
 	ScheduledTemp       float64 // Target temperature from Netatmo schedule (when in "schedule" mode)
 	SetpointTemperature float64 // Current setpoint temperature (could be schedule or manual override)
 	ThermostatMeasured  float64 // Temperature reported by thermostat's built-in sensor
+	ThermostatMode      string  // Thermostat mode: "schedule", "manual", "away", "hg" (frost guard), etc.
 	CalculatedSetpoint  float64 // New setpoint (if action is set_manual_override)
 	OverrideEndTime     int64   // Unix timestamp for override expiration
 }

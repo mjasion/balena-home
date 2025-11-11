@@ -65,6 +65,7 @@ type ControlReading struct {
 	XiaomiTemperature      float64
 	ScheduledTemperature   float64
 	ThermostatMeasured     float64
+	ThermostatMode         string  // "schedule", "manual", "away", "hg" (frost guard), etc.
 	CalculatedSetpoint     float64
 	TemperatureDifference  float64 // xiaomiTemp - scheduledTemp
 	SetpointAdjustment     float64 // calculatedSetpoint - thermostatMeasured

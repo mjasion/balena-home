@@ -325,6 +325,7 @@ func (c *Controller) evaluateRoom(
 			attribute.Float64("scheduled_temperature", decision.ScheduledTemp),
 			attribute.Float64("thermostat_measured", decision.ThermostatMeasured),
 			attribute.Float64("setpoint_temperature", decision.SetpointTemperature),
+			attribute.String("thermostat_mode", decision.ThermostatMode),
 		)
 		if decision.Action == "set_manual_override" {
 			span.SetAttributes(attribute.Float64("calculated_setpoint", decision.CalculatedSetpoint))
@@ -351,6 +352,9 @@ func (c *Controller) evaluateRoom(
 
 		// Populate current setpoint temperature (what the thermostat is currently set to)
 		decision.SetpointTemperature = roomStatus.ThermSetpointTemperature
+
+		// Populate thermostat mode
+		decision.ThermostatMode = roomStatus.ThermSetpointMode
 
 		// Determine scheduled temperature based on mode:
 		// - If in "schedule" mode: use ThermSetpointTemperature (reflects actual schedule)
@@ -579,6 +583,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 				zap.Float64("scheduled_temp", decision.ScheduledTemp),
 				zap.Float64("setpoint_temp", decision.SetpointTemperature),
 				zap.Float64("thermostat_measured", decision.ThermostatMeasured),
+				zap.String("thermostat_mode", decision.ThermostatMode),
 			)
 		} else {
 			c.logger.Info("control decision",
@@ -590,6 +595,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 				zap.Float64("scheduled_temp", decision.ScheduledTemp),
 				zap.Float64("setpoint_temp", decision.SetpointTemperature),
 				zap.Float64("thermostat_measured", decision.ThermostatMeasured),
+				zap.String("thermostat_mode", decision.ThermostatMode),
 			)
 		}
 		return
@@ -632,6 +638,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 				zap.Float64("thermostat_measured", decision.ThermostatMeasured),
 				zap.String("reason", decision.Reason),
 				zap.Float64("setpoint_temp", decision.SetpointTemperature),
+				zap.String("thermostat_mode", decision.ThermostatMode),
 			)
 
 			// Update state even in dry-run mode (for testing recheck delays)
@@ -656,6 +663,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 			zap.Float64("thermostat_measured", decision.ThermostatMeasured),
 			zap.String("reason", decision.Reason),
 			zap.Float64("setpoint_temp", decision.SetpointTemperature),
+			zap.String("thermostat_mode", decision.ThermostatMode),
 		)
 
 		// Call Netatmo API

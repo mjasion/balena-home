@@ -630,9 +630,16 @@ func (p *Pusher) buildControlTimeSeries(readings []*buffer.ControlReading) ([]pr
 	var timeSeries []prompb.TimeSeries
 
 	for roomName, roomData := range roomReadings {
+		// Get thermostat mode from the most recent reading (all readings in same batch should have same mode)
+		thermostatMode := ""
+		if len(roomData) > 0 {
+			thermostatMode = roomData[len(roomData)-1].ThermostatMode
+		}
+
 		// Create base labels for this room
 		baseLabels := []prompb.Label{
 			{Name: "room_name", Value: roomName},
+			{Name: "thermostat_mode", Value: thermostatMode},
 		}
 
 		// Prepare samples for different metrics
