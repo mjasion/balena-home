@@ -296,7 +296,13 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 	)
 }
 
-// evaluateRoom evaluates whether a room needs thermostat adjustment
+// evaluateRoom implements the control algorithm:
+// 1. Track original scheduled temp when sending override
+// 2. Override duration = until end of current schedule
+// 3. Aggressive heating: If setpoint == thermostat_measured → raise by 0.5°C
+// 4. Maintain temp: If |xiaomi - scheduled| <= threshold → set to thermostat_measured
+// 5. Too warm: If xiaomi > scheduled → cancel override (expire in 1 min)
+// 6. Takeover: If manual mode > 1 hour → take control
 func (c *Controller) evaluateRoom(
 	ctx context.Context,
 	mapping config.ThermostatMapping,
@@ -316,8 +322,19 @@ func (c *Controller) evaluateRoom(
 		Action:   "skip",
 	}
 
+	// Get current state (defensive copy) - must be before defer to capture in closure
+	c.stateMu.RLock()
+	state, exists := c.stateByRoom[mapping.RoomID]
+	if !exists {
+		c.stateMu.RUnlock()
+		span.End()
+		decision.Reason = "room state not initialized"
+		return decision
+	}
+	stateCopy := state.Copy()
+	c.stateMu.RUnlock()
+
 	defer func() {
-		// Record decision attributes before span ends
 		span.SetAttributes(
 			attribute.String("decision_action", decision.Action),
 			attribute.String("decision_reason", decision.Reason),
@@ -327,115 +344,31 @@ func (c *Controller) evaluateRoom(
 			attribute.Float64("setpoint_temperature", decision.SetpointTemperature),
 			attribute.String("thermostat_mode", decision.ThermostatMode),
 		)
-		if decision.Action == "set_manual_override" {
-			span.SetAttributes(attribute.Float64("calculated_setpoint", decision.CalculatedSetpoint))
+		if decision.Action == "set_manual_override" || decision.Action == "cancel_override" {
+			span.SetAttributes(
+				attribute.Float64("calculated_setpoint", decision.CalculatedSetpoint),
+				attribute.Int64("override_end_time", decision.OverrideEndTime),
+				attribute.Int64("schedule_end_time", decision.ScheduleEndTime),
+			)
+		}
+		// V2: Add state tracking attributes for observability
+		if !stateCopy.ManualModeSince.IsZero() {
+			span.SetAttributes(attribute.String("manual_mode_since", stateCopy.ManualModeSince.Format(time.RFC3339)))
+		}
+		if stateCopy.OriginalScheduledTemp > 0 {
+			span.SetAttributes(
+				attribute.Float64("original_scheduled_temp", stateCopy.OriginalScheduledTemp),
+				attribute.String("schedule_end_time_stored", stateCopy.ScheduleEndTime.Format(time.RFC3339)),
+			)
+		}
+		if stateCopy.ExternallyModified {
+			span.SetAttributes(attribute.Bool("externally_modified", true))
 		}
 		span.End()
 	}()
 
-	// Get current state (defensive copy)
-	c.stateMu.RLock()
-	state, exists := c.stateByRoom[mapping.RoomID]
-	if !exists {
-		c.stateMu.RUnlock()
-		decision.Reason = "room state not initialized"
-		return decision
-	}
-	stateCopy := state.Copy()
-	c.stateMu.RUnlock()
-
-	// Get room status early to populate temperature fields in all cases
+	// Validate room status exists and is reachable
 	roomStatus, roomExists := roomStatusMap[mapping.RoomID]
-	if roomExists && roomStatus.Reachable {
-		// Populate thermostat measured temperature
-		decision.ThermostatMeasured = roomStatus.ThermMeasuredTemperature
-
-		// Populate current setpoint temperature (what the thermostat is currently set to)
-		decision.SetpointTemperature = roomStatus.ThermSetpointTemperature
-
-		// Populate thermostat mode
-		decision.ThermostatMode = roomStatus.ThermSetpointMode
-
-		// Determine scheduled temperature based on mode:
-		// - If in "schedule" mode: use ThermSetpointTemperature (reflects actual schedule)
-		// - If in "manual" mode: use stored schedule from state (if available) or fallback to setpoint
-		// - Hard overrides always take precedence over everything
-		scheduledTemp := roomStatus.ThermSetpointTemperature
-
-		// Check for hard overrides first (highest precedence)
-		hardOverrideActive := false
-		for _, override := range c.config.HardOverrides {
-			if override.RoomName == mapping.RoomName {
-				targetTemp, active := c.getHardOverrideTemp(override)
-				if active {
-					scheduledTemp = targetTemp
-					hardOverrideActive = true
-					break
-				}
-			}
-		}
-
-		// If no hard override and thermostat is in manual mode, we need the actual schedule
-		// The problem: Netatmo API doesn't expose the schedule when in manual mode
-		// Solution: When in schedule mode, trust ThermSetpointTemperature
-		//           When in manual mode, it could be our override - but we still use it as "scheduled"
-		//           because we want to know if the user changed the schedule itself
-		if !hardOverrideActive && roomStatus.ThermSetpointMode != "schedule" {
-			// Thermostat is in manual mode (could be our override or user's manual change)
-			// We'll use the current setpoint as "scheduled" - this means we compare against
-			// whatever is currently set, which is correct behavior
-			scheduledTemp = roomStatus.ThermSetpointTemperature
-		}
-
-		decision.ScheduledTemp = scheduledTemp
-
-		// Get Xiaomi sensor readings (last 60 seconds, weighted average)
-		sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
-		xiaomiTemp, err := c.getWeightedAverageTemperature(sensorMAC)
-		if err == nil {
-			decision.XiaomiTemperature = xiaomiTemp
-		}
-		// If sensor data unavailable, XiaomiTemperature remains 0 (logged but not critical for skip decisions)
-	}
-
-	// Check precedence hierarchy
-	// 1. External modification detected - skip control entirely
-	if stateCopy.ExternallyModified {
-		// Check reset conditions
-		if roomExists {
-			// Reset ONLY if mode is "schedule" (user explicitly returned to schedule mode)
-			if roomStatus.ThermSetpointMode == "schedule" {
-				c.logger.Info("external modification cleared: thermostat returned to schedule mode",
-					zap.String("room_name", mapping.RoomName),
-				)
-				c.clearExternalModification(mapping.RoomID)
-			} else {
-				// Stay paused - respect manual override indefinitely
-				decision.Reason = "externally modified, respecting manual override"
-				return decision
-			}
-		} else {
-			decision.Reason = "externally modified, room status unavailable"
-			return decision
-		}
-	}
-
-	// Check if we should extend an existing override
-	// Extension happens when:
-	// 1. We previously sent an override (OverrideEndTime is set)
-	// 2. The override is about to expire (within extensionThresholdMinutes)
-	// 3. Temperature still requires control
-	shouldExtend := false
-	var timeUntilExpiry time.Duration
-	if !stateCopy.OverrideEndTime.IsZero() {
-		timeUntilExpiry = time.Until(stateCopy.OverrideEndTime)
-		extensionThreshold := time.Duration(c.config.ExtensionThresholdMinutes) * time.Minute
-		if timeUntilExpiry > 0 && timeUntilExpiry < extensionThreshold {
-			shouldExtend = true
-		}
-	}
-
-	// Validate room status is available and reachable for control decisions
 	if !roomExists {
 		decision.Reason = "room not found in Netatmo status"
 		c.logger.Warn("room not found in Netatmo home status",
@@ -450,9 +383,15 @@ func (c *Controller) evaluateRoom(
 		return decision
 	}
 
-	// Validate Xiaomi sensor data is available for control decisions
-	if decision.XiaomiTemperature == 0 {
-		sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
+	// Populate decision fields
+	decision.ThermostatMeasured = roomStatus.ThermMeasuredTemperature
+	decision.SetpointTemperature = roomStatus.ThermSetpointTemperature
+	decision.ThermostatMode = roomStatus.ThermSetpointMode
+
+	// Get Xiaomi sensor reading
+	sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
+	xiaomiTemp, err := c.getWeightedAverageTemperature(sensorMAC)
+	if err != nil {
 		decision.Reason = "sensor data unavailable"
 		c.logger.Warn("sensor data unavailable for control",
 			zap.String("room_name", mapping.RoomName),
@@ -460,136 +399,197 @@ func (c *Controller) evaluateRoom(
 		)
 		return decision
 	}
+	decision.XiaomiTemperature = xiaomiTemp
 
-	// 2. Extract values for control logic (already populated in decision)
-	xiaomiTemp := decision.XiaomiTemperature
-	scheduledTemp := decision.ScheduledTemp
+	// Determine scheduled temperature
+	var scheduledTemp float64
+	var scheduleEndTime time.Time
 	hardOverrideActive := false
+
+	// Check for hard overrides first (highest precedence)
 	for _, override := range c.config.HardOverrides {
 		if override.RoomName == mapping.RoomName {
-			_, active := c.getHardOverrideTemp(override)
+			targetTemp, active := c.getHardOverrideTemp(override)
 			if active {
+				scheduledTemp = targetTemp
 				hardOverrideActive = true
-				c.logger.Debug("hard override active",
-					zap.String("room_name", mapping.RoomName),
-					zap.Float64("override_temp", scheduledTemp),
-				)
+				// For hard overrides, use a far future time as we don't have schedule info
+				scheduleEndTime = time.Now().Add(24 * time.Hour)
 				break
 			}
 		}
 	}
 
-	// 3. Calculate temperature difference
+	if !hardOverrideActive {
+		// Use schedule from Netatmo API
+		if roomStatus.ThermSetpointMode == "schedule" {
+			// In schedule mode, current setpoint IS the schedule
+			scheduledTemp = roomStatus.ThermSetpointTemperature
+			if roomStatus.ThermSetpointEndTime > 0 {
+				scheduleEndTime = time.Unix(roomStatus.ThermSetpointEndTime, 0)
+			} else {
+				// No end time? Use 1 hour as default
+				scheduleEndTime = time.Now().Add(1 * time.Hour)
+			}
+		} else {
+			// In manual mode - check if we have stored schedule or need to take over
+			if stateCopy.OriginalScheduledTemp > 0 {
+				// We're controlling, use stored schedule
+				scheduledTemp = stateCopy.OriginalScheduledTemp
+				scheduleEndTime = stateCopy.ScheduleEndTime
+			} else {
+				// Check manual mode takeover
+				if stateCopy.ManualModeSince.IsZero() {
+					// First time seeing manual mode, track it
+					c.stateMu.Lock()
+					if state.ManualModeSince.IsZero() {
+						state.ManualModeSince = time.Now()
+					}
+					c.stateMu.Unlock()
+					decision.Reason = "manual mode detected, tracking duration"
+					return decision
+				}
+
+				// Check if manual mode long enough to take over
+				manualDuration := time.Since(stateCopy.ManualModeSince)
+				takeoverThreshold := time.Duration(c.config.ManualModeTakeoverMinutes) * time.Minute
+				if manualDuration < takeoverThreshold {
+					decision.Reason = fmt.Sprintf("manual mode for %.0f min, waiting for %.0f min to takeover",
+						manualDuration.Minutes(), takeoverThreshold.Minutes())
+					return decision
+				}
+
+				// Take over! Use current setpoint as schedule
+				span.AddEvent("manual_mode_takeover",
+					trace.WithAttributes(
+						attribute.Float64("manual_duration_minutes", manualDuration.Minutes()),
+						attribute.Float64("takeover_threshold_minutes", takeoverThreshold.Minutes()),
+						attribute.Float64("baseline_setpoint", roomStatus.ThermSetpointTemperature),
+					),
+				)
+				c.logger.Info("taking over manual mode thermostat",
+					zap.String("room_name", mapping.RoomName),
+					zap.Duration("manual_duration", manualDuration),
+				)
+				scheduledTemp = roomStatus.ThermSetpointTemperature
+				scheduleEndTime = time.Now().Add(1 * time.Hour)
+			}
+		}
+	}
+
+	decision.ScheduledTemp = scheduledTemp
+
+	// Check if we're externally modified (user manual override, not ours)
+	if stateCopy.ExternallyModified {
+		// Reset if switched back to schedule mode
+		if roomStatus.ThermSetpointMode == "schedule" {
+			c.logger.Info("external modification cleared: thermostat returned to schedule mode",
+				zap.String("room_name", mapping.RoomName),
+			)
+			c.clearExternalModification(mapping.RoomID)
+			// Clear manual mode tracking too
+			c.stateMu.Lock()
+			state.ManualModeSince = time.Time{}
+			c.stateMu.Unlock()
+		} else {
+			decision.Reason = "externally modified, respecting manual override"
+			return decision
+		}
+	}
+
+	// Calculate temperature difference
 	tempDiff := xiaomiTemp - scheduledTemp
-	if math.Abs(tempDiff) < c.config.TemperatureThreshold {
-		decision.Action = "no_adjustment_needed"
-		decision.Reason = fmt.Sprintf("temperature difference %.2f°C below threshold %.2f°C",
-			math.Abs(tempDiff), c.config.TemperatureThreshold)
+
+	// CASE 1: Room too warm - cancel override
+	if tempDiff > c.config.TemperatureThreshold {
+		span.AddEvent("v2_cancel_override",
+			trace.WithAttributes(
+				attribute.Float64("temp_diff", tempDiff),
+				attribute.String("reason", "room_too_warm"),
+			),
+		)
+		decision.Action = "cancel_override"
+		decision.CalculatedSetpoint = scheduledTemp // Set back to schedule
+		decision.OverrideEndTime = time.Now().Add(1 * time.Minute).Unix() // Expire in 1 min
+		decision.ScheduleEndTime = scheduleEndTime.Unix()
+		decision.Reason = fmt.Sprintf("room too warm: xiaomi=%.1f°C > scheduled=%.1f°C (diff=+%.2f°C)",
+			xiaomiTemp, scheduledTemp, tempDiff)
 		return decision
 	}
 
-	// 4. Calculate setpoint to compensate for sensor offset
-	// The Netatmo uses its own built-in sensor for control, which may differ from the Xiaomi sensor.
-	// We need to set a setpoint that ensures the Netatmo will heat/cool appropriately.
-	//
-	// IMPORTANT CONTEXT: Netatmo sensors are known to be faulty and often read 2-3°C higher than
-	// actual room temperature. This is why this controller exists - to use accurate Xiaomi sensors
-	// as the source of truth and compensate for Netatmo's broken sensors.
-	//
-	// Large sensor offsets (2-5°C) are EXPECTED and NORMAL. The algorithm compensates without limits
-	// because Netatmo's systematic sensor inaccuracy requires aggressive compensation.
-	//
-	// Strategy:
-	// - If room is too cold (xiaomi < scheduled): set setpoint ABOVE thermostatMeasured + 0.5°C
-	// - If room is too warm (xiaomi > scheduled): set setpoint BELOW thermostatMeasured - 0.5°C
-	// - The 0.5°C offset ensures the thermostat actually triggers heating/cooling
-	// - NO upper limit on compensation - large offsets are expected with faulty Netatmo sensors
-	var calculatedSetpoint float64
-
-	if tempDiff < 0 {
-		// Room too cold - need to heat
-		// Ensure setpoint is high enough to trigger heating on Netatmo's sensor
-		calculatedSetpoint = math.Max(scheduledTemp, decision.ThermostatMeasured+0.5)
-	} else {
-		// Room too warm - need to cool (or stop heating)
-		// Ensure setpoint is low enough to stop heating on Netatmo's sensor
-		calculatedSetpoint = math.Min(scheduledTemp, decision.ThermostatMeasured-0.5)
-	}
-
-	// Check if setpoint matches schedule (within 0.1°C tolerance)
-	// If so, normally no need for manual override
-	// EXCEPTION: If we need to extend an existing override, send it anyway
-	if math.Abs(calculatedSetpoint-scheduledTemp) < 0.1 {
-		if !shouldExtend {
-			decision.Action = "no_adjustment_needed"
-			decision.Reason = fmt.Sprintf("calculated setpoint (%.1f°C) matches schedule, no override needed", calculatedSetpoint)
-			return decision
-		}
-		// Override is about to expire and needs extension
-		c.logger.Debug("extending override even though setpoint matches schedule",
-			zap.String("room_name", mapping.RoomName),
-			zap.Float64("calculated_setpoint", calculatedSetpoint),
-			zap.Duration("time_until_expiry", timeUntilExpiry),
+	// CASE 2: Temperature within threshold - maintain current temp
+	if math.Abs(tempDiff) <= c.config.TemperatureThreshold {
+		span.AddEvent("v2_maintain_mode",
+			trace.WithAttributes(
+				attribute.Float64("temp_diff", tempDiff),
+				attribute.Float64("threshold", c.config.TemperatureThreshold),
+			),
 		)
+		decision.Action = "set_manual_override"
+		decision.CalculatedSetpoint = decision.ThermostatMeasured // Maintain current
+		decision.OverrideEndTime = scheduleEndTime.Unix()
+		decision.ScheduleEndTime = scheduleEndTime.Unix()
+		decision.Reason = fmt.Sprintf("temperature OK: xiaomi=%.1f°C ≈ scheduled=%.1f°C (diff=%.2f°C), maintaining at %.1f°C",
+			xiaomiTemp, scheduledTemp, tempDiff, decision.ThermostatMeasured)
+		return decision
 	}
 
-
-	// Safety bounds: 7.0-30.0°C (Netatmo API limits)
-	if calculatedSetpoint < 7.0 {
-		calculatedSetpoint = 7.0
-	} else if calculatedSetpoint > 30.0 {
-		calculatedSetpoint = 30.0
+	// CASE 3: Room too cold - need to heat
+	// Sub-case 3a: Thermostat reached setpoint but room still cold - raise aggressively
+	if math.Abs(decision.SetpointTemperature-decision.ThermostatMeasured) < 0.1 {
+		// Thermostat thinks it reached target, but room is cold - raise by 0.5°C
+		span.AddEvent("v2_aggressive_heating",
+			trace.WithAttributes(
+				attribute.Float64("current_setpoint", decision.SetpointTemperature),
+				attribute.Float64("thermostat_measured", decision.ThermostatMeasured),
+				attribute.Float64("new_setpoint", decision.SetpointTemperature+0.5),
+			),
+		)
+		decision.Action = "set_manual_override"
+		decision.CalculatedSetpoint = decision.SetpointTemperature + 0.5
+		decision.OverrideEndTime = scheduleEndTime.Unix()
+		decision.ScheduleEndTime = scheduleEndTime.Unix()
+		decision.Reason = fmt.Sprintf("aggressive heating: setpoint reached (%.1f°C) but room cold (xiaomi=%.1f°C < scheduled=%.1f°C), raising by +0.5°C",
+			decision.SetpointTemperature, xiaomiTemp, scheduledTemp)
+	} else {
+		// Sub-case 3b: Normal heating - calculate compensation
+		span.AddEvent("v2_normal_heating",
+			trace.WithAttributes(
+				attribute.Float64("temp_diff", tempDiff),
+				attribute.Float64("compensation", math.Max(scheduledTemp, decision.ThermostatMeasured+0.5)),
+			),
+		)
+		decision.Action = "set_manual_override"
+		// Ensure setpoint is high enough to trigger heating
+		decision.CalculatedSetpoint = math.Max(scheduledTemp, decision.ThermostatMeasured+0.5)
+		decision.OverrideEndTime = scheduleEndTime.Unix()
+		decision.ScheduleEndTime = scheduleEndTime.Unix()
+		decision.Reason = fmt.Sprintf("heating: xiaomi=%.1f°C < scheduled=%.1f°C (diff=%.2f°C), setpoint=%.1f°C",
+			xiaomiTemp, scheduledTemp, tempDiff, decision.CalculatedSetpoint)
 	}
 
-	decision.Action = "set_manual_override"
-	decision.CalculatedSetpoint = calculatedSetpoint
-	decision.OverrideEndTime = time.Now().Add(time.Duration(c.config.OverrideDurationMinutes) * time.Minute).Unix()
-
-	// Build reason message
-	reasonSuffix := ""
-	if hardOverrideActive {
-		reasonSuffix = " (hard override)"
-	} else if shouldExtend {
-		reasonSuffix = fmt.Sprintf(" (extending, %.0fm left)", timeUntilExpiry.Minutes())
+	// Apply safety limits
+	if decision.CalculatedSetpoint < c.config.MinSetpointCelsius {
+		decision.CalculatedSetpoint = c.config.MinSetpointCelsius
+	} else if decision.CalculatedSetpoint > c.config.MaxSetpointCelsius {
+		decision.CalculatedSetpoint = c.config.MaxSetpointCelsius
 	}
-	decision.Reason = fmt.Sprintf("xiaomi=%.1f°C, target=%.1f°C, diff=%.2f°C%s",
-		xiaomiTemp, scheduledTemp, tempDiff, reasonSuffix)
 
-	// Detect external modification (if we previously sent a command)
-	// IMPORTANT: Only check for external modifications when thermostat is in MANUAL mode.
-	// When in schedule mode, setpoint changes are expected (schedule changes throughout the day).
-	// Comparing current setpoint to a command sent hours ago would incorrectly flag schedule changes as external mods.
-	//
-	// Also skip check if override duration has expired - the thermostat should naturally return to schedule.
-	timeSinceLastCommand := time.Since(stateCopy.LastSetpointTime)
-	overrideExpired := !stateCopy.OverrideEndTime.IsZero() && time.Now().After(stateCopy.OverrideEndTime)
-
+	// Detect external modification (if we sent a command before and it changed)
 	if !stateCopy.LastSetpointTime.IsZero() &&
-		timeSinceLastCommand > 2*time.Minute &&
-		!overrideExpired &&
-		roomStatus.ThermSetpointMode != "schedule" {
-		// Check if current setpoint differs from what we sent
-		delta := roomStatus.ThermSetpointTemperature - stateCopy.LastSetpoint
+		time.Since(stateCopy.LastSetpointTime) > 2*time.Minute &&
+		roomStatus.ThermSetpointMode == "manual" {
+		expectedSetpoint := stateCopy.LastSetpoint
+		actualSetpoint := roomStatus.ThermSetpointTemperature
+		delta := actualSetpoint - expectedSetpoint
+
 		if math.Abs(delta) > 0.1 {
-			// Log override end time if available
-			logFields := []zap.Field{
+			c.logger.Warn("external modification detected",
 				zap.String("room_name", mapping.RoomName),
-				zap.Float64("expected_setpoint", stateCopy.LastSetpoint),
-				zap.Float64("actual_setpoint", roomStatus.ThermSetpointTemperature),
+				zap.Float64("expected_setpoint", expectedSetpoint),
+				zap.Float64("actual_setpoint", actualSetpoint),
 				zap.Float64("delta", delta),
-				zap.Duration("time_since_last_command", timeSinceLastCommand),
-				zap.Time("last_command_sent_at", stateCopy.LastSetpointTime.In(c.warsawLocation())),
-				zap.String("thermostat_mode", roomStatus.ThermSetpointMode),
-				zap.String("resume_condition", "automation will resume only when thermostat is switched back to 'schedule' mode"),
-				zap.String("reason", "thermostat was manually changed - respecting user preference indefinitely"),
-			}
-			if !stateCopy.OverrideEndTime.IsZero() {
-				logFields = append(logFields,
-					zap.Time("override_end_time", stateCopy.OverrideEndTime.In(c.warsawLocation())),
-					zap.Duration("time_until_expiry", time.Until(stateCopy.OverrideEndTime)),
-				)
-			}
-			c.logger.Warn("external modification detected - backing off from automation indefinitely", logFields...)
+			)
 			c.markExternallyModified(mapping.RoomID)
 			decision.Action = "skip"
 			decision.Reason = "external modification detected"
@@ -599,8 +599,6 @@ func (c *Controller) evaluateRoom(
 
 	return decision
 }
-
-// executeDecision executes the control decision
 func (c *Controller) executeDecision(ctx context.Context, homeID string, decision ControlDecision) {
 	ctx, span := c.tracer.Start(ctx, "execute_decision",
 		trace.WithAttributes(
@@ -640,7 +638,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 		return
 	}
 
-	if decision.Action == "set_manual_override" {
+	if decision.Action == "set_manual_override" || decision.Action == "cancel_override" {
 		// Apply safety limits
 		safeSetpoint := decision.CalculatedSetpoint
 		clamped := false
@@ -666,6 +664,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 		// Dry-run mode: log what would be sent but don't call API
 		if c.config.DryRun {
 			overrideEndTime := time.Unix(decision.OverrideEndTime, 0)
+			scheduleEndTime := time.Unix(decision.ScheduleEndTime, 0)
 			c.logger.Info("[DRY-RUN] WOULD set temperature (not actually sent)",
 				zap.String("trace_id", span.SpanContext().TraceID().String()),
 				zap.String("room_name", decision.RoomName),
@@ -681,14 +680,17 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 				zap.String("thermostat_mode", decision.ThermostatMode),
 				zap.Time("override_end_time", overrideEndTime.In(c.warsawLocation())),
 				zap.Duration("override_duration", time.Until(overrideEndTime)),
+				zap.Time("schedule_end_time", scheduleEndTime.In(c.warsawLocation())),
 			)
 
-			// Update state even in dry-run mode (for testing override extension)
+			// Update state even in dry-run mode (for testing)
 			c.stateMu.Lock()
 			if state, exists := c.stateByRoom[decision.RoomID]; exists {
 				state.LastSetpoint = safeSetpoint
 				state.LastSetpointTime = time.Now()
 				state.OverrideEndTime = overrideEndTime
+				state.OriginalScheduledTemp = decision.ScheduledTemp
+				state.ScheduleEndTime = scheduleEndTime
 			}
 			c.stateMu.Unlock()
 			return
@@ -747,11 +749,15 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 
 		// Update state
 		overrideEndTime := time.Unix(decision.OverrideEndTime, 0)
+		scheduleEndTime := time.Unix(decision.ScheduleEndTime, 0)
 		c.stateMu.Lock()
 		if state, exists := c.stateByRoom[decision.RoomID]; exists {
 			state.LastSetpoint = safeSetpoint
 			state.LastSetpointTime = time.Now()
 			state.OverrideEndTime = overrideEndTime
+			state.OriginalScheduledTemp = decision.ScheduledTemp
+			state.ScheduleEndTime = scheduleEndTime
+			// ManualModeSince is set when entering manual mode in evaluateRoom
 		}
 		c.stateMu.Unlock()
 

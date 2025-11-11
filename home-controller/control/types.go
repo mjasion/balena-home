@@ -11,6 +11,9 @@ type ThermostatState struct {
 	LastSetpoint             float64   // Last setpoint we commanded
 	LastSetpointTime         time.Time // When we sent the last command
 	OverrideEndTime          time.Time // When the current override expires
+	OriginalScheduledTemp    float64   // Original schedule temperature when override was sent
+	ScheduleEndTime          time.Time // When the current schedule period ends
+	ManualModeSince          time.Time // When thermostat entered manual mode (for takeover detection)
 	ExternallyModified       bool      // Flag indicating manual override detected
 	ExternalModificationTime time.Time // When external modification was detected
 }
@@ -23,6 +26,9 @@ func (s *ThermostatState) Copy() ThermostatState {
 		LastSetpoint:             s.LastSetpoint,
 		LastSetpointTime:         s.LastSetpointTime,
 		OverrideEndTime:          s.OverrideEndTime,
+		OriginalScheduledTemp:    s.OriginalScheduledTemp,
+		ScheduleEndTime:          s.ScheduleEndTime,
+		ManualModeSince:          s.ManualModeSince,
 		ExternallyModified:       s.ExternallyModified,
 		ExternalModificationTime: s.ExternalModificationTime,
 	}
@@ -38,7 +44,7 @@ type SensorReading struct {
 type ControlDecision struct {
 	RoomID              string
 	RoomName            string
-	Action              string  // "skip", "no_adjustment_needed", "set_manual_override"
+	Action              string  // "skip", "no_adjustment_needed", "set_manual_override", "cancel_override"
 	Reason              string  // Human-readable reason for the action
 	XiaomiTemperature   float64 // Weighted average from sensor
 	ScheduledTemp       float64 // Target temperature from Netatmo schedule (when in "schedule" mode)
@@ -47,4 +53,5 @@ type ControlDecision struct {
 	ThermostatMode      string  // Thermostat mode: "schedule", "manual", "away", "hg" (frost guard), etc.
 	CalculatedSetpoint  float64 // New setpoint (if action is set_manual_override)
 	OverrideEndTime     int64   // Unix timestamp for override expiration
+	ScheduleEndTime     int64   // Unix timestamp for when schedule period ends
 }

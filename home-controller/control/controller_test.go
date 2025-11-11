@@ -22,8 +22,7 @@ func TestControllerConstructor(t *testing.T) {
 		Enabled:                          true,
 		TemperatureThreshold:             0.5,
 		ControlIntervalSeconds:           60,
-		ExtensionThresholdMinutes:        2,
-		OverrideDurationMinutes:          30,
+		ManualModeTakeoverMinutes:        60,
 		ExternalModificationResetMinutes: 5,
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
@@ -86,7 +85,7 @@ func TestWeightedAverageTemperature(t *testing.T) {
 		Enabled:                 true,
 		TemperatureThreshold:    0.5,
 		ControlIntervalSeconds:  60,
-		OverrideDurationMinutes: 10,
+		ManualModeTakeoverMinutes:        60,
 	}
 
 	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
@@ -656,8 +655,7 @@ func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
 		Enabled:                   true,
 		TemperatureThreshold:      0.5,
 		ControlIntervalSeconds:    60,
-		ExtensionThresholdMinutes: 2,
-		OverrideDurationMinutes:   30,
+		ManualModeTakeoverMinutes: 60,
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
 		},
@@ -666,11 +664,15 @@ func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
 	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
 
 	// Initialize state with externally modified flag (will trigger skip)
+	// In V2, we need to set OriginalScheduledTemp to indicate we were controlling
 	c.stateMu.Lock()
 	c.stateByRoom["room1"] = &ThermostatState{
-		RoomID:             "room1",
-		RoomName:           "Living Room",
-		ExternallyModified: true, // Will trigger skip
+		RoomID:                "room1",
+		RoomName:              "Living Room",
+		ExternallyModified:    true, // Will trigger skip
+		OriginalScheduledTemp: 22.0, // We were tracking this schedule
+		LastSetpoint:          22.0,
+		LastSetpointTime:      time.Now().Add(-5 * time.Minute),
 	}
 	c.stateMu.Unlock()
 
@@ -706,9 +708,9 @@ func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
 		t.Errorf("Expected action 'skip', got '%s'", decision.Action)
 	}
 
-	// Verify reason contains external modification
+	// Verify reason contains externally modified
 	if !strings.Contains(decision.Reason, "externally modified") {
-		t.Errorf("Expected reason to mention external modification, got: %s", decision.Reason)
+		t.Errorf("Expected reason to mention externally modified, got: %s", decision.Reason)
 	}
 
 	// THE FIX: Verify temperature fields are populated (not zero)
@@ -738,161 +740,20 @@ func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
 		decision.XiaomiTemperature, decision.ScheduledTemp, decision.ThermostatMeasured)
 }
 
-// TestOverrideExtension tests that the controller extends existing overrides
-// when they are about to expire and temperature still requires control
-func TestOverrideExtension(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	controlBuffer := buffer.New(100, logger)
-	metricsBuffer := buffer.New(100, logger)
-
-	cfg := &config.ThermostatControlConfig{
-		Enabled:                   true,
-		TemperatureThreshold:      0.3,
-		ControlIntervalSeconds:    60,
-		ExtensionThresholdMinutes: 2,  // Extend when < 2 minutes left
-		OverrideDurationMinutes:   30, // Each override lasts 30 minutes
-		Mappings: []config.ThermostatMapping{
-			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
-		},
-	}
-
-	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
-
-	// Initialize state with an override that's about to expire (1 minute left)
-	c.stateMu.Lock()
-	c.stateByRoom["room1"] = &ThermostatState{
-		RoomID:          "room1",
-		RoomName:        "Living Room",
-		LastSetpoint:    24.0,
-		LastSetpointTime: time.Now().Add(-29 * time.Minute), // Sent 29 minutes ago
-		OverrideEndTime: time.Now().Add(1 * time.Minute),    // Expires in 1 minute
-	}
-	c.stateMu.Unlock()
-
-	// Add sensor reading: Xiaomi shows 23.5°C (below 24°C target)
-	now := time.Now()
-	controlBuffer.Add(&buffer.Reading{
-		Type: buffer.ReadingTypeBLE,
-		BLE: &buffer.SensorReading{
-			Timestamp:          now,
-			MAC:                "AA:BB:CC:DD:EE:FF",
-			TemperatureCelsius: 23.5,
-		},
-	})
-
-	// Create room status: Temperature still requires control
-	roomStatusMap := map[string]*netatmo.RoomStatus{
-		"room1": {
-			ID:                       "room1",
-			Reachable:                true,
-			ThermMeasuredTemperature: 26.0, // Netatmo sensor offset
-			ThermSetpointTemperature: 24.0, // Current setpoint matches last command
-			ThermSetpointMode:        "manual",
-			ThermSetpointEndTime:     0,
-			ThermSetpointStartTime:   0,
-		},
-	}
-
-	// Evaluate room - should extend override
-	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
-
-	// Verify action is set_manual_override (extension)
-	if decision.Action != "set_manual_override" {
-		t.Errorf("Expected action 'set_manual_override', got '%s'", decision.Action)
-	}
-
-	// Verify reason mentions extension
-	if !strings.Contains(decision.Reason, "extending") {
-		t.Errorf("Expected reason to mention 'extending', got: %s", decision.Reason)
-	}
-
-	// Verify calculated setpoint makes sense
-	if decision.CalculatedSetpoint == 0 {
-		t.Error("Expected CalculatedSetpoint to be non-zero")
-	}
-
-	t.Logf("✓ Override extension test passed:")
-	t.Logf("  Override was about to expire (1 minute left)")
-	t.Logf("  Temperature still requires control: xiaomi=%.1f°C, target=%.1f°C",
-		decision.XiaomiTemperature, decision.ScheduledTemp)
-	t.Logf("  System extended override with new setpoint: %.1f°C", decision.CalculatedSetpoint)
-	t.Logf("  Reason: %s", decision.Reason)
+// TestOverrideExtension - REMOVED in V2
+// V2 no longer uses extension logic. Instead, overrides are set to expire at schedule end time.
+// This test is obsolete and should be replaced with tests for:
+// - Aggressive heating (setpoint reached but room cold)
+// - Maintain mode (within threshold)
+// - Cancel override (room too warm)
+func TestOverrideExtension_Obsolete(t *testing.T) {
+	t.Skip("Test obsolete in V2 - override extension logic removed")
 }
 
-// TestOverrideNotExtendedWhenNotNeeded tests that the controller does not extend
-// overrides when there is plenty of time left
-func TestOverrideNotExtendedWhenNotNeeded(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	controlBuffer := buffer.New(100, logger)
-	metricsBuffer := buffer.New(100, logger)
-
-	cfg := &config.ThermostatControlConfig{
-		Enabled:                   true,
-		TemperatureThreshold:      0.3,
-		ControlIntervalSeconds:    60,
-		ExtensionThresholdMinutes: 2,  // Extend when < 2 minutes left
-		OverrideDurationMinutes:   30, // Each override lasts 30 minutes
-		Mappings: []config.ThermostatMapping{
-			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
-		},
-	}
-
-	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
-
-	// Initialize state with an override that has plenty of time left (25 minutes)
-	c.stateMu.Lock()
-	c.stateByRoom["room1"] = &ThermostatState{
-		RoomID:           "room1",
-		RoomName:         "Living Room",
-		LastSetpoint:     24.0,
-		LastSetpointTime: time.Now().Add(-5 * time.Minute),  // Sent 5 minutes ago
-		OverrideEndTime:  time.Now().Add(25 * time.Minute), // Expires in 25 minutes
-	}
-	c.stateMu.Unlock()
-
-	// Add sensor reading: Temperature matches target (no action needed)
-	now := time.Now()
-	controlBuffer.Add(&buffer.Reading{
-		Type: buffer.ReadingTypeBLE,
-		BLE: &buffer.SensorReading{
-			Timestamp:          now,
-			MAC:                "AA:BB:CC:DD:EE:FF",
-			TemperatureCelsius: 24.1, // Close to target
-		},
-	})
-
-	// Create room status
-	roomStatusMap := map[string]*netatmo.RoomStatus{
-		"room1": {
-			ID:                       "room1",
-			Reachable:                true,
-			ThermMeasuredTemperature: 24.5,
-			ThermSetpointTemperature: 24.0,
-			ThermSetpointMode:        "manual",
-			ThermSetpointEndTime:     0,
-			ThermSetpointStartTime:   0,
-		},
-	}
-
-	// Evaluate room - should not extend (temperature is within threshold)
-	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
-
-	// Verify action is no_adjustment_needed
-	if decision.Action != "no_adjustment_needed" {
-		t.Errorf("Expected action 'no_adjustment_needed', got '%s'", decision.Action)
-	}
-
-	// Verify reason does NOT mention extension
-	if strings.Contains(decision.Reason, "extending") {
-		t.Errorf("Expected reason NOT to mention 'extending', got: %s", decision.Reason)
-	}
-
-	t.Logf("✓ Override not extended when not needed test passed:")
-	t.Logf("  Override has plenty of time left (25 minutes)")
-	t.Logf("  Temperature within threshold: xiaomi=%.1f°C, target=%.1f°C, diff=%.2f°C",
-		decision.XiaomiTemperature, decision.ScheduledTemp,
-		decision.XiaomiTemperature-decision.ScheduledTemp)
-	t.Logf("  No extension needed, action: %s", decision.Action)
+// TestOverrideNotExtendedWhenNotNeeded - REMOVED in V2
+// V2 uses maintain mode when temperature is within threshold
+func TestOverrideNotExtendedWhenNotNeeded_Obsolete(t *testing.T) {
+	t.Skip("Test obsolete in V2 - extension logic removed, replaced by maintain mode")
 }
 
 // TestLargeSensorOffsetCompensation tests that the controller compensates for large sensor offsets
@@ -906,8 +767,9 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 		Enabled:                   true,
 		TemperatureThreshold:      0.3, // Low threshold to trigger action
 		ControlIntervalSeconds:    60,
-		ExtensionThresholdMinutes: 2,
-		OverrideDurationMinutes:   30,
+		ManualModeTakeoverMinutes: 60,
+		MinSetpointCelsius:        7.0,
+		MaxSetpointCelsius:        30.0,
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Hol", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
 		},
@@ -950,9 +812,14 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 	// Evaluate room - should calculate setpoint to compensate for sensor offset
 	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
 
+	t.Logf("DEBUG - Decision returned: Action=%s, CalculatedSetpoint=%.1f, Reason=%s",
+		decision.Action, decision.CalculatedSetpoint, decision.Reason)
+
 	// Verify action is to set manual override
 	if decision.Action != "set_manual_override" {
 		t.Errorf("Expected action 'set_manual_override', got '%s'. Reason: %s", decision.Action, decision.Reason)
+		t.Logf("DEBUG - Full decision: Action=%s, CalculatedSetpoint=%.1f, ScheduledTemp=%.1f",
+			decision.Action, decision.CalculatedSetpoint, decision.ScheduledTemp)
 	}
 
 	// Verify calculated setpoint compensates for sensor offset
@@ -983,4 +850,333 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 	t.Logf("  Target: %.1f°C", decision.ScheduledTemp)
 	t.Logf("  Calculated setpoint: %.1f°C (compensates for offset)", decision.CalculatedSetpoint)
 	t.Logf("  Reason: %s", decision.Reason)
+}
+
+// TestAggressiveHeating tests V2 aggressive heating logic:
+// When thermostat reaches setpoint but room still cold, raise by 0.5°C
+func TestAggressiveHeating(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	cfg := &config.ThermostatControlConfig{
+		Enabled:                   true,
+		TemperatureThreshold:      0.3,
+		ControlIntervalSeconds:    60,
+		ManualModeTakeoverMinutes: 60,
+		MinSetpointCelsius:        7.0,
+		MaxSetpointCelsius:        30.0,
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
+		},
+	}
+
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+
+	// Initialize state with stored schedule (we're already controlling)
+	c.stateMu.Lock()
+	c.stateByRoom["room1"] = &ThermostatState{
+		RoomID:                "room1",
+		RoomName:              "Living Room",
+		OriginalScheduledTemp: 24.0, // We're tracking this schedule
+		LastSetpoint:          26.0,
+		LastSetpointTime:      time.Now().Add(-2 * time.Minute),
+	}
+	c.stateMu.Unlock()
+
+	// Add sensor reading: Room still cold
+	now := time.Now()
+	controlBuffer.Add(&buffer.Reading{
+		Type: buffer.ReadingTypeBLE,
+		BLE: &buffer.SensorReading{
+			Timestamp:          now,
+			MAC:                "AA:BB:CC:DD:EE:FF",
+			TemperatureCelsius: 23.5, // Room still cold
+		},
+	})
+
+	// Thermostat reached setpoint (26.0°C) but room still cold
+	roomStatusMap := map[string]*netatmo.RoomStatus{
+		"room1": {
+			ID:                       "room1",
+			Reachable:                true,
+			ThermMeasuredTemperature: 26.0, // Thermostat reached setpoint
+			ThermSetpointTemperature: 26.0, // Current setpoint
+			ThermSetpointMode:        "manual",
+			ThermSetpointEndTime:     time.Now().Add(30 * time.Minute).Unix(),
+		},
+	}
+
+	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
+
+	// Verify aggressive heating action
+	if decision.Action != "set_manual_override" {
+		t.Errorf("Expected action 'set_manual_override', got '%s'", decision.Action)
+	}
+
+	// Should raise by 0.5°C
+	expectedSetpoint := 26.5
+	if decision.CalculatedSetpoint != expectedSetpoint {
+		t.Errorf("CalculatedSetpoint = %.1f, want %.1f (aggressive +0.5°C)",
+			decision.CalculatedSetpoint, expectedSetpoint)
+	}
+
+	// Verify reason mentions aggressive heating
+	if !strings.Contains(decision.Reason, "aggressive heating") {
+		t.Errorf("Expected reason to mention 'aggressive heating', got: %s", decision.Reason)
+	}
+
+	t.Logf("✓ Aggressive heating test passed:")
+	t.Logf("  Thermostat reached setpoint: 26.0°C")
+	t.Logf("  Room still cold: xiaomi=23.5°C, target=24.0°C")
+	t.Logf("  Action: Raise by +0.5°C to 26.5°C")
+	t.Logf("  Reason: %s", decision.Reason)
+}
+
+// TestMaintainMode tests V2 maintain mode:
+// When temperature within threshold, maintain current temperature
+func TestMaintainMode(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	cfg := &config.ThermostatControlConfig{
+		Enabled:                   true,
+		TemperatureThreshold:      0.3,
+		ControlIntervalSeconds:    60,
+		ManualModeTakeoverMinutes: 60,
+		MinSetpointCelsius:        7.0,
+		MaxSetpointCelsius:        30.0,
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
+		},
+	}
+
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+
+	// Initialize state with stored schedule
+	c.stateMu.Lock()
+	c.stateByRoom["room1"] = &ThermostatState{
+		RoomID:                "room1",
+		RoomName:              "Living Room",
+		OriginalScheduledTemp: 24.0,
+		LastSetpoint:          26.0,
+		LastSetpointTime:      time.Now().Add(-2 * time.Minute),
+	}
+	c.stateMu.Unlock()
+
+	// Temperature within threshold
+	now := time.Now()
+	controlBuffer.Add(&buffer.Reading{
+		Type: buffer.ReadingTypeBLE,
+		BLE: &buffer.SensorReading{
+			Timestamp:          now,
+			MAC:                "AA:BB:CC:DD:EE:FF",
+			TemperatureCelsius: 24.1, // Within threshold of 24.0
+		},
+	})
+
+	roomStatusMap := map[string]*netatmo.RoomStatus{
+		"room1": {
+			ID:                       "room1",
+			Reachable:                true,
+			ThermMeasuredTemperature: 26.0,
+			ThermSetpointTemperature: 26.0,
+			ThermSetpointMode:        "manual",
+			ThermSetpointEndTime:     time.Now().Add(30 * time.Minute).Unix(),
+		},
+	}
+
+	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
+
+	// Verify maintain action
+	if decision.Action != "set_manual_override" {
+		t.Errorf("Expected action 'set_manual_override', got '%s'", decision.Action)
+	}
+
+	// Should maintain current thermostat reading
+	if decision.CalculatedSetpoint != 26.0 {
+		t.Errorf("CalculatedSetpoint = %.1f, want 26.0 (maintain current)",
+			decision.CalculatedSetpoint)
+	}
+
+	// Verify reason mentions maintaining
+	if !strings.Contains(decision.Reason, "maintaining") {
+		t.Errorf("Expected reason to mention 'maintaining', got: %s", decision.Reason)
+	}
+
+	t.Logf("✓ Maintain mode test passed:")
+	t.Logf("  Temperature within threshold: xiaomi=24.1°C ≈ target=24.0°C")
+	t.Logf("  Action: Maintain at current thermostat reading (26.0°C)")
+	t.Logf("  Reason: %s", decision.Reason)
+}
+
+// TestCancelOverride tests V2 cancel override logic:
+// When room too warm, cancel override by expiring in 1 minute
+func TestCancelOverride(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	cfg := &config.ThermostatControlConfig{
+		Enabled:                   true,
+		TemperatureThreshold:      0.3,
+		ControlIntervalSeconds:    60,
+		ManualModeTakeoverMinutes: 60,
+		MinSetpointCelsius:        7.0,
+		MaxSetpointCelsius:        30.0,
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
+		},
+	}
+
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+
+	// Initialize state with stored schedule
+	c.stateMu.Lock()
+	c.stateByRoom["room1"] = &ThermostatState{
+		RoomID:                "room1",
+		RoomName:              "Living Room",
+		OriginalScheduledTemp: 22.0,
+		LastSetpoint:          24.0,
+		LastSetpointTime:      time.Now().Add(-5 * time.Minute),
+	}
+	c.stateMu.Unlock()
+
+	// Room too warm
+	now := time.Now()
+	controlBuffer.Add(&buffer.Reading{
+		Type: buffer.ReadingTypeBLE,
+		BLE: &buffer.SensorReading{
+			Timestamp:          now,
+			MAC:                "AA:BB:CC:DD:EE:FF",
+			TemperatureCelsius: 25.0, // Too warm (target is 22.0)
+		},
+	})
+
+	roomStatusMap := map[string]*netatmo.RoomStatus{
+		"room1": {
+			ID:                       "room1",
+			Reachable:                true,
+			ThermMeasuredTemperature: 24.5,
+			ThermSetpointTemperature: 24.0,
+			ThermSetpointMode:        "manual",
+			ThermSetpointEndTime:     time.Now().Add(30 * time.Minute).Unix(),
+		},
+	}
+
+	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
+
+	// Verify cancel override action
+	if decision.Action != "cancel_override" {
+		t.Errorf("Expected action 'cancel_override', got '%s'", decision.Action)
+	}
+
+	// Should set back to schedule temperature
+	if decision.CalculatedSetpoint != 22.0 {
+		t.Errorf("CalculatedSetpoint = %.1f, want 22.0 (schedule temp)",
+			decision.CalculatedSetpoint)
+	}
+
+	// Override should expire in ~1 minute
+	overrideEndTime := time.Unix(decision.OverrideEndTime, 0)
+	timeUntilExpiry := time.Until(overrideEndTime)
+	if timeUntilExpiry < 30*time.Second || timeUntilExpiry > 90*time.Second {
+		t.Errorf("Override end time = %v (in %v), want ~1 minute from now",
+			overrideEndTime, timeUntilExpiry)
+	}
+
+	// Verify reason mentions room too warm
+	if !strings.Contains(decision.Reason, "room too warm") {
+		t.Errorf("Expected reason to mention 'room too warm', got: %s", decision.Reason)
+	}
+
+	t.Logf("✓ Cancel override test passed:")
+	t.Logf("  Room too warm: xiaomi=25.0°C > target=22.0°C")
+	t.Logf("  Action: Cancel override, expire in ~1 minute")
+	t.Logf("  Set to schedule: 22.0°C")
+	t.Logf("  Reason: %s", decision.Reason)
+}
+
+// TestManualModeTakeover tests V2 manual mode takeover:
+// When thermostat in manual mode >60 min, take control
+func TestManualModeTakeover(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	cfg := &config.ThermostatControlConfig{
+		Enabled:                   true,
+		TemperatureThreshold:      0.3,
+		ControlIntervalSeconds:    60,
+		ManualModeTakeoverMinutes: 60,
+		MinSetpointCelsius:        7.0,
+		MaxSetpointCelsius:        30.0,
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
+		},
+	}
+
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+
+	// Initialize state - thermostat has been in manual mode for 61 minutes
+	c.stateMu.Lock()
+	c.stateByRoom["room1"] = &ThermostatState{
+		RoomID:          "room1",
+		RoomName:        "Living Room",
+		ManualModeSince: time.Now().Add(-61 * time.Minute), // >60 min in manual
+		// No OriginalScheduledTemp - indicates we haven't been controlling
+	}
+	c.stateMu.Unlock()
+
+	// Room temperature
+	now := time.Now()
+	controlBuffer.Add(&buffer.Reading{
+		Type: buffer.ReadingTypeBLE,
+		BLE: &buffer.SensorReading{
+			Timestamp:          now,
+			MAC:                "AA:BB:CC:DD:EE:FF",
+			TemperatureCelsius: 23.0,
+		},
+	})
+
+	// Thermostat in manual mode at 26°C
+	roomStatusMap := map[string]*netatmo.RoomStatus{
+		"room1": {
+			ID:                       "room1",
+			Reachable:                true,
+			ThermMeasuredTemperature: 25.5,
+			ThermSetpointTemperature: 26.0, // User set this manually
+			ThermSetpointMode:        "manual",
+			ThermSetpointEndTime:     0,
+		},
+	}
+
+	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
+
+	// Should take control
+	if decision.Action != "set_manual_override" {
+		t.Errorf("Expected action 'set_manual_override', got '%s'", decision.Action)
+	}
+
+	// Should use current setpoint (26.0) as baseline and adjust for room temp
+	// Room is at 23.0, using 26.0 as baseline schedule
+	// tempDiff = 23.0 - 26.0 = -3.0 (room cold)
+	// calculatedSetpoint = max(26.0, 25.5 + 0.5) = 26.0
+	if decision.CalculatedSetpoint < 26.0 {
+		t.Errorf("CalculatedSetpoint = %.1f, want >= 26.0 (took over control)",
+			decision.CalculatedSetpoint)
+	}
+
+	// Verify scheduled temp was set to current setpoint
+	if decision.ScheduledTemp != 26.0 {
+		t.Errorf("ScheduledTemp = %.1f, want 26.0 (used current as baseline)",
+			decision.ScheduledTemp)
+	}
+
+	t.Logf("✓ Manual mode takeover test passed:")
+	t.Logf("  Thermostat in manual mode for >60 minutes")
+	t.Logf("  Took control, using current setpoint (26.0°C) as baseline")
+	t.Logf("  Action: %s", decision.Action)
+	t.Logf("  Calculated setpoint: %.1f°C", decision.CalculatedSetpoint)
 }

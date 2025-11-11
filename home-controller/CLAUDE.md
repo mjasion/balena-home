@@ -156,6 +156,31 @@ The service includes **intelligent thermostat control** that compensates for ina
 3. **Compensation**: Calculates adjusted setpoint to compensate for Netatmo sensor offset
 4. **Override**: Sends manual override to Netatmo API to achieve desired room temperature
 
+### V2 Algorithm Overview (Current)
+
+The V2 algorithm improves upon V1 by:
+
+1. **Schedule Tracking**: Stores original schedule temperature when entering manual mode, uses it for all control decisions
+2. **Override to Schedule End**: Sets override duration to match schedule end time (not fixed duration), eliminating extension logic
+3. **Aggressive Heating**: When `setpoint == thermostat_measured` (thermostat reached target) but room still cold, immediately raises setpoint by 0.5°C
+4. **Maintain Mode**: When temperature is within threshold, maintains current temperature by setting setpoint to `thermostat_measured`
+5. **Cancel Override**: When room too warm, sets override to expire in 1 minute (quick return to schedule)
+6. **Manual Mode Takeover**: If thermostat in manual mode for >60 minutes (not set by us), system takes control using current setpoint as baseline
+
+### Control Decision Tree (V2)
+
+**Phase 1: Determine Scheduled Temperature**
+- Hard override active → use override temp, schedule end = now + 24h
+- Thermostat in schedule mode → use schedule from API
+- Manual mode with stored schedule → use stored `OriginalScheduledTemp`
+- Manual mode without stored schedule → wait for takeover threshold (60 min), then take control
+
+**Phase 2: Calculate Action**
+- **Room too warm** (`xiaomi > scheduled + threshold`) → `cancel_override` with 1-minute expiry
+- **Within threshold** (`|xiaomi - scheduled| ≤ threshold`) → `set_manual_override` to maintain current temp
+- **Room too cold, setpoint reached** (`setpoint ≈ thermostat_measured`) → `set_manual_override` with aggressive +0.5°C
+- **Room too cold, still heating** → `set_manual_override` with calculated setpoint
+
 ### External Modification Detection
 
 The system detects and respects manual thermostat changes to avoid fighting with user preferences:
@@ -163,13 +188,11 @@ The system detects and respects manual thermostat changes to avoid fighting with
 **Detection Logic** - External modification is detected when **ALL** of these are true:
 1. A command was previously sent (not first run)
 2. At least 2 minutes have passed (allows API propagation)
-3. Override duration has NOT expired (within expected override window)
-4. Thermostat is in **manual mode** (not schedule mode)
-5. Current setpoint differs from what was sent (>0.1°C)
+3. Thermostat is in **manual mode** (not schedule mode)
+4. Current setpoint differs from what was sent (>0.1°C)
 
 **Safeguards**:
 - ✅ **Schedule changes ignored**: When thermostat is in schedule mode, setpoint changes are expected (schedule changes throughout the day)
-- ✅ **Expired overrides ignored**: After override duration expires, thermostat naturally returns to schedule without triggering detection
 - ✅ **Manual changes respected**: When user manually changes temperature (switches to manual mode), automation pauses indefinitely
 
 **Resume Condition**: Automation only resumes when thermostat is switched back to "schedule" mode
@@ -180,12 +203,13 @@ The system detects and respects manual thermostat changes to avoid fighting with
 - `enabled`: Enable/disable thermostat control
 - `temperatureThreshold`: Minimum temperature difference to trigger action (default: 0.5°C)
 - `controlIntervalSeconds`: How often to evaluate control decisions (default: 60s)
-- `overrideDurationMinutes`: How long manual overrides last (default: 10 minutes)
-- `recheckDelayMinutes`: Delay before re-evaluating after sending override (default: 5 minutes)
+- `manualModeTakeoverMinutes`: How long to wait before taking control of externally-set manual mode (default: 60 minutes)
 - `minSetpointCelsius`/`maxSetpointCelsius`: Safety limits (default: 7-30°C)
 - `mappings`: List of room-to-sensor mappings (RoomName, SensorMAC, RoomID)
 - `hardOverrides`: Time-based temperature overrides (schedule, days, targetTemperature)
 - `dryRun`: Test mode without actually sending API commands
+
+**Note**: V1 parameters `overrideDurationMinutes` and `recheckDelayMinutes` were removed in V2. Overrides now automatically expire at schedule end time.
 
 ### Metrics and Observability
 
@@ -195,8 +219,8 @@ All control decisions are logged with:
 - `scheduled_temp`: Target temperature from schedule
 - `setpoint_temp`: Current thermostat setpoint
 - `thermostat_measured`: Temperature reported by Netatmo sensor
-- `action`: Decision taken (skip/no_adjustment_needed/set_manual_override)
-- `reason`: Human-readable explanation
+- `action`: Decision taken (skip/set_manual_override/cancel_override)
+- `reason`: Human-readable explanation (includes "aggressive heating", "maintaining", "heating", "room too warm", etc.)
 
 Prometheus metrics include all temperature readings plus:
 - `thermostat_control_action`: Control action taken (0=skip, 1=no_adjustment, 2=override)
@@ -408,17 +432,23 @@ Enable profiling by setting `pyroscope.enabled: true` in `config.yaml` and provi
 **Automation incorrectly pausing:**
 - Check `thermostat_mode` in logs (should show schedule/manual/away/hg)
 - If mode is "schedule" and still detecting external mod → bug (report issue)
-- If override duration expired → automation should resume automatically
+- If mode is "manual" without stored schedule → waiting for takeover threshold (60 minutes default)
 
 **Understanding control decisions:**
 - All decisions logged with full context:
-  - `action`: skip/no_adjustment_needed/set_manual_override
-  - `reason`: Human-readable explanation
+  - `action`: skip/set_manual_override/cancel_override
+  - `reason`: Human-readable explanation (V2 reasons: "aggressive heating", "maintaining", "heating", "room too warm", "manual mode detected", "taking over manual mode")
   - `thermostat_mode`: Current mode
   - `xiaomi_temp`: Accurate sensor reading
-  - `scheduled_temp`: Target from schedule
+  - `scheduled_temp`: Target from schedule (or stored from when override started)
   - `thermostat_measured`: Netatmo sensor reading (often inaccurate)
   - `setpoint_temp`: What thermostat is currently set to
+
+**V2-specific behaviors:**
+- **Aggressive heating**: When thermostat reaches setpoint but room still cold, raises by 0.5°C every minute
+- **Maintain mode**: When within threshold, sets setpoint to current thermostat_measured (no change)
+- **Cancel override**: When room too warm, expires override in 1 minute
+- **Manual takeover**: Waits 60 minutes before controlling externally-set manual thermostats
 
 ## Related Documentation
 

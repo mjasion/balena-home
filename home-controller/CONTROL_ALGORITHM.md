@@ -4,12 +4,15 @@
 
 The thermostat control system uses **Xiaomi BLE temperature sensors** as the authoritative source for room temperature, while delegating actual heating control to **Netatmo thermostats**. The algorithm monitors temperature deviations and only intervenes when necessary.
 
+**Current Version: V2** - Improved schedule tracking, aggressive heating, and smarter override management.
+
 ## Key Principles
 
 1. **Xiaomi sensors are authoritative** - Better placement than built-in thermostat sensors
-2. **Netatmo schedule is respected** - The system reads the current scheduled temperature
+2. **Netatmo schedule is tracked** - V2 stores original schedule temperature throughout manual mode
 3. **Minimal intervention** - Only override when temperature differs significantly from target
-4. **Fail-safe design** - All overrides auto-expire after 10 minutes
+4. **Fail-safe design** - All overrides auto-expire at schedule end time (V2: not fixed duration)
+5. **Aggressive heating** - V2: When thermostat reaches setpoint but room cold, immediately raise by 0.5°C
 
 ## Temperature Sources
 
@@ -230,15 +233,22 @@ stateDiagram-v2
 
 ## Configuration Parameters
 
+### V2 Parameters (Current)
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `temperatureThreshold` | 0.5°C | Minimum difference to trigger action |
 | `controlIntervalSeconds` | 60s | How often to evaluate rooms |
-| `overrideDurationMinutes` | 10 min | Auto-expire time for overrides |
-| `recheckDelayMinutes` | 2 min | Wait time after adjustment |
-| `externalModificationResetMinutes` | 5 min | Pause time after manual change |
+| `manualModeTakeoverMinutes` | 60 min | Wait time before taking control of externally-set manual mode |
 | `minSetpointCelsius` | 10.0°C | Safety minimum |
 | `maxSetpointCelsius` | 30.0°C | Safety maximum |
+
+### V1 Parameters (Removed)
+
+These parameters were removed in V2:
+- `overrideDurationMinutes` (10 min) - V2 sets override to expire at schedule end time
+- `recheckDelayMinutes` (2 min) - V2 evaluates every control interval without special delays
+- `externalModificationResetMinutes` (5 min) - External modification pause is indefinite until schedule mode
 
 ## Sensor Data Processing
 
@@ -302,7 +312,9 @@ graph LR
 
 ### 2. Auto-Expire Override
 
-All manual overrides automatically expire after 10 minutes, reverting to schedule mode. This ensures the system cannot get "stuck" in an override state.
+**V2 Behavior:** All manual overrides automatically expire at the **schedule end time** (not fixed duration). This aligns overrides with natural schedule transitions and eliminates the need for extension logic.
+
+**V1 Behavior (deprecated):** Overrides expired after 10 minutes with automatic extension when needed.
 
 ### 3. External Modification Detection
 
@@ -325,6 +337,67 @@ sequenceDiagram
     System->>System: Mark Externally Modified
     System->>System: Pause Control (1 hour)
 ```
+
+## V2 Algorithm Details
+
+### V2 Improvements Over V1
+
+1. **Schedule Tracking**: Stores `OriginalScheduledTemp` when entering manual mode, eliminating lost schedule context
+2. **Override to Schedule End**: Sets override duration to match schedule end time (not fixed 10 minutes)
+3. **Aggressive Heating**: When `|setpoint - thermostat_measured| < 0.1°C` and room still cold, raises by 0.5°C immediately
+4. **Maintain Mode**: When `|xiaomi - scheduled| ≤ threshold`, maintains current temperature without change
+5. **Cancel Override**: When room too warm, expires override in 1 minute for quick return to schedule
+6. **Manual Mode Takeover**: Waits 60 minutes before controlling externally-set manual thermostats
+
+### V2 Control Decision Tree
+
+```
+Phase 1: Determine Scheduled Temperature
+├─ Hard override active?
+│  └─ Yes → use override temp, scheduleEnd = now + 24h
+│  └─ No → continue
+├─ Thermostat in schedule mode?
+│  └─ Yes → scheduledTemp = API schedule, scheduleEnd = API scheduleEndTime
+│  └─ No → continue
+├─ Manual mode with OriginalScheduledTemp stored?
+│  └─ Yes → scheduledTemp = stored value, scheduleEnd = stored value
+│  └─ No → continue
+└─ Manual mode without stored schedule (external/unknown):
+   ├─ First time seeing manual? → set ManualModeSince, SKIP
+   ├─ Manual < 60 min? → SKIP (waiting for takeover)
+   └─ Manual ≥ 60 min? → TAKE CONTROL (use current setpoint as baseline)
+
+Phase 2: Calculate Action
+├─ Room too warm (xiaomi > scheduled + threshold)?
+│  └─ ACTION: cancel_override
+│     - Set to scheduledTemp
+│     - Expire in 1 minute
+│
+├─ Within threshold (|xiaomi - scheduled| ≤ threshold)?
+│  └─ ACTION: set_manual_override (maintain mode)
+│     - Set to current thermostat_measured (no change)
+│     - Expire at scheduleEnd
+│
+└─ Room too cold (xiaomi < scheduled - threshold)?
+   ├─ Setpoint reached (|setpoint - thermostat_measured| < 0.1)?
+   │  └─ ACTION: set_manual_override (aggressive)
+   │     - Raise by +0.5°C from current setpoint
+   │     - Expire at scheduleEnd
+   │
+   └─ Still heating:
+      └─ ACTION: set_manual_override (normal)
+         - Set to max(scheduledTemp, thermostat_measured + 0.5)
+         - Expire at scheduleEnd
+```
+
+### V2 State Tracking
+
+New fields in `ThermostatState`:
+- `OriginalScheduledTemp`: Stores schedule when entering manual mode
+- `ScheduleEndTime`: When current schedule period ends
+- `ManualModeSince`: Timestamp when manual mode first detected (for takeover logic)
+
+These fields enable schedule tracking throughout manual mode operation.
 
 ## Example Scenarios
 
