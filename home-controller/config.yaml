@@ -201,7 +201,7 @@ thermostatControl:
   # Override duration in minutes (default: 10)
   # SAFETY: All setpoint changes auto-expire after this duration (fail-safe)
   # After expiration, thermostat reverts to schedule mode
-  overrideDurationMinutes: 10
+  overrideDurationMinutes: 30
 
   # Recheck delay in minutes (default: 5)
   # After adjusting a thermostat, wait this long before re-evaluating
