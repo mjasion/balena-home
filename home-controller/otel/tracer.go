@@ -111,9 +111,16 @@ func InitTracer(ctx context.Context, cfg *config.OpenTelemetryConfig, logger *za
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	// Create sampler based on sampling rate
+	// Create sampler with separate metrics sampling rate
 	var sampler sdktrace.Sampler
-	if cfg.SamplingRate >= 1.0 {
+	if cfg.MetricsSamplingRate != cfg.SamplingRate {
+		// Use custom sampler with different rate for metrics operations
+		sampler = ParentBasedMetricsSampler(cfg.SamplingRate, cfg.MetricsSamplingRate)
+		logger.Debug("using ParentBasedMetricsSampler",
+			zap.Float64("default_sampling_rate", cfg.SamplingRate),
+			zap.Float64("metrics_sampling_rate", cfg.MetricsSamplingRate),
+		)
+	} else if cfg.SamplingRate >= 1.0 {
 		sampler = sdktrace.AlwaysSample()
 		logger.Debug("using AlwaysSample sampler")
 	} else if cfg.SamplingRate <= 0.0 {

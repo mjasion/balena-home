@@ -13,6 +13,10 @@ import (
 	"github.com/mjasion/balena-home/thermostats/buffer"
 	"github.com/mjasion/balena-home/thermostats/scheduler"
 	"github.com/prometheus/prometheus/prompb"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -81,21 +85,68 @@ func (p *Pusher) Start(ctx context.Context) {
 
 // pushMetrics gets all readings from buffer and pushes them in batches
 func (p *Pusher) pushMetrics() {
+	tracer := otel.Tracer("home-controller/metrics")
+	ctx, span := tracer.Start(context.Background(), "metrics.pushMetrics",
+		trace.WithAttributes(
+			attribute.String("operation", "push_metrics_batch"),
+		),
+	)
+	defer span.End()
+
 	// Get all readings and clear buffer atomically
 	readings := p.buffer.GetAllAndClear()
 	if len(readings) == 0 {
-		p.logger.Debug("no readings to push")
+		p.logger.Debug("no readings to push",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+		)
+		span.SetStatus(codes.Ok, "no readings to push")
 		return
 	}
 
+	// Count readings by type
+	bleCount := 0
+	netatmoCount := 0
+	powerCount := 0
+	controlCount := 0
+	weightedAvgCount := 0
+	for _, r := range readings {
+		switch r.Type {
+		case buffer.ReadingTypeBLE:
+			bleCount++
+		case buffer.ReadingTypeNetatmo:
+			netatmoCount++
+		case buffer.ReadingTypePower:
+			powerCount++
+		case buffer.ReadingTypeControl:
+			controlCount++
+		case buffer.ReadingTypeBLEWeightedAvg:
+			weightedAvgCount++
+		}
+	}
+
+	span.SetAttributes(
+		attribute.Int("total_readings", len(readings)),
+		attribute.Int("ble_readings", bleCount),
+		attribute.Int("netatmo_readings", netatmoCount),
+		attribute.Int("power_readings", powerCount),
+		attribute.Int("control_readings", controlCount),
+		attribute.Int("weighted_avg_readings", weightedAvgCount),
+		attribute.Int("batch_size", p.batchSize),
+	)
+
 	p.logger.Debug("pushing metrics to prometheus",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.Int("total_readings", len(readings)),
+		zap.Int("ble_readings", bleCount),
+		zap.Int("netatmo_readings", netatmoCount),
+		zap.Int("power_readings", powerCount),
+		zap.Int("control_readings", controlCount),
+		zap.Int("weighted_avg_readings", weightedAvgCount),
 		zap.Int("batch_size", p.batchSize),
 	)
 
 	// Process readings in batches
 	totalBatches := (len(readings) + p.batchSize - 1) / p.batchSize
-	ctx := context.Background() // Use background context for push operation
 
 	for batchNum := 0; batchNum < totalBatches; batchNum++ {
 		start := batchNum * p.batchSize
@@ -105,7 +156,13 @@ func (p *Pusher) pushMetrics() {
 		}
 		batch := readings[start:end]
 
+		span.AddEvent(fmt.Sprintf("pushing_batch_%d", batchNum+1), trace.WithAttributes(
+			attribute.Int("batch_number", batchNum+1),
+			attribute.Int("batch_readings", len(batch)),
+		))
+
 		p.logger.Debug("pushing batch",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
 			zap.Int("batch_number", batchNum+1),
 			zap.Int("total_batches", totalBatches),
 			zap.Int("batch_readings", len(batch)),
@@ -113,77 +170,149 @@ func (p *Pusher) pushMetrics() {
 
 		err := p.Push(ctx, batch)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, fmt.Sprintf("failed to push batch %d", batchNum+1))
 			p.logger.Error("failed to push batch, re-adding remaining readings to buffer",
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
 				zap.Error(err),
 				zap.Int("batch_number", batchNum+1),
 				zap.Int("failed_readings", len(readings)-start),
 			)
 			// Re-add the failed batch and all remaining batches
 			p.buffer.AddMultiple(readings[start:])
-			break
+			return
 		}
 
 		p.logger.Debug("successfully pushed batch",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
 			zap.Int("batch_number", batchNum+1),
 			zap.Int("batch_readings", len(batch)),
 		)
 	}
+
+	span.SetAttributes(attribute.Int("total_batches", totalBatches))
+	span.SetStatus(codes.Ok, "all batches pushed successfully")
 }
 
 // Push pushes sensor readings to Prometheus
 func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
+	tracer := otel.Tracer("home-controller/metrics")
+	ctx, span := tracer.Start(ctx, "metrics.Push",
+		trace.WithAttributes(
+			attribute.Int("readings_count", len(readings)),
+		),
+	)
+	defer span.End()
+
 	if len(readings) == 0 {
-		p.logger.Debug("no readings to push")
+		p.logger.Debug("no readings to push",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+		)
+		span.SetStatus(codes.Ok, "no readings to push")
 		return nil
 	}
+
+	// Count readings by type
+	bleCount := 0
+	netatmoCount := 0
+	powerCount := 0
+	controlCount := 0
+	weightedAvgCount := 0
+	for _, r := range readings {
+		switch r.Type {
+		case buffer.ReadingTypeBLE:
+			bleCount++
+		case buffer.ReadingTypeNetatmo:
+			netatmoCount++
+		case buffer.ReadingTypePower:
+			powerCount++
+		case buffer.ReadingTypeControl:
+			controlCount++
+		case buffer.ReadingTypeBLEWeightedAvg:
+			weightedAvgCount++
+		}
+	}
+
+	span.SetAttributes(
+		attribute.Int("ble_data_points", bleCount),
+		attribute.Int("netatmo_data_points", netatmoCount),
+		attribute.Int("power_data_points", powerCount),
+		attribute.Int("control_data_points", controlCount),
+		attribute.Int("weighted_avg_data_points", weightedAvgCount),
+	)
 
 	// Build write request
 	writeReq, err := p.buildWriteRequest(readings)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to build write request")
 		return fmt.Errorf("failed to build write request: %w", err)
 	}
+
+	// Count time series and samples
+	totalTimeSeries := len(writeReq.Timeseries)
+	totalSamples := 0
+	metricNames := make(map[string]int)
+	for _, ts := range writeReq.Timeseries {
+		totalSamples += len(ts.Samples)
+		// Extract metric name from labels
+		for _, label := range ts.Labels {
+			if label.Name == "__name__" {
+				metricNames[label.Value]++
+				break
+			}
+		}
+	}
+
+	span.SetAttributes(
+		attribute.Int("time_series_count", totalTimeSeries),
+		attribute.Int("total_samples", totalSamples),
+		attribute.Int("unique_metric_names", len(metricNames)),
+	)
+
+	// Log metric names and their counts
+	p.logger.Debug("pushing metrics to Prometheus",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("time_series_count", totalTimeSeries),
+		zap.Int("total_samples", totalSamples),
+		zap.Any("metric_names", metricNames),
+	)
 
 	// Try to push with retries
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
+		span.AddEvent(fmt.Sprintf("push_attempt_%d", attempt))
+
 		err := p.pushOnce(ctx, writeReq)
 		if err == nil {
 			p.lastPush = time.Now()
 
-			bleCount := 0
-			netatmoCount := 0
-			powerCount := 0
-			controlCount := 0
-			weightedAvgCount := 0
-			for _, r := range readings {
-				switch r.Type {
-				case buffer.ReadingTypeBLE:
-					bleCount++
-				case buffer.ReadingTypeNetatmo:
-					netatmoCount++
-				case buffer.ReadingTypePower:
-					powerCount++
-				case buffer.ReadingTypeControl:
-					controlCount++
-				case buffer.ReadingTypeBLEWeightedAvg:
-					weightedAvgCount++
-				}
-			}
-
 			p.logger.Info("successfully pushed metrics",
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
 				zap.Int("ble_data_points", bleCount),
 				zap.Int("netatmo_data_points", netatmoCount),
 				zap.Int("power_data_points", powerCount),
 				zap.Int("control_data_points", controlCount),
 				zap.Int("weighted_avg_data_points", weightedAvgCount),
 				zap.Int("total_data_points", len(readings)),
+				zap.Int("time_series_count", totalTimeSeries),
+				zap.Int("total_samples", totalSamples),
 				zap.Int("attempt", attempt),
 			)
+
+			span.SetAttributes(attribute.Int("successful_attempt", attempt))
+			span.SetStatus(codes.Ok, "metrics pushed successfully")
 			return nil
 		}
 
 		lastErr = err
+		span.AddEvent("push_attempt_failed", trace.WithAttributes(
+			attribute.Int("attempt", attempt),
+			attribute.String("error", err.Error()),
+		))
+
 		p.logger.Warn("failed to push metrics, will retry",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
 			zap.Int("attempt", attempt),
 			zap.Error(err),
 		)
@@ -193,12 +322,16 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 			backoff := time.Duration(1<<(attempt-1)) * time.Second
 			select {
 			case <-ctx.Done():
+				span.RecordError(ctx.Err())
+				span.SetStatus(codes.Error, "context cancelled during retry")
 				return ctx.Err()
 			case <-time.After(backoff):
 			}
 		}
 	}
 
+	span.RecordError(lastErr)
+	span.SetStatus(codes.Error, "failed to push metrics after 3 attempts")
 	return fmt.Errorf("failed to push metrics after 3 attempts: %w", lastErr)
 }
 
@@ -503,18 +636,45 @@ func (p *Pusher) buildNetatmoTimeSeries(readings []*buffer.ThermostatReading) ([
 
 // pushOnce attempts to push the write request once
 func (p *Pusher) pushOnce(ctx context.Context, writeReq *prompb.WriteRequest) error {
+	tracer := otel.Tracer("home-controller/metrics")
+	ctx, span := tracer.Start(ctx, "metrics.pushOnce",
+		trace.WithAttributes(
+			attribute.String("prometheus_url", p.url),
+		),
+	)
+	defer span.End()
+
 	// Marshal to protobuf
 	data, err := proto.Marshal(writeReq)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to marshal protobuf")
 		return fmt.Errorf("failed to marshal protobuf: %w", err)
 	}
+
+	span.SetAttributes(attribute.Int("protobuf_size_bytes", len(data)))
 
 	// Compress with snappy
 	compressed := snappy.Encode(nil, data)
 
+	compressionRatio := float64(len(data)) / float64(len(compressed))
+	span.SetAttributes(
+		attribute.Int("compressed_size_bytes", len(compressed)),
+		attribute.Float64("compression_ratio", compressionRatio),
+	)
+
+	p.logger.Debug("prepared metrics payload",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("protobuf_size_bytes", len(data)),
+		zap.Int("compressed_size_bytes", len(compressed)),
+		zap.Float64("compression_ratio", compressionRatio),
+	)
+
 	// Create request
 	req, err := http.NewRequestWithContext(ctx, "POST", p.url, bytes.NewReader(compressed))
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to create request")
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -531,16 +691,32 @@ func (p *Pusher) pushOnce(ctx context.Context, writeReq *prompb.WriteRequest) er
 	// Send request
 	resp, err := p.client.Do(req)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to send request")
 		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+
 	// Check response
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
+		p.logger.Debug("Prometheus remote_write error response",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.Int("status_code", resp.StatusCode),
+			zap.String("response_body", string(body)),
+		)
+		span.SetStatus(codes.Error, fmt.Sprintf("non-2xx status code: %d", resp.StatusCode))
 		return fmt.Errorf("received non-2xx status code: %d, body: %s", resp.StatusCode, string(body))
 	}
 
+	p.logger.Debug("Prometheus remote_write successful",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("status_code", resp.StatusCode),
+	)
+
+	span.SetStatus(codes.Ok, "metrics pushed successfully")
 	return nil
 }
 

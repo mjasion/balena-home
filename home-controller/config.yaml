@@ -121,10 +121,14 @@ opentelemetry:
   # This will appear in Grafana Tempo for filtering
   serviceName: "home-controller"  # or use OTEL_SERVICE_NAME env var
 
-  # Sample rate (0.0-1.0): fraction of traces to send
-  # 1.0 = send all traces (default), 0.1 = send 10% of traces
-  # Reduce for high-volume production to save costs
+  # Global sampling rate (0.0-1.0) for most operations
+  # 1.0 = send all traces, 0.1 = send 10% of traces
   samplingRate: 1.0  # or use OTEL_SAMPLING_RATE env var
+
+  # Metrics sampling rate (0.0-1.0) for metrics push operations
+  # Set lower than samplingRate to reduce high-frequency trace volume
+  # This applies to all spans starting with "metrics."
+  metricsSamplingRate: 0.25  # or use OTEL_METRICS_SAMPLING_RATE env var
 
   # Additional resource attributes
   # Example: environment, version, hostname
