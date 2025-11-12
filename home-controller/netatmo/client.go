@@ -125,6 +125,9 @@ func (c *Client) refreshAccessToken(ctx context.Context) error {
 			zap.Int("status_code", resp.StatusCode),
 			zap.String("response_body", string(body)),
 		)
+
+		// Add error response body to span
+		span.SetAttributes(attribute.String("http.response.body", string(body)))
 		span.SetStatus(codes.Error, "token refresh failed")
 		return fmt.Errorf("token refresh failed with status %d: %s", resp.StatusCode, string(body))
 	}
@@ -265,6 +268,9 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body io.Read
 					zap.String("response_body", string(bodyBytes)),
 				)
 
+				// Add response body to span
+				span.SetAttributes(attribute.String("http.response.body", string(bodyBytes)))
+
 				if err := json.Unmarshal(bodyBytes, result); err != nil {
 					resp.Body.Close()
 					span.RecordError(err)
@@ -289,6 +295,9 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body io.Read
 			zap.String("response_body", errMsg),
 			zap.Int("attempt", attempt+1),
 		)
+
+		// Add error response body to span
+		span.SetAttributes(attribute.String("http.response.body", errMsg))
 
 		// Check if it's a 429 rate limit error
 		if resp.StatusCode == 429 || strings.Contains(errMsg, "concurrency limited") {

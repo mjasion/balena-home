@@ -302,7 +302,7 @@ func (c *Controller) evaluateRoom(
 	mapping config.ThermostatMapping,
 	roomStatusMap map[string]*netatmo.RoomStatus,
 ) ControlDecision {
-	ctx, span := c.tracer.Start(ctx, "evaluate_room_"+mapping.RoomName),
+	ctx, span := c.tracer.Start(ctx, "evaluate_room_"+mapping.RoomName,
 		trace.WithAttributes(
 			attribute.String("room_name", mapping.RoomName),
 			attribute.String("room_id", mapping.RoomID),
