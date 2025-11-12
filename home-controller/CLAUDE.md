@@ -294,7 +294,7 @@ go vet ./...
 
 CI/CD is configured via `.github/workflows/home-controller-test.yml`:
 - Runs on PR to main and pushes to feature branches
-- Go 1.25.3
+- Go 1.25
 - Runs tests, vet, generates coverage
 - Uploads coverage artifacts
 

@@ -1,6 +1,6 @@
 module github.com/mjasion/balena-home/thermostats
 
-go 1.25.3
+go 1.25
 
 require (
 	github.com/gogo/protobuf v1.3.2

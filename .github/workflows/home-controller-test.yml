@@ -12,6 +12,8 @@ on:
     paths:
       - 'home-controller/**'
       - '.github/workflows/home-controller-test.yml'
+  schedule:
+    - cron: '0 12 1-7 * 0'  # First Sunday of every month at 10:00 AM UTC
 
 concurrency:
   group: home-controller-test-${{ github.ref }}
@@ -31,7 +33,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
-        go-version: '1.25.4'
+        go-version: '1.25'
 
     - name: Cache Go modules
       uses: actions/cache@v4

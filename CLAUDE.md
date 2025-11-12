@@ -166,7 +166,7 @@ CI/CD runs automatically:
 
 ## Go Versions
 
-All Go services require **Go 1.19+** (tested with 1.25.3 in CI)
+All Go services require **Go 1.19+** (tested with 1.25 in CI)
 
 ## Common Development Tasks
 
