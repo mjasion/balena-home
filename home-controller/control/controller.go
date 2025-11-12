@@ -302,7 +302,7 @@ func (c *Controller) evaluateRoom(
 	mapping config.ThermostatMapping,
 	roomStatusMap map[string]*netatmo.RoomStatus,
 ) ControlDecision {
-	ctx, span := c.tracer.Start(ctx, "evaluate_room",
+	ctx, span := c.tracer.Start(ctx, "evaluate_room_"+mapping.RoomName),
 		trace.WithAttributes(
 			attribute.String("room_name", mapping.RoomName),
 			attribute.String("room_id", mapping.RoomID),
@@ -533,7 +533,6 @@ func (c *Controller) evaluateRoom(
 		)
 	}
 
-
 	// Safety bounds: 7.0-30.0°C (Netatmo API limits)
 	if calculatedSetpoint < 7.0 {
 		calculatedSetpoint = 7.0
@@ -602,7 +601,7 @@ func (c *Controller) evaluateRoom(
 
 // executeDecision executes the control decision
 func (c *Controller) executeDecision(ctx context.Context, homeID string, decision ControlDecision) {
-	ctx, span := c.tracer.Start(ctx, "execute_decision",
+	ctx, span := c.tracer.Start(ctx, "execute_decision_"+decision.RoomName,
 		trace.WithAttributes(
 			attribute.String("room_name", decision.RoomName),
 			attribute.String("room_id", decision.RoomID),
@@ -711,7 +710,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 		// Call Netatmo API
 		var err error
 		{
-			_, setTempSpan := c.tracer.Start(ctx, "set_netatmo_thermostat",
+			_, setTempSpan := c.tracer.Start(ctx, "set_netatmo_thermostat_"+decision.RoomName,
 				trace.WithAttributes(
 					attribute.String("home_id", homeID),
 					attribute.String("room_id", decision.RoomID),
