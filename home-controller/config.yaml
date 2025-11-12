@@ -206,7 +206,7 @@ thermostatControl:
   # SAFETY: All setpoint changes auto-expire after this duration (fail-safe)
   # After expiration, thermostat reverts to schedule mode
   # System will automatically extend the override if temperature still requires control
-  overrideDurationMinutes: 5
+  overrideDurationMinutes: 30
 
   # Extension threshold in minutes (default: 2)
   # When override has less than this time remaining, extend it automatically
