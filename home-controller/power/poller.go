@@ -51,7 +51,7 @@ func (p *Poller) scrapeAndBuffer(ctx context.Context) {
 				Timestamp:  reading.Timestamp,
 				SensorID:   reading.SensorID,
 				SensorType: reading.SensorType,
-				SensorName: reading.SensorName,
+				RoomName:   reading.RoomName,
 				Value:      reading.Value,
 			},
 		}

@@ -38,8 +38,8 @@ func TestGetAllSensors(t *testing.T) {
 	}
 
 	// Verify sensor name is preserved
-	if readings[0].SensorName != "Total" {
-		t.Errorf("Expected sensor name 'Total', got %q", readings[0].SensorName)
+	if readings[0].RoomName != "Total" {
+		t.Errorf("Expected sensor name 'Total', got %q", readings[0].RoomName)
 	}
 }
 

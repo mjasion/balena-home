@@ -116,7 +116,7 @@ func (s *Scanner) Start(ctx context.Context) error {
 					BLE: &buffer.SensorReading{
 						Timestamp:          reading.Timestamp,
 						MAC:                reading.MAC,
-						SensorName:         sensorInfo.Name,
+						RoomName:           sensorInfo.Name,
 						SensorID:           sensorInfo.ID,
 						TemperatureCelsius: reading.TemperatureCelsius,
 						HumidityPercent:    reading.HumidityPercent,

@@ -44,7 +44,7 @@ type Sensor struct {
 type SensorReading struct {
 	SensorID   int
 	SensorType string
-	SensorName string
+	RoomName   string
 	Value      float64
 	Timestamp  time.Time
 }
@@ -86,7 +86,7 @@ func (r *MultiSensorResponse) GetAllSensors() []SensorReading {
 		readings = append(readings, SensorReading{
 			SensorID:   sensor.ID,
 			SensorType: sensorType,
-			SensorName: sensor.Name,
+			RoomName:   sensor.Name,
 			Value:      sensor.Value,
 			Timestamp:  now,
 		})

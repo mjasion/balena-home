@@ -391,7 +391,7 @@ func (p *Pusher) buildBLETimeSeries(readings []*buffer.SensorReading) ([]prompb.
 	}
 	sensorReadings := make(map[sensorKey][]*buffer.SensorReading)
 	for _, reading := range readings {
-		key := sensorKey{name: reading.SensorName, id: reading.SensorID}
+		key := sensorKey{name: reading.RoomName, id: reading.SensorID}
 		sensorReadings[key] = append(sensorReadings[key], reading)
 	}
 
@@ -401,7 +401,7 @@ func (p *Pusher) buildBLETimeSeries(readings []*buffer.SensorReading) ([]prompb.
 		// Create base labels for this sensor
 		baseLabels := []prompb.Label{
 			{
-				Name:  "sensor_name",
+				Name:  "room_name",
 				Value: key.name,
 			},
 			{
@@ -424,7 +424,7 @@ func (p *Pusher) buildBLETimeSeries(readings []*buffer.SensorReading) ([]prompb.
 			ts, ok := reading.Timestamp.(time.Time)
 			if !ok {
 				p.logger.Warn("invalid timestamp type in reading",
-					zap.String("sensor_name", key.name),
+					zap.String("room_name", key.name),
 				)
 				continue
 			}
@@ -728,10 +728,10 @@ func (p *Pusher) buildPowerTimeSeries(readings []*buffer.PowerReading) ([]prompb
 		}
 
 		// Add sensor name label if available
-		if len(sensorData) > 0 && sensorData[0].SensorName != "" {
+		if len(sensorData) > 0 && sensorData[0].RoomName != "" {
 			labels = append(labels, prompb.Label{
-				Name:  "sensor_name",
-				Value: sensorData[0].SensorName,
+				Name:  "room_name",
+				Value: sensorData[0].RoomName,
 			})
 		}
 
@@ -897,7 +897,7 @@ func (p *Pusher) buildWeightedAvgTimeSeries(readings []*buffer.WeightedAvgReadin
 	}
 	sensorReadings := make(map[sensorKey][]*buffer.WeightedAvgReading)
 	for _, reading := range readings {
-		key := sensorKey{name: reading.SensorName, id: reading.SensorID}
+		key := sensorKey{name: reading.RoomName, id: reading.SensorID}
 		sensorReadings[key] = append(sensorReadings[key], reading)
 	}
 
@@ -907,7 +907,7 @@ func (p *Pusher) buildWeightedAvgTimeSeries(readings []*buffer.WeightedAvgReadin
 		// Create base labels for this sensor
 		baseLabels := []prompb.Label{
 			{
-				Name:  "sensor_name",
+				Name:  "room_name",
 				Value: key.name,
 			},
 			{

@@ -88,7 +88,7 @@ func (a *Aggregator) calculateWeightedAverages() {
 			WeightedAvg: &buffer.WeightedAvgReading{
 				Timestamp:          now,
 				MAC:                sensorMAC,
-				SensorName:         sensor.Name,
+				RoomName:           sensor.Name,
 				SensorID:           sensor.ID,
 				TemperatureCelsius: weightedAvg,
 				ReadingCount:       len(sensorReadings),

@@ -330,7 +330,7 @@ func TestBuildWriteRequest(t *testing.T) {
 		{
 			Timestamp:          now,
 			MAC:                "A4:C1:38:00:00:01",
-			SensorName:         "Living Room",
+			RoomName:         "Living Room",
 			SensorID:           1,
 			TemperatureCelsius: 22.5,
 			HumidityPercent:    50,
@@ -339,7 +339,7 @@ func TestBuildWriteRequest(t *testing.T) {
 		{
 			Timestamp:          now.Add(time.Second),
 			MAC:                "A4:C1:38:00:00:01",
-			SensorName:         "Living Room",
+			RoomName:         "Living Room",
 			SensorID:           1,
 			TemperatureCelsius: 22.6,
 			HumidityPercent:    51,
@@ -348,7 +348,7 @@ func TestBuildWriteRequest(t *testing.T) {
 		{
 			Timestamp:          now,
 			MAC:                "A4:C1:38:00:00:02",
-			SensorName:         "Bedroom",
+			RoomName:         "Bedroom",
 			SensorID:           2,
 			TemperatureCelsius: 23.1,
 			HumidityPercent:    55,
@@ -398,7 +398,7 @@ func TestBuildWriteRequest(t *testing.T) {
 		foundName := false
 		foundSensorID := false
 		foundMAC := false
-		foundSensorName := false
+		foundRoomName := false
 
 		for _, label := range ts.Labels {
 			if label.Name == "__name__" {
@@ -410,8 +410,8 @@ func TestBuildWriteRequest(t *testing.T) {
 			if label.Name == "mac" {
 				foundMAC = true
 			}
-			if label.Name == "sensor_name" {
-				foundSensorName = true
+			if label.Name == "room_name" {
+				foundRoomName = true
 			}
 		}
 
@@ -424,8 +424,8 @@ func TestBuildWriteRequest(t *testing.T) {
 		if !foundMAC {
 			t.Error("Expected mac label in time series")
 		}
-		if !foundSensorName {
-			t.Error("Expected sensor_name label in time series")
+		if !foundRoomName {
+			t.Error("Expected room_name label in time series")
 		}
 	}
 }

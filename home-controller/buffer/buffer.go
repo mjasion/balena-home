@@ -23,7 +23,7 @@ const (
 type SensorReading struct {
 	Timestamp          interface{} // time.Time
 	MAC                string
-	SensorName         string // Friendly name from config
+	RoomName           string // Friendly name from config
 	SensorID           int    // Numeric ID from config
 	TemperatureCelsius float64
 	HumidityPercent    int
@@ -53,7 +53,7 @@ type PowerReading struct {
 	Timestamp  interface{} // time.Time
 	SensorID   int
 	SensorType string // snake_case type: active_power, apparent_power, voltage, current, etc.
-	SensorName string // Optional friendly name
+	RoomName   string // Optional friendly name
 	Value      float64
 }
 
@@ -77,7 +77,7 @@ type ControlReading struct {
 type WeightedAvgReading struct {
 	Timestamp          interface{} // time.Time
 	MAC                string
-	SensorName         string
+	RoomName           string
 	SensorID           int
 	TemperatureCelsius float64 // Weighted average over last 60 seconds
 	ReadingCount       int     // Number of readings used in calculation
