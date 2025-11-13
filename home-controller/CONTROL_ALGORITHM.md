@@ -161,17 +161,28 @@ graph TD
 
 **Current Implementation:**
 
-The algorithm compensates for the difference between the Xiaomi sensor (authoritative) and the Netatmo's built-in sensor (which the thermostat uses for control).
+The algorithm uses **three-zone control** to compensate for the difference between the Xiaomi sensor (authoritative) and the Netatmo's built-in sensor (which the thermostat uses for control).
 
-**When room is too cold** (xiaomiTemp < scheduledTemp):
+**Zone 1: Room too cold** (tempDiff < -temperatureThreshold):
 ```
 calculatedSetpoint = max(scheduledTemp, thermostatMeasured + 0.5°C)
 ```
+Adds 0.5°C offset to ensure heating starts
 
-**When room is too warm** (xiaomiTemp > scheduledTemp):
+**Zone 2: Within acceptable range** (-threshold ≤ tempDiff ≤ +threshold):
+```
+If not extending override:
+  → Skip action (no_adjustment_needed)
+If extending override:
+  → calculatedSetpoint = thermostatMeasured (maintain without offset)
+```
+Maintains current temperature or skips action when temperature is acceptable
+
+**Zone 3: Room too warm** (tempDiff > +temperatureThreshold):
 ```
 calculatedSetpoint = min(scheduledTemp, thermostatMeasured - 0.5°C)
 ```
+Subtracts 0.5°C offset to ensure heating stops
 
 **Rationale:**
 - The Netatmo uses its **own built-in sensor** to decide when to heat/cool
@@ -179,6 +190,7 @@ calculatedSetpoint = min(scheduledTemp, thermostatMeasured - 0.5°C)
 - **Netatmo sensors are known to be faulty**, consistently reading 2-3°C higher than actual temperature
 - We must set a setpoint that triggers the correct action **on the Netatmo's sensor**
 - The **0.5°C offset** ensures the thermostat actually starts/stops heating
+- **Within threshold zone**: Prevents unnecessary interventions when temperature is acceptable
 - **Large offsets (2-5°C) are expected and normal** due to Netatmo's sensor inaccuracy - the algorithm compensates without limits
 
 **Example 1: Room Too Cold (Sensor Offset)**
@@ -191,7 +203,18 @@ calculatedSetpoint = min(scheduledTemp, thermostatMeasured - 0.5°C)
 - Room heats until Netatmo sensor reaches 25.5°C
 - By then, Xiaomi sensor should read ~24.0°C (target reached)
 
-**Example 2: Room Too Warm**
+**Example 2: Within Threshold (New Zone)**
+- Xiaomi reads: 24.1°C (close to target)
+- Scheduled target: 24.0°C
+- Thermostat's sensor: 24.5°C
+- Temperature difference: 24.1 - 24.0 = 0.1°C
+- Threshold: 0.5°C
+- abs(0.1) < 0.5 ✓ (within threshold)
+- **Decision**: No adjustment needed (temperature acceptable)
+- **Result**: No API call made, thermostat continues with current settings
+- Note: If override was about to expire, would maintain with calculatedSetpoint = 24.5°C (no offset)
+
+**Example 3: Room Too Warm**
 - Xiaomi reads: 25.5°C (too warm)
 - Scheduled target: 22.0°C
 - Thermostat's sensor: 24.5°C
@@ -341,18 +364,28 @@ This table shows all possible combinations of sensor readings and their outcomes
 | 5. Room too warm, thermo reads COLD<br/>(CRITICAL - Must override) | 24.0°C | 21.0°C | 22.0°C | 0.5°C | 20.5°C | **YES** | **CRITICAL:** Must stop heating via override |
 | 6. Room too warm, moderate thermo offset<br/>(No intervention) | 25.5°C | 23.0°C | 22.0°C | 0.5°C | 22.0°C | NO | Schedule sufficient, thermo will stop |
 | 7. Room too warm, large thermo offset<br/>(No intervention) | 26.0°C | 25.0°C | 22.0°C | 0.5°C | 22.0°C | NO | Schedule sufficient even with large offset |
-| 8. Within threshold<br/>(No action) | 24.2°C | 24.5°C | 24.0°C | 0.3°C | N/A | NO | Difference too small (0.2°C < 0.3°C) |
+| 8. Within threshold - no action<br/>(Three-zone control) | 24.1°C | 24.5°C | 24.0°C | 0.5°C | N/A | NO | Difference too small (0.1°C < 0.5°C) - skip action |
+| 9. Within threshold - extending override<br/>(Three-zone control) | 24.1°C | 24.5°C | 24.0°C | 0.5°C | 24.5°C | YES | Override about to expire - maintain without offset |
 
 **Key Patterns:**
 - **CRITICAL cases** (scenarios 3 & 5): Sensors disagree on temperature direction → **override required**
-- **No intervention** (scenarios 1, 2, 6, 7): Schedule alone will work → **no override needed**
+- **No intervention** (scenarios 1, 2, 6, 7, 8): Schedule alone will work → **no override needed**
 - **Large offsets** (scenario 4): Even if both sensors agree on direction, large offset needs compensation
+- **Three-zone control** (scenarios 8 & 9): Within threshold either skips or maintains without offset
 
 **Algorithm Logic:**
 ```
-When room TOO COLD:    setpoint = max(schedule, thermoMeasured + 0.5°C)
-When room TOO WARM:    setpoint = min(schedule, thermoMeasured - 0.5°C)
-Override sent if:      abs(setpoint - schedule) >= 0.1°C
+When room TOO COLD (tempDiff < -threshold):
+  → setpoint = max(schedule, thermoMeasured + 0.5°C)
+
+When WITHIN THRESHOLD (abs(tempDiff) < threshold):
+  → If not extending: Skip action (no_adjustment_needed)
+  → If extending: setpoint = thermoMeasured (maintain without offset)
+
+When room TOO WARM (tempDiff > +threshold):
+  → setpoint = min(schedule, thermoMeasured - 0.5°C)
+
+Override sent if: abs(setpoint - schedule) >= 0.1°C
 ```
 
 ### Detailed Scenario Descriptions
@@ -609,6 +642,46 @@ The temperatureThreshold parameter controls this behavior:
 - Lower values (0.2-0.3°C): More responsive but more interventions
 - Higher values (0.5-1.0°C): Less responsive but fewer interventions
 - Recommended: 0.3-0.5°C for home heating
+```
+
+### Scenario 7b: Within Threshold - Extending Override (Three-Zone Control)
+
+This demonstrates the new three-zone behavior when temperature is acceptable but an override is about to expire.
+
+```
+Input:
+- Xiaomi sensor: 24.1°C (close to target)
+- Netatmo thermostat sensor: 24.5°C
+- Scheduled temperature: 24.0°C
+- Threshold: 0.5°C
+- Override end time: 1 minute from now (extension needed)
+- Extension threshold: 2 minutes
+
+Calculation:
+- tempDiff = 24.1 - 24.0 = 0.1°C
+- abs(0.1) < 0.5 ✓ (within threshold)
+- Time until override expires: 1 minute
+- Extension threshold: 2 minutes
+- shouldExtend = true (override about to expire)
+
+Decision: Set manual override to maintain current temperature
+- calculatedSetpoint = thermostatMeasured = 24.5°C (no offset added)
+- Override sent with 10 minute duration
+
+Reason: "xiaomi=24.1°C, target=24.0°C, diff=0.10°C (extending, 1m left)"
+
+Why extend without offset:
+- Temperature is acceptable (within threshold)
+- Override is about to expire, need to maintain control
+- No heating/cooling action needed, just maintain current state
+- Setpoint = thermostat measured (24.5°C) WITHOUT adding 0.5°C offset
+- This prevents oscillation while keeping override active
+- After 10 minutes, override expires and returns to schedule
+
+Contrast with Zone 1 (Too Cold) or Zone 3 (Too Warm):
+- Zone 1 (too cold): calculatedSetpoint = thermostatMeasured + 0.5°C (trigger heating)
+- Zone 2 (within threshold): calculatedSetpoint = thermostatMeasured (maintain only)
+- Zone 3 (too warm): calculatedSetpoint = thermostatMeasured - 0.5°C (stop heating)
 ```
 
 ### Scenario 8: Hard Override Active

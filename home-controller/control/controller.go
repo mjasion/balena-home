@@ -460,7 +460,12 @@ func (c *Controller) evaluateRoom(
 
 	// 3. Calculate temperature difference
 	tempDiff := xiaomiTemp - scheduledTemp
-	if math.Abs(tempDiff) < c.config.TemperatureThreshold {
+
+	// Check if temperature is within acceptable range
+	withinThreshold := math.Abs(tempDiff) < c.config.TemperatureThreshold
+
+	// If within threshold and no extension needed, skip action
+	if withinThreshold && !shouldExtend {
 		decision.Action = "no_adjustment_needed"
 		decision.Reason = fmt.Sprintf("temperature difference %.2f°C below threshold %.2f°C",
 			math.Abs(tempDiff), c.config.TemperatureThreshold)
@@ -478,21 +483,26 @@ func (c *Controller) evaluateRoom(
 	// Large sensor offsets (2-5°C) are EXPECTED and NORMAL. The algorithm compensates without limits
 	// because Netatmo's systematic sensor inaccuracy requires aggressive compensation.
 	//
-	// Strategy:
-	// - If room is too cold (xiaomi < scheduled): set setpoint ABOVE thermostatMeasured + 0.5°C
-	// - If room is too warm (xiaomi > scheduled): set setpoint BELOW thermostatMeasured - 0.5°C
+	// Strategy (three-zone control):
+	// - If room is too cold (tempDiff < -threshold): set setpoint ABOVE thermostatMeasured + 0.5°C
+	// - If room is within threshold but extending: set setpoint to current thermostatMeasured (maintain without offset)
+	// - If room is too warm (tempDiff > +threshold): set setpoint BELOW thermostatMeasured - 0.5°C
 	// - The 0.5°C offset ensures the thermostat actually triggers heating/cooling
 	// - NO upper limit on compensation - large offsets are expected with faulty Netatmo sensors
 	var calculatedSetpoint float64
 
-	if tempDiff < 0 {
+	if tempDiff < -c.config.TemperatureThreshold {
 		// Room too cold - need to heat
 		// Ensure setpoint is high enough to trigger heating on Netatmo's sensor
 		calculatedSetpoint = math.Max(scheduledTemp, decision.ThermostatMeasured+0.5)
-	} else {
+	} else if tempDiff > c.config.TemperatureThreshold {
 		// Room too warm - need to cool (or stop heating)
 		// Ensure setpoint is low enough to stop heating on Netatmo's sensor
 		calculatedSetpoint = math.Min(scheduledTemp, decision.ThermostatMeasured-0.5)
+	} else {
+		// Temperature within acceptable range but extension needed
+		// Set setpoint to current measured temperature without offset
+		calculatedSetpoint = decision.ThermostatMeasured
 	}
 
 	// Check if setpoint matches schedule (within 0.1°C tolerance)
