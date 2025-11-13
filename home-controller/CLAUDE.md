@@ -202,7 +202,7 @@ Prometheus metrics include all temperature readings plus:
 - `thermostat_control_action`: Control action taken (0=skip, 1=no_adjustment, 2=override)
 - `thermostat_control_temperature_difference_celsius`: Xiaomi vs scheduled temp
 - `thermostat_control_setpoint_adjustment_celsius`: Calculated adjustment
-- Labels: `room_name`, `thermostat_mode`
+- Labels: `room_name`
 
 ## Configuration
 
