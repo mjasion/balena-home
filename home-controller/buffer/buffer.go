@@ -59,18 +59,18 @@ type PowerReading struct {
 
 // ControlReading represents a control loop decision and metrics
 type ControlReading struct {
-	Timestamp              interface{} // time.Time
-	RoomName               string
-	Action                 string  // "skip", "no_adjustment_needed", "set_manual_override"
-	XiaomiTemperature      float64
-	ScheduledTemperature   float64
-	ThermostatMeasured     float64
-	ThermostatMode         string  // "schedule", "manual", "away", "hg" (frost guard), etc.
-	CalculatedSetpoint     float64
-	TemperatureDifference  float64 // xiaomiTemp - scheduledTemp
-	SetpointAdjustment     float64 // calculatedSetpoint - thermostatMeasured
-	ExternallyModified     bool
-	HardOverrideActive     bool
+	Timestamp             interface{} // time.Time
+	RoomName              string
+	Action                string // "skip", "no_adjustment_needed", "set_manual_override"
+	XiaomiTemperature     float64
+	ScheduledTemperature  float64
+	ThermostatMeasured    float64
+	ThermostatMode        string // "schedule", "manual", "away", "hg" (frost guard), etc.
+	CalculatedSetpoint    float64
+	TemperatureDifference float64 // xiaomiTemp - scheduledTemp
+	SetpointAdjustment    float64 // calculatedSetpoint - thermostatMeasured
+	ExternallyModified    bool
+	HardOverrideActive    bool
 }
 
 // WeightedAvgReading represents a weighted average temperature reading from BLE sensors
@@ -85,12 +85,12 @@ type WeightedAvgReading struct {
 
 // Reading is a union type that can hold BLE sensor, Netatmo thermostat, power, control, or weighted average readings
 type Reading struct {
-	Type          ReadingType
-	BLE           *SensorReading
-	Thermostat    *ThermostatReading
-	Power         *PowerReading
-	Control       *ControlReading
-	WeightedAvg   *WeightedAvgReading
+	Type        ReadingType
+	BLE         *SensorReading
+	Thermostat  *ThermostatReading
+	Power       *PowerReading
+	Control     *ControlReading
+	WeightedAvg *WeightedAvgReading
 }
 
 // RingBuffer is a thread-safe circular buffer for sensor readings
@@ -395,7 +395,7 @@ func matchesTimeWindow(reading *Reading, start, end time.Time) bool {
 
 	// Check if timestamp is within window (inclusive on both ends)
 	return (timestamp.Equal(start) || timestamp.After(start)) &&
-	       (timestamp.Equal(end) || timestamp.Before(end))
+		(timestamp.Equal(end) || timestamp.Before(end))
 }
 
 // Size returns the current number of readings in the buffer

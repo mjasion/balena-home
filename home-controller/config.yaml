@@ -30,9 +30,16 @@ netatmo:
   clientSecret: ""  # or use NETATMO_CLIENT_SECRET env var
   refreshToken: ""  # or use NETATMO_REFRESH_TOKEN env var
 
-  # Interval between Netatmo API fetches in seconds (minimum: 1, recommended: 60)
-  # Note: Netatmo rate limits apply - don't set too low
-  fetchIntervalSeconds: 60
+  # Cron syntax for scheduling (REQUIRED)
+  # 6-field cron with seconds: second minute hour day month weekday
+  # Note: Netatmo rate limits apply - don't set too frequently
+  # Examples:
+  #   "0 * * * * *"      - Every minute at second 0
+  #   "0 */5 * * * *"    - Every 5 minutes at second 0
+  #   "0 0 * * * *"      - Every hour at minute 0, second 0
+  #   "0 0 */2 * * *"    - Every 2 hours
+  #   "0 0 8-18 * * *"   - Every hour between 8 AM and 6 PM
+  cron: "0 * * * * *"  # Every minute at second 0 (or use NETATMO_CRON env var)
 
 # Power meter monitoring
 power:
@@ -43,11 +50,17 @@ power:
   # Example: http://192.168.1.100/metrics or http://powermeter.local/status
   scrapeUrl: "http://192.168.25.46/state"  # or use POWER_SCRAPE_URL env var
 
-  # Interval between power meter scrapes in seconds (minimum: 1, default: 2)
-  scrapeIntervalSeconds: 1
-
   # HTTP request timeout in seconds (default: 1.5)
   scrapeTimeoutSeconds: 0.99
+
+  # Cron syntax for scheduling (REQUIRED)
+  # 6-field cron with seconds: second minute hour day month weekday
+  # Examples:
+  #   "* * * * * *"      - Every second
+  #   "*/5 * * * * *"    - Every 5 seconds
+  #   "0 * * * * *"      - Every minute at second 0
+  #   "0 */5 * * * *"    - Every 5 minutes at second 0
+  cron: "* * * * * *"  # Every second (or use POWER_CRON env var)
 
 # Pyroscope profiling configuration
 pyroscope:
@@ -137,6 +150,9 @@ opentelemetry:
 # Prometheus metrics push configuration
 prometheus:
   # Interval between metric pushes in seconds (minimum: 1)
+  # When cron is not set, uses random duration: pushIntervalSeconds ± 1 second
+  # This prevents thundering herd when multiple instances are running
+  # Example: If set to 10, actual interval will be randomly between 9-11 seconds
   pushIntervalSeconds: 10
 
   # Prometheus remote_write endpoint URL
@@ -151,6 +167,7 @@ prometheus:
   prometheusPassword: ""
 
   # Start pushing at even second boundaries (improves alignment in time series)
+  # Note: This setting is deprecated and has no effect when using random duration
   startAtEvenSecond: true
 
   # Ring buffer size (number of readings to buffer before push)
@@ -159,6 +176,15 @@ prometheus:
   # Batch size for pushing metrics (number of readings per batch, default: 1000)
   # Larger batches are more efficient but may hit size limits on the receiving end
   batchSize: 1000
+
+  # Cron syntax for scheduling (OPTIONAL - leave empty to use random duration)
+  # 6-field cron with seconds: second minute hour day month weekday
+  # Examples:
+  #   "*/10 * * * * *"   - Every 10 seconds
+  #   "*/30 * * * * *"   - Every 30 seconds
+  #   "0 * * * * *"      - Every minute at second 0
+  # Note: When empty, uses random duration based on pushIntervalSeconds
+  cron: ""  # or use PROMETHEUS_CRON env var
 
 # Logging configuration
 logging:
@@ -176,10 +202,14 @@ aggregator:
   # When enabled, calculates time-weighted averages over 60 seconds
   enabled: true
 
-  # Interval between aggregation runs in seconds (default: 30)
-  # How often to calculate and push weighted average metrics
-  # Note: Each calculation looks back 60 seconds, so this controls update frequency
-  intervalSeconds: 60
+  # Cron syntax for scheduling (REQUIRED)
+  # 6-field cron with seconds: second minute hour day month weekday
+  # Note: Each calculation looks back 60 seconds
+  # Examples:
+  #   "*/30 * * * * *"   - Every 30 seconds
+  #   "0 * * * * *"      - Every minute at second 0
+  #   "0 */5 * * * *"    - Every 5 minutes at second 0
+  cron: "0 * * * * *"  # Every minute at second 0 (or use AGGREGATOR_CRON env var)
 
 # Intelligent Thermostat Control (NEW)
 # IMPORTANT: This feature is DISABLED by default. Enable only after reviewing all settings.
@@ -198,9 +228,14 @@ thermostatControl:
   # Range: 0.1 to 5.0°C (lower = more aggressive, higher = more relaxed)
   temperatureThreshold: 0.2
 
-  # Control loop interval in seconds (default: 60)
-  # How often to evaluate each room and potentially adjust thermostats
-  controlIntervalSeconds: 60
+  # Cron syntax for scheduling (REQUIRED)
+  # 6-field cron with seconds: second minute hour day month weekday
+  # Examples:
+  #   "0 * * * * *"      - Every minute at second 0
+  #   "0 */5 * * * *"    - Every 5 minutes at second 0
+  #   "0 */15 * * * *"   - Every 15 minutes at second 0
+  #   "0 0 6-22 * * *"   - Every hour from 6 AM to 10 PM
+  cron: "0 * * * * *"  # Every minute at second 0 (or use THERMOSTAT_CONTROL_CRON env var)
 
   # Override duration in minutes (default: 10)
   # SAFETY: All setpoint changes auto-expire after this duration (fail-safe)
@@ -286,6 +321,20 @@ thermostatControl:
          endTime: "07:30"
          targetTemperature: 24.0
          days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
+
+# Job Scheduler Configuration
+scheduler:
+  # Enable web UI for viewing and managing scheduled jobs
+  uiEnabled: true
+
+  # Host address for the scheduler UI server (0.0.0.0 = all interfaces)
+  # For local access only, use "127.0.0.1" or "localhost"
+  uiHost: "0.0.0.0"  # or use SCHEDULER_UI_HOST env var
+
+  # Port for the scheduler UI server
+  uiPort: 8080  # or use SCHEDULER_UI_PORT env var
+
+  # Access the UI at: http://<host>:8080
 
 # USAGE NOTES:
 #

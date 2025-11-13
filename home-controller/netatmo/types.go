@@ -38,35 +38,35 @@ type HomeStatus struct {
 
 // Module represents a Netatmo module (thermostat, valve, etc.)
 type Module struct {
-	ID            string `json:"id"`
-	Type          string `json:"type"`
-	Name          string `json:"name"`
-	SetupDate     int64  `json:"setup_date"`
-	RoomID        string `json:"room_id"`
-	BridgeID      string `json:"bridge,omitempty"`
+	ID            string   `json:"id"`
+	Type          string   `json:"type"`
+	Name          string   `json:"name"`
+	SetupDate     int64    `json:"setup_date"`
+	RoomID        string   `json:"room_id"`
+	BridgeID      string   `json:"bridge,omitempty"`
 	ModuleBridged []string `json:"modules_bridged,omitempty"`
 }
 
 // ModuleData represents the current data from a module
 type ModuleData struct {
-	ID                  string  `json:"id"`
-	Type                string  `json:"type"`
-	Reachable           bool    `json:"reachable"`
-	FirmwareRevision    int     `json:"firmware_revision,omitempty"`
-	RFStatus            int     `json:"rf_status,omitempty"`
-	BatteryPercent      int     `json:"battery_percent,omitempty"`
-	BatteryState        string  `json:"battery_state,omitempty"`
+	ID                       string  `json:"id"`
+	Type                     string  `json:"type"`
+	Reachable                bool    `json:"reachable"`
+	FirmwareRevision         int     `json:"firmware_revision,omitempty"`
+	RFStatus                 int     `json:"rf_status,omitempty"`
+	BatteryPercent           int     `json:"battery_percent,omitempty"`
+	BatteryState             string  `json:"battery_state,omitempty"`
 	ThermMeasuredTemperature float64 `json:"therm_measured_temperature,omitempty"`
 	ThermSetpointTemperature float64 `json:"therm_setpoint_temperature,omitempty"`
 }
 
 // Room represents a room in a home
 type Room struct {
-	ID                string  `json:"id"`
-	Name              string  `json:"name"`
-	Type              string  `json:"type"`
-	ModuleIDs         []string `json:"module_ids"`
-	MeasureOffsetNAPlug float64 `json:"measure_offset_NAPlug,omitempty"`
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	Type                string   `json:"type"`
+	ModuleIDs           []string `json:"module_ids"`
+	MeasureOffsetNAPlug float64  `json:"measure_offset_NAPlug,omitempty"`
 }
 
 // RoomStatus represents the current status of a room
@@ -105,31 +105,31 @@ type User struct {
 
 // ThermostatReading represents a thermostat reading with measured and setpoint temperatures
 type ThermostatReading struct {
-	Timestamp            int64   // Unix timestamp
-	HomeID               string
-	HomeName             string
-	RoomID               string
-	RoomName             string
-	MeasuredTemperature  float64
-	SetpointTemperature  float64
-	SetpointMode         string
-	HeatingPowerRequest  int
-	OpenWindow           bool
-	Reachable            bool
+	Timestamp           int64 // Unix timestamp
+	HomeID              string
+	HomeName            string
+	RoomID              string
+	RoomName            string
+	MeasuredTemperature float64
+	SetpointTemperature float64
+	SetpointMode        string
+	HeatingPowerRequest int
+	OpenWindow          bool
+	Reachable           bool
 }
 
 // SetRoomThermPointRequest represents the request body for setroomthermpoint API
 type SetRoomThermPointRequest struct {
-	HomeID string  `json:"home_id"`
-	RoomID string  `json:"room_id"`
-	Mode   string  `json:"mode"` // "manual" or "home"
-	Temp   float64 `json:"temp,omitempty"` // Required for "manual" mode
-	EndTime int64  `json:"endtime,omitempty"` // Unix timestamp, optional (for temporary override)
+	HomeID  string  `json:"home_id"`
+	RoomID  string  `json:"room_id"`
+	Mode    string  `json:"mode"`              // "manual" or "home"
+	Temp    float64 `json:"temp,omitempty"`    // Required for "manual" mode
+	EndTime int64   `json:"endtime,omitempty"` // Unix timestamp, optional (for temporary override)
 }
 
 // SetRoomThermPointResponse represents the response from setroomthermpoint API
 type SetRoomThermPointResponse struct {
-	Status     string `json:"status"`
+	Status     string  `json:"status"`
 	TimeExec   float64 `json:"time_exec"`
 	TimeServer int64   `json:"time_server"`
 }

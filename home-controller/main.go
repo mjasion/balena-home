@@ -20,6 +20,7 @@ import (
 	"github.com/mjasion/balena-home/thermostats/power"
 	"github.com/mjasion/balena-home/thermostats/pyroscope"
 	"github.com/mjasion/balena-home/thermostats/scanner"
+	"github.com/mjasion/balena-home/thermostats/scheduler"
 	"go.uber.org/zap"
 )
 
@@ -96,6 +97,18 @@ func main() {
 	)
 	logger.Info("prometheus pusher initialized", zap.String("url", cfg.Prometheus.URL))
 
+	// Create job scheduler with UI
+	schedulerCfg := &scheduler.Config{
+		UIEnabled: cfg.Scheduler.UIEnabled,
+		UIHost:    cfg.Scheduler.UIHost,
+		UIPort:    cfg.Scheduler.UIPort,
+	}
+	jobScheduler, err := scheduler.New(schedulerCfg, logger)
+	if err != nil {
+		logger.Error("failed to create job scheduler", zap.Error(err))
+		os.Exit(1)
+	}
+
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -104,7 +117,7 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Create wait group for goroutines
+	// Create wait group for goroutines (only for BLE scanner now)
 	var wg sync.WaitGroup
 
 	// Convert config sensors to scanner format
@@ -142,29 +155,27 @@ func main() {
 		netatmoClient.SetLogger(logger)
 	}
 
-	// Start Netatmo poller if enabled (writes to metrics buffer only)
+	// Add Netatmo poller job if enabled
 	if cfg.Netatmo.Enabled {
-		logger.Info("netatmo integration enabled, starting poller")
+		logger.Info("netatmo integration enabled, adding scheduler job")
 
 		netatmoPoller := netatmo.NewPoller(
 			netatmoClient,
 			metricsBuffer,
-			cfg.Netatmo.FetchInterval,
 			logger,
 		)
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			netatmoPoller.Start(ctx)
-		}()
+		if err := jobScheduler.AddCronJobWithSeconds("Netatmo Poller", cfg.Netatmo.Cron, netatmoPoller.Run); err != nil {
+			logger.Error("failed to add netatmo poller cron job", zap.Error(err))
+			os.Exit(1)
+		}
 	} else {
 		logger.Info("netatmo integration disabled")
 	}
 
-	// Start Power poller if enabled (writes to metrics buffer only)
+	// Add Power poller job if enabled
 	if cfg.Power.Enabled {
-		logger.Info("power monitoring enabled, starting poller")
+		logger.Info("power monitoring enabled, adding scheduler job")
 
 		powerScraper := power.New(
 			cfg.Power.ScrapeURL,
@@ -175,46 +186,39 @@ func main() {
 		powerPoller := power.NewPoller(
 			powerScraper,
 			metricsBuffer,
-			cfg.Power.ScrapeIntervalSeconds,
 			logger,
 		)
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			powerPoller.Start(ctx)
-		}()
+		if err := jobScheduler.AddCronJobWithSeconds("Power Meter Poller", cfg.Power.Cron, powerPoller.Run); err != nil {
+			logger.Error("failed to add power poller cron job", zap.Error(err))
+			os.Exit(1)
+		}
 	} else {
 		logger.Info("power monitoring disabled")
 	}
 
-	// Start BLE aggregator if enabled (calculates weighted averages)
+	// Add BLE aggregator job if enabled
 	if cfg.Aggregator.Enabled {
-		logger.Info("BLE aggregator enabled, starting aggregator")
+		logger.Info("BLE aggregator enabled, adding scheduler job")
 
 		bleAggregator := aggregator.New(
 			scannerSensors,
 			controlBuffer,
 			metricsBuffer,
-			cfg.Aggregator.IntervalSeconds,
 			logger,
 		)
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			err := bleAggregator.Start(ctx)
-			if err != nil {
-				logger.Error("BLE aggregator failed", zap.Error(err))
-			}
-		}()
+		if err := jobScheduler.AddCronJobWithSeconds("BLE Aggregator", cfg.Aggregator.Cron, bleAggregator.Run); err != nil {
+			logger.Error("failed to add BLE aggregator cron job", zap.Error(err))
+			os.Exit(1)
+		}
 	} else {
 		logger.Info("BLE aggregator disabled")
 	}
 
-	// Start thermostat control loop if enabled (uses control buffer)
+	// Initialize and add thermostat control job if enabled
 	if cfg.ThermostatControl.Enabled {
-		logger.Info("thermostat control enabled, starting control loop")
+		logger.Info("thermostat control enabled, initializing and adding scheduler job")
 
 		// Create controller (uses shared Netatmo client)
 		controller := control.New(
@@ -225,36 +229,54 @@ func main() {
 			logger,
 		)
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			err := controller.Start(ctx)
-			if err != nil {
-				logger.Error("thermostat control loop failed", zap.Error(err))
-			}
-		}()
+		// Initialize controller (fetch room IDs from Netatmo)
+		if err := controller.Initialize(ctx); err != nil {
+			logger.Error("failed to initialize thermostat controller", zap.Error(err))
+			os.Exit(1)
+		}
+
+		if err := jobScheduler.AddCronJobWithSeconds("Thermostat Controller", cfg.ThermostatControl.Cron, controller.Run); err != nil {
+			logger.Error("failed to add thermostat controller cron job", zap.Error(err))
+			os.Exit(1)
+		}
 	} else {
 		logger.Info("thermostat control disabled")
 	}
 
-	// Wait for START_AT_EVEN_SECOND if configured
-	if cfg.Prometheus.StartAtEvenSecond {
-		now := time.Now()
-		nextEvenSecond := now.Truncate(time.Second).Add(time.Second)
-		waitDuration := nextEvenSecond.Sub(now)
-		logger.Info("waiting to start at even second",
-			zap.Duration("wait_duration", waitDuration),
-			zap.Time("next_even_second", nextEvenSecond),
-		)
-		time.Sleep(waitDuration)
+	// Add Prometheus pusher job
+	// Use cron if configured, otherwise use random duration around the interval
+	if cfg.Prometheus.Cron != "" {
+		if err := jobScheduler.AddCronJobWithSeconds("Prometheus Pusher", cfg.Prometheus.Cron, pusher.Run); err != nil {
+			logger.Error("failed to add prometheus pusher cron job", zap.Error(err))
+			os.Exit(1)
+		}
+	} else {
+		// Use random duration: interval ± 1 second to prevent thundering herd
+		baseInterval := time.Duration(cfg.Prometheus.PushIntervalSeconds) * time.Second
+		minInterval := baseInterval - time.Second
+		maxInterval := baseInterval + time.Second
+
+		// Ensure minimum interval is at least 1 second
+		if minInterval < time.Second {
+			minInterval = time.Second
+		}
+
+		if err := jobScheduler.AddJobWithRandomDuration(
+			"Prometheus Pusher",
+			minInterval,
+			maxInterval,
+			pusher.Run,
+		); err != nil {
+			logger.Error("failed to add prometheus pusher job", zap.Error(err))
+			os.Exit(1)
+		}
 	}
 
-	// Start Prometheus pusher
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		pusher.Start(ctx)
-	}()
+	// Start the job scheduler
+	if err := jobScheduler.Start(); err != nil {
+		logger.Error("failed to start job scheduler", zap.Error(err))
+		os.Exit(1)
+	}
 
 	// Wait for shutdown signal
 	select {
@@ -271,6 +293,14 @@ func main() {
 	logger.Info("stopping BLE scanner")
 	if err := bleScanner.Stop(); err != nil {
 		logger.Error("failed to stop BLE scanner", zap.Error(err))
+	}
+
+	// Shutdown scheduler
+	logger.Info("shutting down job scheduler")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := jobScheduler.Shutdown(shutdownCtx); err != nil {
+		logger.Error("failed to shutdown job scheduler", zap.Error(err))
 	}
 
 	// Final push of remaining data from metrics buffer

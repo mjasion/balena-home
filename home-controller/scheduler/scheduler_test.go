@@ -7,10 +7,10 @@ import (
 
 func TestWaitForAlignedInterval(t *testing.T) {
 	tests := []struct {
-		name            string
-		interval        time.Duration
-		secondsSince    int // seconds since start of hour
-		expectedWait    int // expected wait in seconds
+		name         string
+		interval     time.Duration
+		secondsSince int // seconds since start of hour
+		expectedWait int // expected wait in seconds
 	}{
 		{
 			name:         "1s interval - should wait 1s",

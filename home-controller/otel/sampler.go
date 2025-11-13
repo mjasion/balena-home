@@ -56,4 +56,3 @@ func ParentBasedMetricsSampler(defaultSamplingRate, metricsSamplingRate float64)
 		sdktrace.WithLocalParentNotSampled(root),
 	)
 }
-

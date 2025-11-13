@@ -21,7 +21,7 @@ func TestControllerConstructor(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                          true,
 		TemperatureThreshold:             0.5,
-		ControlIntervalSeconds:           60,
+		Cron:                             "0 * * * * *",
 		ExtensionThresholdMinutes:        2,
 		OverrideDurationMinutes:          30,
 		ExternalModificationResetMinutes: 5,
@@ -85,7 +85,7 @@ func TestWeightedAverageTemperature(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                 true,
 		TemperatureThreshold:    0.5,
-		ControlIntervalSeconds:  60,
+		Cron:                    "0 * * * * *",
 		OverrideDurationMinutes: 10,
 	}
 
@@ -459,9 +459,9 @@ func TestStartWithCancelledContext(t *testing.T) {
 	metricsBuffer := buffer.New(100, logger)
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled:                true,
-		ControlIntervalSeconds: 60,
-		Mappings:               []config.ThermostatMapping{}, // Empty mappings to avoid initialization
+		Enabled:  true,
+		Cron:     "0 * * * * *",
+		Mappings: []config.ThermostatMapping{}, // Empty mappings to avoid initialization
 	}
 
 	client := netatmo.NewClient("test-client-id", "test-secret", "test-refresh-token")
@@ -471,14 +471,14 @@ func TestStartWithCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	// Start will try to initialize room IDs which will fail due to cancelled context
+	// Initialize will try to initialize room IDs which will fail due to cancelled context
 	// This is expected behavior - the controller should detect context cancellation
-	err := c.Start(ctx)
+	err := c.Initialize(ctx)
 
 	// We expect an error because context is cancelled before initialization completes
 	// The important thing is that it returns quickly and doesn't hang
 	if err == nil {
-		t.Log("Start() returned nil error (may have skipped initialization due to empty mappings)")
+		t.Log("Initialize() returned nil error (may have skipped initialization due to empty mappings)")
 	} else {
 		// Error is expected - verify it's context-related
 		if !strings.Contains(err.Error(), "context canceled") && !strings.Contains(err.Error(), "context") {
@@ -655,7 +655,7 @@ func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                   true,
 		TemperatureThreshold:      0.5,
-		ControlIntervalSeconds:    60,
+		Cron:                      "0 * * * * *",
 		ExtensionThresholdMinutes: 2,
 		OverrideDurationMinutes:   30,
 		Mappings: []config.ThermostatMapping{
@@ -748,7 +748,7 @@ func TestOverrideExtension(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                   true,
 		TemperatureThreshold:      0.3,
-		ControlIntervalSeconds:    60,
+		Cron:                      "0 * * * * *",
 		ExtensionThresholdMinutes: 2,  // Extend when < 2 minutes left
 		OverrideDurationMinutes:   30, // Each override lasts 30 minutes
 		Mappings: []config.ThermostatMapping{
@@ -761,11 +761,11 @@ func TestOverrideExtension(t *testing.T) {
 	// Initialize state with an override that's about to expire (1 minute left)
 	c.stateMu.Lock()
 	c.stateByRoom["room1"] = &ThermostatState{
-		RoomID:          "room1",
-		RoomName:        "Living Room",
-		LastSetpoint:    24.0,
+		RoomID:           "room1",
+		RoomName:         "Living Room",
+		LastSetpoint:     24.0,
 		LastSetpointTime: time.Now().Add(-29 * time.Minute), // Sent 29 minutes ago
-		OverrideEndTime: time.Now().Add(1 * time.Minute),    // Expires in 1 minute
+		OverrideEndTime:  time.Now().Add(1 * time.Minute),   // Expires in 1 minute
 	}
 	c.stateMu.Unlock()
 
@@ -829,7 +829,7 @@ func TestOverrideNotExtendedWhenNotNeeded(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                   true,
 		TemperatureThreshold:      0.3,
-		ControlIntervalSeconds:    60,
+		Cron:                      "0 * * * * *",
 		ExtensionThresholdMinutes: 2,  // Extend when < 2 minutes left
 		OverrideDurationMinutes:   30, // Each override lasts 30 minutes
 		Mappings: []config.ThermostatMapping{
@@ -845,7 +845,7 @@ func TestOverrideNotExtendedWhenNotNeeded(t *testing.T) {
 		RoomID:           "room1",
 		RoomName:         "Living Room",
 		LastSetpoint:     24.0,
-		LastSetpointTime: time.Now().Add(-5 * time.Minute),  // Sent 5 minutes ago
+		LastSetpointTime: time.Now().Add(-5 * time.Minute), // Sent 5 minutes ago
 		OverrideEndTime:  time.Now().Add(25 * time.Minute), // Expires in 25 minutes
 	}
 	c.stateMu.Unlock()
@@ -905,7 +905,7 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                   true,
 		TemperatureThreshold:      0.3, // Low threshold to trigger action
-		ControlIntervalSeconds:    60,
+		Cron:                      "0 * * * * *",
 		ExtensionThresholdMinutes: 2,
 		OverrideDurationMinutes:   30,
 		Mappings: []config.ThermostatMapping{

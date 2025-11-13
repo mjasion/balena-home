@@ -8,7 +8,6 @@ import (
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
 	"github.com/mjasion/balena-home/thermostats/scanner"
-	"github.com/mjasion/balena-home/thermostats/scheduler"
 	"go.uber.org/zap"
 )
 
@@ -18,7 +17,6 @@ type Aggregator struct {
 	controlBuffer *buffer.RingBuffer // Source buffer with BLE readings
 	metricsBuffer *buffer.RingBuffer // Destination buffer for metrics
 	logger        *zap.Logger
-	interval      time.Duration
 }
 
 // New creates a new sensor data aggregator
@@ -26,7 +24,6 @@ func New(
 	sensors []scanner.SensorConfig,
 	controlBuffer *buffer.RingBuffer,
 	metricsBuffer *buffer.RingBuffer,
-	intervalSeconds int,
 	logger *zap.Logger,
 ) *Aggregator {
 	return &Aggregator{
@@ -34,40 +31,12 @@ func New(
 		controlBuffer: controlBuffer,
 		metricsBuffer: metricsBuffer,
 		logger:        logger,
-		interval:      time.Duration(intervalSeconds) * time.Second,
 	}
 }
 
-// Start begins the aggregation loop
-func (a *Aggregator) Start(ctx context.Context) error {
-	a.logger.Info("starting BLE aggregator",
-		zap.Duration("interval", a.interval),
-		zap.Int("sensor_count", len(a.sensors)),
-	)
-
-	// Wait for first aligned interval
-	initialWait := scheduler.WaitForAlignedInterval(a.interval, a.logger)
-	select {
-	case <-ctx.Done():
-		a.logger.Info("BLE aggregator stopped before first run")
-		return nil
-	case <-time.After(initialWait):
-		a.calculateWeightedAverages()
-	}
-
-	// Now use ticker for subsequent runs
-	ticker := time.NewTicker(a.interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			a.logger.Info("BLE aggregator stopped")
-			return nil
-		case <-ticker.C:
-			a.calculateWeightedAverages()
-		}
-	}
+// Run executes a single aggregation iteration (called by scheduler)
+func (a *Aggregator) Run(ctx context.Context) {
+	a.calculateWeightedAverages()
 }
 
 // calculateWeightedAverages calculates weighted averages for all sensors

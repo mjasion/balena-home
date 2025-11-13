@@ -2,60 +2,30 @@ package power
 
 import (
 	"context"
-	"time"
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
-	"github.com/mjasion/balena-home/thermostats/scheduler"
 	"go.uber.org/zap"
 )
 
 // Poller periodically scrapes power meter data and adds it to the buffer
 type Poller struct {
-	scraper        *Scraper
-	buffer         *buffer.RingBuffer
-	logger         *zap.Logger
-	scrapeInterval time.Duration
+	scraper *Scraper
+	buffer  *buffer.RingBuffer
+	logger  *zap.Logger
 }
 
 // NewPoller creates a new power meter poller
-func NewPoller(scraper *Scraper, buf *buffer.RingBuffer, scrapeIntervalSeconds int, logger *zap.Logger) *Poller {
+func NewPoller(scraper *Scraper, buf *buffer.RingBuffer, logger *zap.Logger) *Poller {
 	return &Poller{
-		scraper:        scraper,
-		buffer:         buf,
-		logger:         logger,
-		scrapeInterval: time.Duration(scrapeIntervalSeconds) * time.Second,
+		scraper: scraper,
+		buffer:  buf,
+		logger:  logger,
 	}
 }
 
-// Start starts the polling loop
-func (p *Poller) Start(ctx context.Context) {
-	p.logger.Info("starting power meter poller",
-		zap.Duration("scrape_interval", p.scrapeInterval),
-	)
-
-	// Wait for first aligned interval
-	initialWait := scheduler.WaitForAlignedInterval(p.scrapeInterval, p.logger)
-	select {
-	case <-ctx.Done():
-		p.logger.Info("power meter poller stopped before first scrape")
-		return
-	case <-time.After(initialWait):
-		p.scrapeAndBuffer(ctx)
-	}
-
-	// Now use ticker for subsequent scrapes
-	ticker := time.NewTicker(p.scrapeInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			p.logger.Info("stopping power meter poller")
-			return
-		case <-ticker.C:
-			p.scrapeAndBuffer(ctx)
-		}
-	}
+// Run executes a single scrape iteration (called by scheduler)
+func (p *Poller) Run(ctx context.Context) {
+	p.scrapeAndBuffer(ctx)
 }
 
 // scrapeAndBuffer scrapes power meter data and adds it to the buffer

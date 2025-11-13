@@ -46,8 +46,8 @@ func InitTracer(ctx context.Context, cfg *config.OpenTelemetryConfig, logger *za
 
 	// Extract path if present (e.g., "/otlp" from "host/otlp")
 	if idx := strings.Index(endpoint, "/"); idx > 0 {
-		urlPath = endpoint[idx:] // e.g., "/otlp"
-		endpoint = endpoint[:idx]  // e.g., "host"
+		urlPath = endpoint[idx:]  // e.g., "/otlp"
+		endpoint = endpoint[:idx] // e.g., "host"
 	}
 
 	// Combine extracted path with /v1/traces

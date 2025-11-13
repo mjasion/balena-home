@@ -106,7 +106,7 @@ func TestNewScanner_DuplicateMACs(t *testing.T) {
 	// Include duplicates and case variations
 	sensors := []SensorConfig{
 		{Name: "Sensor1", ID: 1, MACAddress: "A4:C1:38:00:00:01"},
-		{Name: "Sensor1Dup", ID: 2, MACAddress: "A4:C1:38:00:00:01"}, // exact duplicate MAC
+		{Name: "Sensor1Dup", ID: 2, MACAddress: "A4:C1:38:00:00:01"},   // exact duplicate MAC
 		{Name: "Sensor1Lower", ID: 3, MACAddress: "a4:c1:38:00:00:01"}, // case variation
 		{Name: "Sensor2", ID: 4, MACAddress: "A4:C1:38:00:00:02"},
 	}

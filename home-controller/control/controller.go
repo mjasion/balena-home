@@ -11,7 +11,6 @@ import (
 	"github.com/mjasion/balena-home/thermostats/buffer"
 	"github.com/mjasion/balena-home/thermostats/config"
 	"github.com/mjasion/balena-home/thermostats/netatmo"
-	"github.com/mjasion/balena-home/thermostats/scheduler"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -74,11 +73,11 @@ func New(
 	}
 }
 
-// Start begins the control loop
-func (c *Controller) Start(ctx context.Context) error {
-	c.logger.Info("starting thermostat control loop",
-		zap.Int("control_interval_seconds", c.config.ControlIntervalSeconds),
+// Initialize initializes the controller state (must be called before Run)
+func (c *Controller) Initialize(ctx context.Context) error {
+	c.logger.Info("initializing thermostat controller",
 		zap.Int("mapping_count", len(c.config.Mappings)),
+		zap.String("cron", c.config.Cron),
 	)
 
 	// Initialize state from Netatmo API (get room IDs)
@@ -86,33 +85,13 @@ func (c *Controller) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize room IDs: %w", err)
 	}
 
-	// Calculate time until next aligned interval and wait
-	intervalDuration := time.Duration(c.config.ControlIntervalSeconds) * time.Second
-	initialWait := scheduler.WaitForAlignedInterval(intervalDuration, c.logger)
+	c.logger.Info("thermostat controller initialized successfully")
+	return nil
+}
 
-	// Wait for first aligned interval
-	select {
-	case <-ctx.Done():
-		c.logger.Info("thermostat control loop stopped before first run")
-		return nil
-	case <-time.After(initialWait):
-		// Run control loop at aligned time
-		c.runControlLoop(ctx)
-	}
-
-	// Now use ticker for subsequent runs
-	ticker := time.NewTicker(intervalDuration)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			c.logger.Info("thermostat control loop stopped")
-			return nil
-		case <-ticker.C:
-			c.runControlLoop(ctx)
-		}
-	}
+// Run executes a single control loop iteration (called by scheduler)
+func (c *Controller) Run(ctx context.Context) {
+	c.runControlLoop(ctx)
 }
 
 // initializeRoomIDs fetches Netatmo home data to populate room IDs for mappings

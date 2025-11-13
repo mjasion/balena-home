@@ -5,57 +5,28 @@ import (
 	"time"
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
-	"github.com/mjasion/balena-home/thermostats/scheduler"
 	"go.uber.org/zap"
 )
 
 // Poller periodically fetches thermostat data from Netatmo and adds it to the buffer
 type Poller struct {
-	client        *Client
-	buffer        *buffer.RingBuffer
-	logger        *zap.Logger
-	fetchInterval time.Duration
+	client *Client
+	buffer *buffer.RingBuffer
+	logger *zap.Logger
 }
 
 // NewPoller creates a new Netatmo poller
-func NewPoller(client *Client, buf *buffer.RingBuffer, fetchIntervalSeconds int, logger *zap.Logger) *Poller {
+func NewPoller(client *Client, buf *buffer.RingBuffer, logger *zap.Logger) *Poller {
 	return &Poller{
-		client:        client,
-		buffer:        buf,
-		logger:        logger,
-		fetchInterval: time.Duration(fetchIntervalSeconds) * time.Second,
+		client: client,
+		buffer: buf,
+		logger: logger,
 	}
 }
 
-// Start starts the polling loop
-func (p *Poller) Start(ctx context.Context) {
-	p.logger.Info("starting Netatmo poller",
-		zap.Duration("fetch_interval", p.fetchInterval),
-	)
-
-	// Wait for first aligned interval
-	initialWait := scheduler.WaitForAlignedInterval(p.fetchInterval, p.logger)
-	select {
-	case <-ctx.Done():
-		p.logger.Info("Netatmo poller stopped before first fetch")
-		return
-	case <-time.After(initialWait):
-		p.fetchAndBuffer(ctx)
-	}
-
-	// Now use ticker for subsequent fetches
-	ticker := time.NewTicker(p.fetchInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			p.logger.Info("stopping Netatmo poller")
-			return
-		case <-ticker.C:
-			p.fetchAndBuffer(ctx)
-		}
-	}
+// Run executes a single poll iteration (called by scheduler)
+func (p *Poller) Run(ctx context.Context) {
+	p.fetchAndBuffer(ctx)
 }
 
 // fetchAndBuffer fetches thermostat data and adds it to the buffer

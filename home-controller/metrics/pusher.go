@@ -11,7 +11,6 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
 	"github.com/mjasion/balena-home/thermostats/buffer"
-	"github.com/mjasion/balena-home/thermostats/scheduler"
 	"github.com/prometheus/prometheus/prompb"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -50,37 +49,9 @@ func New(url, username, password string, buf *buffer.RingBuffer, pushIntervalSec
 	}
 }
 
-// Start begins the periodic metrics pushing in a goroutine
-func (p *Pusher) Start(ctx context.Context) {
-	p.logger.Info("prometheus pusher started",
-		zap.Duration("push_interval", p.pushInterval),
-		zap.Int("batch_size", p.batchSize),
-	)
-
-	// Wait for first aligned interval
-	initialWait := scheduler.WaitForAlignedInterval(p.pushInterval, p.logger)
-	select {
-	case <-ctx.Done():
-		p.logger.Info("prometheus pusher stopped before first push")
-		return
-	case <-time.After(initialWait):
-		// Push at aligned time
-		p.pushMetrics()
-	}
-
-	// Now use ticker for subsequent runs
-	ticker := time.NewTicker(p.pushInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			p.logger.Info("prometheus pusher stopping")
-			return
-		case <-ticker.C:
-			p.pushMetrics()
-		}
-	}
+// Run executes a single push iteration (called by scheduler)
+func (p *Pusher) Run(ctx context.Context) {
+	p.pushMetrics()
 }
 
 // pushMetrics gets all readings from buffer and pushes them in batches

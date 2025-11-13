@@ -23,6 +23,7 @@ type Config struct {
 	Logging           LoggingConfig           `yaml:"logging"`
 	ThermostatControl ThermostatControlConfig `yaml:"thermostatControl"`
 	Aggregator        AggregatorConfig        `yaml:"aggregator"`
+	Scheduler         SchedulerConfig         `yaml:"scheduler"`
 }
 
 // BLEConfig contains BLE scanning configuration
@@ -39,19 +40,19 @@ type SensorConfig struct {
 
 // NetatmoConfig contains Netatmo API configuration
 type NetatmoConfig struct {
-	Enabled       bool   `yaml:"enabled" env:"NETATMO_ENABLED" env-default:"false"`
-	ClientID      string `yaml:"clientId" env:"NETATMO_CLIENT_ID"`
-	ClientSecret  string `yaml:"clientSecret" env:"NETATMO_CLIENT_SECRET"`
-	RefreshToken  string `yaml:"refreshToken" env:"NETATMO_REFRESH_TOKEN"`
-	FetchInterval int    `yaml:"fetchIntervalSeconds" env:"NETATMO_FETCH_INTERVAL" env-default:"60"`
+	Enabled      bool   `yaml:"enabled" env:"NETATMO_ENABLED" env-default:"false"`
+	ClientID     string `yaml:"clientId" env:"NETATMO_CLIENT_ID"`
+	ClientSecret string `yaml:"clientSecret" env:"NETATMO_CLIENT_SECRET"`
+	RefreshToken string `yaml:"refreshToken" env:"NETATMO_REFRESH_TOKEN"`
+	Cron         string `yaml:"cron" env:"NETATMO_CRON"` // Required: Cron expression with seconds (e.g., "0 */5 * * * *")
 }
 
 // PowerConfig contains power meter scraping configuration
 type PowerConfig struct {
-	Enabled               bool    `yaml:"enabled" env:"POWER_ENABLED" env-default:"false"`
-	ScrapeURL             string  `yaml:"scrapeUrl" env:"POWER_SCRAPE_URL"`
-	ScrapeIntervalSeconds int     `yaml:"scrapeIntervalSeconds" env:"POWER_SCRAPE_INTERVAL" env-default:"2"`
-	ScrapeTimeoutSeconds  float64 `yaml:"scrapeTimeoutSeconds" env:"POWER_SCRAPE_TIMEOUT" env-default:"1.5"`
+	Enabled              bool    `yaml:"enabled" env:"POWER_ENABLED" env-default:"false"`
+	ScrapeURL            string  `yaml:"scrapeUrl" env:"POWER_SCRAPE_URL"`
+	ScrapeTimeoutSeconds float64 `yaml:"scrapeTimeoutSeconds" env:"POWER_SCRAPE_TIMEOUT" env-default:"1.5"`
+	Cron                 string  `yaml:"cron" env:"POWER_CRON"` // Required: Cron expression with seconds (e.g., "* * * * * *" for every second)
 }
 
 // PyroscopeConfig contains Pyroscope profiling configuration
@@ -70,14 +71,14 @@ type PyroscopeConfig struct {
 
 // OpenTelemetryConfig contains OpenTelemetry tracing configuration
 type OpenTelemetryConfig struct {
-	Enabled               bool              `yaml:"enabled" env:"OTEL_ENABLED" env-default:"false"`
-	Endpoint              string            `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
-	Protocol              string            `yaml:"protocol" env:"OTEL_EXPORTER_OTLP_PROTOCOL" env-default:"http/protobuf"`
-	Headers               string            `yaml:"headers" env:"OTEL_EXPORTER_OTLP_HEADERS"` // Format: "key1=value1,key2=value2"
-	ServiceName           string            `yaml:"serviceName" env:"OTEL_SERVICE_NAME" env-default:"home-controller"`
-	SamplingRate          float64           `yaml:"samplingRate" env:"OTEL_SAMPLING_RATE" env-default:"1.0"`
-	MetricsSamplingRate   float64           `yaml:"metricsSamplingRate" env:"OTEL_METRICS_SAMPLING_RATE" env-default:"0.1"` // Separate rate for metrics operations
-	ResourceAttributes    map[string]string `yaml:"resourceAttributes"`
+	Enabled             bool              `yaml:"enabled" env:"OTEL_ENABLED" env-default:"false"`
+	Endpoint            string            `yaml:"endpoint" env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+	Protocol            string            `yaml:"protocol" env:"OTEL_EXPORTER_OTLP_PROTOCOL" env-default:"http/protobuf"`
+	Headers             string            `yaml:"headers" env:"OTEL_EXPORTER_OTLP_HEADERS"` // Format: "key1=value1,key2=value2"
+	ServiceName         string            `yaml:"serviceName" env:"OTEL_SERVICE_NAME" env-default:"home-controller"`
+	SamplingRate        float64           `yaml:"samplingRate" env:"OTEL_SAMPLING_RATE" env-default:"1.0"`
+	MetricsSamplingRate float64           `yaml:"metricsSamplingRate" env:"OTEL_METRICS_SAMPLING_RATE" env-default:"0.1"` // Separate rate for metrics operations
+	ResourceAttributes  map[string]string `yaml:"resourceAttributes"`
 }
 
 // PrometheusConfig contains Prometheus metrics push configuration
@@ -89,6 +90,7 @@ type PrometheusConfig struct {
 	StartAtEvenSecond   bool   `yaml:"startAtEvenSecond" env:"START_AT_EVEN_SECOND" env-default:"true"`
 	BufferSize          int    `yaml:"bufferSize" env:"BUFFER_SIZE" env-default:"1000"`
 	BatchSize           int    `yaml:"batchSize" env:"BATCH_SIZE" env-default:"1000"`
+	Cron                string `yaml:"cron" env:"PROMETHEUS_CRON"` // Optional: Use cron syntax instead of interval (e.g., "*/10 * * * * *" for every 10 seconds with seconds field)
 }
 
 // LoggingConfig contains logging configuration
@@ -102,7 +104,6 @@ type ThermostatControlConfig struct {
 	Enabled                          bool                `yaml:"enabled" env:"THERMOSTAT_CONTROL_ENABLED" env-default:"false"`
 	DryRun                           bool                `yaml:"dryRun" env:"THERMOSTAT_CONTROL_DRY_RUN" env-default:"false"`
 	TemperatureThreshold             float64             `yaml:"temperatureThreshold" env:"TEMPERATURE_THRESHOLD" env-default:"0.5"`
-	ControlIntervalSeconds           int                 `yaml:"controlIntervalSeconds" env:"CONTROL_INTERVAL_SECONDS" env-default:"60"`
 	OverrideDurationMinutes          int                 `yaml:"overrideDurationMinutes" env:"OVERRIDE_DURATION_MINUTES" env-default:"10"`
 	ExtensionThresholdMinutes        int                 `yaml:"extensionThresholdMinutes" env:"EXTENSION_THRESHOLD_MINUTES" env-default:"2"`
 	ExternalModificationResetMinutes int                 `yaml:"externalModificationResetMinutes" env:"EXTERNAL_MODIFICATION_RESET_MINUTES" env-default:"5"`
@@ -110,6 +111,7 @@ type ThermostatControlConfig struct {
 	MaxSetpointCelsius               float64             `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
 	Mappings                         []ThermostatMapping `yaml:"mappings"`
 	HardOverrides                    []HardOverride      `yaml:"hardOverrides"`
+	Cron                             string              `yaml:"cron" env:"THERMOSTAT_CONTROL_CRON"` // Required: Cron expression with seconds (e.g., "0 * * * * *")
 }
 
 // ThermostatMapping maps a Netatmo room to a Xiaomi sensor
@@ -135,8 +137,15 @@ type HardOverrideWindow struct {
 
 // AggregatorConfig contains configuration for the BLE sensor aggregator
 type AggregatorConfig struct {
-	Enabled         bool `yaml:"enabled" env:"AGGREGATOR_ENABLED" env-default:"true"`
-	IntervalSeconds int  `yaml:"intervalSeconds" env:"AGGREGATOR_INTERVAL_SECONDS" env-default:"30"`
+	Enabled bool   `yaml:"enabled" env:"AGGREGATOR_ENABLED" env-default:"true"`
+	Cron    string `yaml:"cron" env:"AGGREGATOR_CRON"` // Required: Cron expression with seconds (e.g., "0 * * * * *" for every minute)
+}
+
+// SchedulerConfig contains configuration for the job scheduler and UI
+type SchedulerConfig struct {
+	UIEnabled bool   `yaml:"uiEnabled" env:"SCHEDULER_UI_ENABLED" env-default:"true"`
+	UIHost    string `yaml:"uiHost" env:"SCHEDULER_UI_HOST" env-default:"0.0.0.0"`
+	UIPort    int    `yaml:"uiPort" env:"SCHEDULER_UI_PORT" env-default:"8080"`
 }
 
 var macAddressRegex = regexp.MustCompile(`^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$`)
@@ -206,8 +215,8 @@ func (c *Config) Validate() error {
 		if c.Netatmo.RefreshToken == "" {
 			return fmt.Errorf("netatmo refresh token is required when Netatmo is enabled")
 		}
-		if c.Netatmo.FetchInterval < 1 {
-			return fmt.Errorf("netatmo fetch interval must be at least 1 second")
+		if c.Netatmo.Cron == "" {
+			return fmt.Errorf("netatmo cron expression is required when Netatmo is enabled")
 		}
 	}
 
@@ -216,11 +225,11 @@ func (c *Config) Validate() error {
 		if c.Power.ScrapeURL == "" {
 			return fmt.Errorf("power scrape URL is required when power monitoring is enabled")
 		}
-		if c.Power.ScrapeIntervalSeconds < 1 {
-			return fmt.Errorf("power scrape interval must be at least 1 second")
-		}
 		if c.Power.ScrapeTimeoutSeconds <= 0 {
 			return fmt.Errorf("power scrape timeout must be positive")
+		}
+		if c.Power.Cron == "" {
+			return fmt.Errorf("power cron expression is required when power monitoring is enabled")
 		}
 	}
 
@@ -312,6 +321,13 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("log level must be one of: debug, info, warn, error, got: %s", c.Logging.Level)
 	}
 
+	// Validate aggregator configuration if enabled
+	if c.Aggregator.Enabled {
+		if c.Aggregator.Cron == "" {
+			return fmt.Errorf("aggregator cron expression is required when aggregator is enabled")
+		}
+	}
+
 	// Validate thermostat control configuration if enabled
 	if c.ThermostatControl.Enabled {
 		// Validate temperature threshold
@@ -319,9 +335,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("thermostat control temperature threshold must be between 0.1 and 5.0°C, got: %.2f", c.ThermostatControl.TemperatureThreshold)
 		}
 
-		// Validate control interval
-		if c.ThermostatControl.ControlIntervalSeconds < 1 {
-			return fmt.Errorf("thermostat control interval must be at least 1 second")
+		// Validate cron expression
+		if c.ThermostatControl.Cron == "" {
+			return fmt.Errorf("thermostat control cron expression is required when thermostat control is enabled")
 		}
 
 		// Validate override duration
@@ -551,11 +567,11 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.Strings("sensors", sensorInfo),
 		zap.Bool("netatmo_enabled", c.Netatmo.Enabled),
 		zap.Bool("netatmo_configured", c.Netatmo.ClientID != "" && c.Netatmo.RefreshToken != ""),
-		zap.Int("netatmo_fetch_interval_seconds", c.Netatmo.FetchInterval),
+		zap.String("netatmo_cron", c.Netatmo.Cron),
 		zap.Bool("power_enabled", c.Power.Enabled),
 		zap.String("power_scrape_url", c.Power.ScrapeURL),
-		zap.Int("power_scrape_interval_seconds", c.Power.ScrapeIntervalSeconds),
 		zap.Float64("power_scrape_timeout_seconds", c.Power.ScrapeTimeoutSeconds),
+		zap.String("power_cron", c.Power.Cron),
 		zap.Bool("pyroscope_enabled", c.Pyroscope.Enabled),
 		zap.String("pyroscope_server_url", c.Pyroscope.ServerURL),
 		zap.String("pyroscope_application_name", c.Pyroscope.ApplicationName),
@@ -576,9 +592,11 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.Int("batch_size", c.Prometheus.BatchSize),
 		zap.String("log_format", c.Logging.Format),
 		zap.String("log_level", c.Logging.Level),
+		zap.Bool("aggregator_enabled", c.Aggregator.Enabled),
+		zap.String("aggregator_cron", c.Aggregator.Cron),
 		zap.Bool("thermostat_control_enabled", c.ThermostatControl.Enabled),
 		zap.Float64("thermostat_temperature_threshold", c.ThermostatControl.TemperatureThreshold),
-		zap.Int("thermostat_control_interval_seconds", c.ThermostatControl.ControlIntervalSeconds),
+		zap.String("thermostat_cron", c.ThermostatControl.Cron),
 		zap.Int("thermostat_override_duration_minutes", c.ThermostatControl.OverrideDurationMinutes),
 		zap.Int("thermostat_extension_threshold_minutes", c.ThermostatControl.ExtensionThresholdMinutes),
 		zap.Int("thermostat_external_mod_reset_minutes", c.ThermostatControl.ExternalModificationResetMinutes),

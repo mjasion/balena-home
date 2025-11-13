@@ -20,11 +20,11 @@ import (
 )
 
 const (
-	baseURL           = "https://api.netatmo.com"
-	tokenURL          = "https://api.netatmo.com/oauth2/token"
-	homesDataURL      = "https://api.netatmo.com/api/homesdata"
-	homeStatusURL     = "https://api.netatmo.com/api/homestatus"
-	setThermPointURL  = "https://api.netatmo.com/api/setroomthermpoint"
+	baseURL          = "https://api.netatmo.com"
+	tokenURL         = "https://api.netatmo.com/oauth2/token"
+	homesDataURL     = "https://api.netatmo.com/api/homesdata"
+	homeStatusURL    = "https://api.netatmo.com/api/homestatus"
+	setThermPointURL = "https://api.netatmo.com/api/setroomthermpoint"
 )
 
 // Client represents a Netatmo API client with built-in rate limiting and retry logic
