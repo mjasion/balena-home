@@ -160,6 +160,7 @@ func (c *Client) refreshAccessToken(ctx context.Context) error {
 		attribute.Int("expires_in", tokenResp.ExpiresIn),
 		attribute.Bool("refresh_token_updated", tokenResp.RefreshToken != ""),
 	)
+	span.SetStatus(codes.Ok, "token refreshed successfully")
 
 	return nil
 }

@@ -108,7 +108,7 @@ func (c *Controller) evaluateRoom(
 
 		// Get Xiaomi sensor readings (last 60 seconds, weighted average)
 		sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
-		xiaomiTemp, err := c.getWeightedAverageTemperature(sensorMAC)
+		xiaomiTemp, err := c.getWeightedAverageTemperature(ctx, sensorMAC)
 		if err == nil {
 			decision.XiaomiTemperature = xiaomiTemp
 		}

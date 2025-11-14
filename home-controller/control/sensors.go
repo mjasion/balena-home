@@ -14,8 +14,8 @@ import (
 )
 
 // getWeightedAverageTemperature calculates the weighted average temperature from sensor readings in the last 60 seconds
-func (c *Controller) getWeightedAverageTemperature(sensorMAC string) (float64, error) {
-	_, span := c.tracer.Start(context.Background(), "get_weighted_average_temperature",
+func (c *Controller) getWeightedAverageTemperature(ctx context.Context, sensorMAC string) (float64, error) {
+	_, span := c.tracer.Start(ctx, "get_weighted_average_temperature",
 		trace.WithAttributes(attribute.String("sensor_mac", sensorMAC)),
 	)
 	defer span.End()

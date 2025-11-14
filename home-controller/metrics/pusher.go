@@ -46,7 +46,7 @@ func New(url, username, password string, buf *buffer.RingBuffer, pushIntervalSec
 		lastPush:     time.Now(),
 		buffer:       buf,
 		pushInterval: time.Duration(pushIntervalSeconds) * time.Second,
-		tracer:       otel.Tracer("home-controller/metrics")
+		tracer:       otel.Tracer("home-controller/metrics"),
 		batchSize:    batchSize,
 	}
 }
