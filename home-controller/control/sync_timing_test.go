@@ -113,12 +113,12 @@ func TestSyncTimestampUpdated(t *testing.T) {
 	metricsBuffer := buffer.New(100, logger)
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled:                      true,
-		ScheduleSyncIntervalMinutes:  15,
+		Enabled:                         true,
+		ScheduleSyncIntervalMinutes:     15,
 		ScheduleSyncPollIntervalSeconds: 1,
 		ScheduleSyncPollTimeoutSeconds:  2, // Short timeout since API will fail
-		TemperatureThreshold:         0.5,
-		Cron:                         "0 * * * * *",
+		TemperatureThreshold:            0.5,
+		Cron:                            "0 * * * * *",
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
 		},
@@ -181,12 +181,12 @@ func TestExternallyModifiedRoomSkipsSync(t *testing.T) {
 	metricsBuffer := buffer.New(100, logger)
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled:                      true,
-		ScheduleSyncIntervalMinutes:  15,
+		Enabled:                         true,
+		ScheduleSyncIntervalMinutes:     15,
 		ScheduleSyncPollIntervalSeconds: 1,
 		ScheduleSyncPollTimeoutSeconds:  2,
-		TemperatureThreshold:         0.5,
-		Cron:                         "0 * * * * *",
+		TemperatureThreshold:            0.5,
+		Cron:                            "0 * * * * *",
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
 		},
@@ -241,12 +241,12 @@ func TestNormalModeSkipsSync(t *testing.T) {
 	metricsBuffer := buffer.New(100, logger)
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled:                      true,
-		ScheduleSyncIntervalMinutes:  15,
+		Enabled:                         true,
+		ScheduleSyncIntervalMinutes:     15,
 		ScheduleSyncPollIntervalSeconds: 1,
 		ScheduleSyncPollTimeoutSeconds:  2,
-		TemperatureThreshold:         0.5,
-		Cron:                         "0 * * * * *",
+		TemperatureThreshold:            0.5,
+		Cron:                            "0 * * * * *",
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
 		},

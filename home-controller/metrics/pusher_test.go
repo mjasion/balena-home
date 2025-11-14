@@ -330,7 +330,7 @@ func TestBuildWriteRequest(t *testing.T) {
 		{
 			Timestamp:          now,
 			MAC:                "A4:C1:38:00:00:01",
-			RoomName:         "Living Room",
+			RoomName:           "Living Room",
 			SensorID:           1,
 			TemperatureCelsius: 22.5,
 			HumidityPercent:    50,
@@ -339,7 +339,7 @@ func TestBuildWriteRequest(t *testing.T) {
 		{
 			Timestamp:          now.Add(time.Second),
 			MAC:                "A4:C1:38:00:00:01",
-			RoomName:         "Living Room",
+			RoomName:           "Living Room",
 			SensorID:           1,
 			TemperatureCelsius: 22.6,
 			HumidityPercent:    51,
@@ -348,7 +348,7 @@ func TestBuildWriteRequest(t *testing.T) {
 		{
 			Timestamp:          now,
 			MAC:                "A4:C1:38:00:00:02",
-			RoomName:         "Bedroom",
+			RoomName:           "Bedroom",
 			SensorID:           2,
 			TemperatureCelsius: 23.1,
 			HumidityPercent:    55,
