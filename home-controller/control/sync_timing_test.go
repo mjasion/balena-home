@@ -82,15 +82,11 @@ func TestSyncIntervalLogic(t *testing.T) {
 
 			// Set last sync time
 			if tt.timeSinceLastSync > 0 {
-				c.syncMu.Lock()
 				c.lastSyncTime = time.Now().Add(-tt.timeSinceLastSync)
-				c.syncMu.Unlock()
 			}
 
 			// Check if sync is needed
-			c.syncMu.RLock()
 			timeSinceLastSync := time.Since(c.lastSyncTime)
-			c.syncMu.RUnlock()
 
 			needsSync := false
 			if cfg.ScheduleSyncIntervalMinutes > 0 {
@@ -152,9 +148,7 @@ func TestSyncTimestampUpdated(t *testing.T) {
 	})
 
 	// First run: lastSyncTime should be zero (never synced)
-	c.syncMu.RLock()
 	initialSyncTime := c.lastSyncTime
-	c.syncMu.RUnlock()
 
 	if !initialSyncTime.IsZero() {
 		t.Errorf("Expected initial lastSyncTime to be zero, got %v", initialSyncTime)
@@ -166,9 +160,7 @@ func TestSyncTimestampUpdated(t *testing.T) {
 	afterRun := time.Now()
 
 	// Verify lastSyncTime was updated (even though API calls failed)
-	c.syncMu.RLock()
 	updatedSyncTime := c.lastSyncTime
-	c.syncMu.RUnlock()
 
 	if updatedSyncTime.IsZero() {
 		t.Error("Expected lastSyncTime to be updated after control loop, but it's still zero")
@@ -273,10 +265,8 @@ func TestNormalModeSkipsSync(t *testing.T) {
 	c.stateMu.Unlock()
 
 	// Set last sync time to 5 minutes ago (not time to sync yet)
-	c.syncMu.Lock()
 	c.lastSyncTime = time.Now().Add(-5 * time.Minute)
 	initialSyncTime := c.lastSyncTime
-	c.syncMu.Unlock()
 
 	// Add sensor data
 	controlBuffer.Add(&buffer.Reading{
@@ -292,9 +282,7 @@ func TestNormalModeSkipsSync(t *testing.T) {
 	c.runControlLoop(context.Background())
 
 	// Verify lastSyncTime was NOT updated (normal mode doesn't update it)
-	c.syncMu.RLock()
 	finalSyncTime := c.lastSyncTime
-	c.syncMu.RUnlock()
 
 	if !finalSyncTime.Equal(initialSyncTime) {
 		t.Errorf("Expected lastSyncTime to remain unchanged in normal mode, but it changed from %v to %v",

@@ -37,7 +37,6 @@ type Controller struct {
 
 	// Schedule sync tracking
 	lastSyncTime time.Time
-	syncMu       sync.RWMutex
 }
 
 // New creates a new thermostat controller

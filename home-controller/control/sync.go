@@ -27,9 +27,7 @@ func (c *Controller) runSyncMode(ctx context.Context, homeID string) (skipCount,
 	c.pollUntilAllRoomsSynced(ctx, homeID)
 
 	// Update last sync time BEFORE final status fetch (fail-safe)
-	c.syncMu.Lock()
 	c.lastSyncTime = time.Now()
-	c.syncMu.Unlock()
 
 	// Step 3: Fetch final home status for all rooms
 	roomStatusMap, err := c.fetchHomeStatus(ctx, homeID)
@@ -179,10 +177,7 @@ func (c *Controller) shouldSyncSchedule() bool {
 		return false
 	}
 
-	c.syncMu.RLock()
 	timeSinceLastSync := time.Since(c.lastSyncTime)
-	c.syncMu.RUnlock()
-
 	syncInterval := time.Duration(c.config.ScheduleSyncIntervalMinutes) * time.Minute
 	return timeSinceLastSync >= syncInterval
 }
