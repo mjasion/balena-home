@@ -235,7 +235,7 @@ thermostatControl:
   #   4. Store synced temperature for use in control decisions
   #   5. Then evaluate if override needed and apply if necessary
   # IMPORTANT: Runs BEFORE control decisions to ensure fresh schedule data
-  scheduleSyncIntervalMinutes: 15  # or use SCHEDULE_SYNC_INTERVAL_MINUTES env var
+  scheduleSyncIntervalMinutes: 30  # or use SCHEDULE_SYNC_INTERVAL_MINUTES env var
 
   # Poll interval after switching to schedule mode (default: 2 seconds)
   # How long to wait between API calls when checking if mode has switched
