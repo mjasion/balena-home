@@ -44,6 +44,9 @@ type Client struct {
 
 	// Logger for retry warnings
 	logger *zap.Logger
+
+	// Tracer for OpenTelemetry spans
+	tracer trace.Tracer
 }
 
 // NewClient creates a new Netatmo API client with rate limiting
@@ -56,6 +59,7 @@ func NewClient(clientID, clientSecret, refreshToken string) *Client {
 		clientSecret: clientSecret,
 		refreshToken: refreshToken,
 		logger:       zap.NewNop(), // Default no-op logger, can be set via SetLogger
+		tracer:       otel.Tracer("home-controller/netatmo"),
 	}
 }
 
@@ -74,8 +78,7 @@ type tokenResponse struct {
 
 // refreshAccessToken refreshes the OAuth2 access token
 func (c *Client) refreshAccessToken(ctx context.Context) error {
-	tracer := otel.Tracer("home-controller/netatmo")
-	ctx, span := tracer.Start(ctx, "netatmo.refreshAccessToken",
+	ctx, span := c.tracer.Start(ctx, "netatmo.refreshAccessToken",
 		trace.WithAttributes(
 			attribute.String("client_id", c.clientID),
 		),
@@ -186,8 +189,7 @@ func (c *Client) rateLimit() {
 
 // doRequest performs an authenticated API request with exponential backoff for rate limits
 func (c *Client) doRequest(ctx context.Context, method, url string, body io.Reader, result interface{}) error {
-	tracer := otel.Tracer("home-controller/netatmo")
-	ctx, span := tracer.Start(ctx, "netatmo.doRequest",
+	ctx, span := c.tracer.Start(ctx, "netatmo.doRequest",
 		trace.WithAttributes(
 			attribute.String("http.method", method),
 			attribute.String("http.url", url),
@@ -348,8 +350,7 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body io.Read
 
 // GetHomesData retrieves homes data including topology
 func (c *Client) GetHomesData(ctx context.Context) (*HomesDataResponse, error) {
-	tracer := otel.Tracer("home-controller/netatmo")
-	ctx, span := tracer.Start(ctx, "netatmo.GetHomesData")
+	ctx, span := c.tracer.Start(ctx, "netatmo.GetHomesData")
 	defer span.End()
 
 	var response HomesDataResponse
@@ -370,8 +371,7 @@ func (c *Client) GetHomesData(ctx context.Context) (*HomesDataResponse, error) {
 
 // GetHomeStatus retrieves the current status of a specific home
 func (c *Client) GetHomeStatus(ctx context.Context, homeID string) (*HomeStatusResponse, error) {
-	tracer := otel.Tracer("home-controller/netatmo")
-	ctx, span := tracer.Start(ctx, "netatmo.GetHomeStatus",
+	ctx, span := c.tracer.Start(ctx, "netatmo.GetHomeStatus",
 		trace.WithAttributes(
 			attribute.String("home_id", homeID),
 		),
@@ -401,8 +401,7 @@ func (c *Client) GetHomeStatus(ctx context.Context, homeID string) (*HomeStatusR
 // temp: target temperature in Celsius (required for "manual" mode, ignored for "home" mode)
 // endTime: optional Unix timestamp for temporary override (0 for permanent until next schedule change)
 func (c *Client) SetRoomThermpoint(ctx context.Context, homeID, roomID string, mode string, temp float64, endTime int64) error {
-	tracer := otel.Tracer("home-controller/netatmo")
-	ctx, span := tracer.Start(ctx, "netatmo.SetRoomThermpoint",
+	ctx, span := c.tracer.Start(ctx, "netatmo.SetRoomThermpoint",
 		trace.WithAttributes(
 			attribute.String("home_id", homeID),
 			attribute.String("room_id", roomID),
@@ -484,8 +483,7 @@ func (c *Client) SetRoomThermpoint(ctx context.Context, homeID, roomID string, m
 
 // FetchAllThermostats fetches thermostat data from all homes and rooms
 func (c *Client) FetchAllThermostats(ctx context.Context) ([]ThermostatReading, error) {
-	tracer := otel.Tracer("home-controller/netatmo")
-	ctx, span := tracer.Start(ctx, "netatmo.FetchAllThermostats")
+	ctx, span := c.tracer.Start(ctx, "netatmo.FetchAllThermostats")
 	defer span.End()
 
 	// First, get homes data to know the topology

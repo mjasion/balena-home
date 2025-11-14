@@ -29,6 +29,7 @@ type Pusher struct {
 	lastPush     time.Time
 	buffer       *buffer.RingBuffer
 	pushInterval time.Duration
+	tracer       trace.Tracer
 	batchSize    int
 }
 
@@ -45,6 +46,7 @@ func New(url, username, password string, buf *buffer.RingBuffer, pushIntervalSec
 		lastPush:     time.Now(),
 		buffer:       buf,
 		pushInterval: time.Duration(pushIntervalSeconds) * time.Second,
+		tracer:       otel.Tracer("home-controller/metrics")
 		batchSize:    batchSize,
 	}
 }
@@ -56,8 +58,8 @@ func (p *Pusher) Run(ctx context.Context) {
 
 // pushMetrics gets all readings from buffer and pushes them in batches
 func (p *Pusher) pushMetrics() {
-	tracer := otel.Tracer("home-controller/metrics")
-	ctx, span := tracer.Start(context.Background(), "metrics.pushMetrics",
+
+	ctx, span := p.tracer.Start(context.Background(), "metrics.pushMetrics",
 		trace.WithAttributes(
 			attribute.String("operation", "push_metrics_batch"),
 		),
@@ -167,8 +169,7 @@ func (p *Pusher) pushMetrics() {
 
 // Push pushes sensor readings to Prometheus
 func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
-	tracer := otel.Tracer("home-controller/metrics")
-	ctx, span := tracer.Start(ctx, "metrics.Push",
+	ctx, span := p.tracer.Start(ctx, "metrics.Push",
 		trace.WithAttributes(
 			attribute.Int("readings_count", len(readings)),
 		),
@@ -607,8 +608,7 @@ func (p *Pusher) buildNetatmoTimeSeries(readings []*buffer.ThermostatReading) ([
 
 // pushOnce attempts to push the write request once
 func (p *Pusher) pushOnce(ctx context.Context, writeReq *prompb.WriteRequest) error {
-	tracer := otel.Tracer("home-controller/metrics")
-	ctx, span := tracer.Start(ctx, "metrics.pushOnce",
+	ctx, span := p.tracer.Start(ctx, "metrics.pushOnce",
 		trace.WithAttributes(
 			attribute.String("prometheus_url", p.url),
 		),
