@@ -1,0 +1,188 @@
+package control
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/mjasion/balena-home/thermostats/netatmo"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
+)
+
+// runSyncMode executes the control loop in SYNC MODE (schedule sync needed)
+func (c *Controller) runSyncMode(ctx context.Context, homeID string) (skipCount, adjustCount, noAdjustCount int) {
+	ctx, span := c.tracer.Start(ctx, "sync_mode")
+	defer span.End()
+
+	c.logger.Info("schedule sync needed, using sync mode",
+		zap.Int("rooms_count", len(c.config.Mappings)),
+	)
+
+	// Step 1: Switch all rooms to schedule mode (sequential)
+	c.switchRoomsToScheduleMode(ctx, homeID, &skipCount)
+
+	// Step 2: Poll until all rooms confirmed in schedule mode
+	c.pollUntilAllRoomsSynced(ctx, homeID)
+
+	// Update last sync time BEFORE final status fetch (fail-safe)
+	c.syncMu.Lock()
+	c.lastSyncTime = time.Now()
+	c.syncMu.Unlock()
+
+	// Step 3: Fetch final home status for all rooms
+	roomStatusMap, err := c.fetchHomeStatus(ctx, homeID)
+	if err != nil {
+		c.logger.Error("failed to fetch final home status after sync", zap.Error(err))
+		return skipCount, adjustCount, noAdjustCount
+	}
+
+	// Step 4: Evaluate and execute for each room (sequential)
+	skip, adjust, noAdjust := c.evaluateAndExecuteRooms(ctx, homeID, roomStatusMap)
+	return skipCount + skip, adjust, noAdjust
+}
+
+// runNormalMode executes the control loop in NORMAL MODE (no sync needed)
+func (c *Controller) runNormalMode(ctx context.Context, homeID string) (skipCount, adjustCount, noAdjustCount int) {
+	ctx, span := c.tracer.Start(ctx, "normal_mode")
+	defer span.End()
+
+	c.logger.Debug("schedule sync not needed, using normal control loop")
+
+	// Fetch home status once
+	roomStatusMap, err := c.fetchHomeStatus(ctx, homeID)
+	if err != nil {
+		c.logger.Error("failed to fetch home status", zap.Error(err))
+		return 0, 0, 0
+	}
+
+	// Evaluate and execute for each room (sequential)
+	return c.evaluateAndExecuteRooms(ctx, homeID, roomStatusMap)
+}
+
+// switchRoomsToScheduleMode switches all rooms to schedule mode (sequential loop)
+func (c *Controller) switchRoomsToScheduleMode(ctx context.Context, homeID string, skipCount *int) {
+	for _, mapping := range c.config.Mappings {
+		// Skip externally modified rooms
+		c.stateMu.RLock()
+		state, exists := c.stateByRoom[mapping.RoomID]
+		externallyModified := exists && state != nil && state.ExternallyModified
+		c.stateMu.RUnlock()
+
+		if externallyModified {
+			c.logger.Debug("skipping schedule sync for externally modified room",
+				zap.String("room_name", mapping.RoomName),
+			)
+			*skipCount++
+			continue
+		}
+
+		if !c.config.DryRun {
+			err := c.netatmoClient.SetRoomThermpoint(ctx, homeID, mapping.RoomID, "home", 0, 0)
+			if err != nil {
+				c.logger.Error("failed to switch room to schedule mode",
+					zap.String("room_name", mapping.RoomName),
+					zap.Error(err),
+				)
+			}
+		}
+	}
+}
+
+// pollUntilAllRoomsSynced polls until all rooms are confirmed in schedule mode
+func (c *Controller) pollUntilAllRoomsSynced(ctx context.Context, homeID string) {
+	pollInterval := time.Duration(c.config.ScheduleSyncPollIntervalSeconds) * time.Second
+	pollTimeout := time.Duration(c.config.ScheduleSyncPollTimeoutSeconds) * time.Second
+	deadline := time.Now().Add(pollTimeout)
+
+	roomsSynced := make(map[string]bool)
+
+	for time.Now().Before(deadline) {
+		time.Sleep(pollInterval)
+
+		// Single GetHomeStatus call for all rooms
+		homeStatus, err := c.netatmoClient.GetHomeStatus(ctx, homeID)
+		if err != nil {
+			c.logger.Warn("failed to fetch home status during sync poll", zap.Error(err))
+			continue
+		}
+
+		// Check all rooms in single response
+		for i := range homeStatus.Body.Home.Rooms {
+			roomStatus := &homeStatus.Body.Home.Rooms[i]
+			if roomStatus.ThermSetpointMode == "schedule" && !roomsSynced[roomStatus.ID] {
+				// Room confirmed in schedule mode - store synced temperature
+				c.stateMu.Lock()
+				if state, exists := c.stateByRoom[roomStatus.ID]; exists {
+					state.SyncedScheduledTemp = roomStatus.ThermSetpointTemperature
+					state.SyncedScheduledTime = time.Now()
+					roomsSynced[roomStatus.ID] = true
+					c.logger.Info("schedule synced for room",
+						zap.String("room_id", roomStatus.ID),
+						zap.String("room_name", state.RoomName),
+						zap.Float64("scheduled_temp", roomStatus.ThermSetpointTemperature),
+					)
+				}
+				c.stateMu.Unlock()
+			}
+		}
+
+		// Check if all rooms synced
+		allSynced := true
+		for _, mapping := range c.config.Mappings {
+			c.stateMu.RLock()
+			state, exists := c.stateByRoom[mapping.RoomID]
+			externallyModified := exists && state != nil && state.ExternallyModified
+			c.stateMu.RUnlock()
+
+			if !externallyModified && !roomsSynced[mapping.RoomID] {
+				allSynced = false
+				break
+			}
+		}
+
+		if allSynced {
+			c.logger.Info("all rooms synced successfully")
+			break
+		}
+	}
+}
+
+// fetchHomeStatus fetches current Netatmo home status and returns room status map
+func (c *Controller) fetchHomeStatus(ctx context.Context, homeID string) (map[string]*netatmo.RoomStatus, error) {
+	ctx, span := c.tracer.Start(ctx, "fetch_netatmo_home_status",
+		trace.WithAttributes(attribute.String("home_id", homeID)),
+	)
+	defer span.End()
+
+	homeStatus, err := c.netatmoClient.GetHomeStatus(ctx, homeID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch home status: %w", err)
+	}
+
+	span.SetAttributes(attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)))
+
+	// Build map of room ID to room status
+	roomStatusMap := make(map[string]*netatmo.RoomStatus)
+	for i := range homeStatus.Body.Home.Rooms {
+		room := &homeStatus.Body.Home.Rooms[i]
+		roomStatusMap[room.ID] = room
+	}
+
+	return roomStatusMap, nil
+}
+
+// shouldSyncSchedule checks if schedule sync is needed based on interval
+func (c *Controller) shouldSyncSchedule() bool {
+	if c.config.ScheduleSyncIntervalMinutes <= 0 {
+		return false
+	}
+
+	c.syncMu.RLock()
+	timeSinceLastSync := time.Since(c.lastSyncTime)
+	c.syncMu.RUnlock()
+
+	syncInterval := time.Duration(c.config.ScheduleSyncIntervalMinutes) * time.Minute
+	return timeSinceLastSync >= syncInterval
+}
