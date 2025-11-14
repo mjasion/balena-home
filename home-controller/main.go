@@ -142,35 +142,17 @@ func main() {
 		}
 	}()
 
-	// Create shared Netatmo client if needed (for both poller and control loop)
-	// This prevents OAuth token conflicts when multiple components use the same credentials
+	// Create Netatmo client if thermostat control is enabled
+	// Controller handles both control and metrics collection
 	var netatmoClient *netatmo.Client
-	if cfg.Netatmo.Enabled || cfg.ThermostatControl.Enabled {
-		logger.Info("creating shared Netatmo API client with rate limiting")
+	if cfg.ThermostatControl.Enabled {
+		logger.Info("creating Netatmo API client for thermostat control")
 		netatmoClient = netatmo.NewClient(
 			cfg.Netatmo.ClientID,
 			cfg.Netatmo.ClientSecret,
 			cfg.Netatmo.RefreshToken,
 		)
 		netatmoClient.SetLogger(logger)
-	}
-
-	// Add Netatmo poller job if enabled
-	if cfg.Netatmo.Enabled {
-		logger.Info("netatmo integration enabled, adding scheduler job")
-
-		netatmoPoller := netatmo.NewPoller(
-			netatmoClient,
-			metricsBuffer,
-			logger,
-		)
-
-		if err := jobScheduler.AddCronJobWithSeconds("Netatmo Poller", cfg.Netatmo.Cron, netatmoPoller.Run); err != nil {
-			logger.Error("failed to add netatmo poller cron job", zap.Error(err))
-			os.Exit(1)
-		}
-	} else {
-		logger.Info("netatmo integration disabled")
 	}
 
 	// Add Power poller job if enabled

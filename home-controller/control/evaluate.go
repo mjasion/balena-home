@@ -15,7 +15,7 @@ import (
 )
 
 // evaluateAndExecuteRooms evaluates and executes control decisions for all rooms (sequential loop)
-func (c *Controller) evaluateAndExecuteRooms(ctx context.Context, homeID string, roomStatusMap map[string]*netatmo.RoomStatus) (skipCount, adjustCount, noAdjustCount int) {
+func (c *Controller) evaluateAndExecuteRooms(ctx context.Context, roomStatusMap map[string]*netatmo.RoomStatus) (skipCount, adjustCount, noAdjustCount int) {
 	for _, mapping := range c.config.Mappings {
 		decision := c.evaluateRoom(ctx, mapping, roomStatusMap)
 
@@ -42,7 +42,7 @@ func (c *Controller) evaluateAndExecuteRooms(ctx context.Context, homeID string,
 		hardOverrideActive := c.isHardOverrideActive(mapping.RoomName)
 
 		c.pushControlMetrics(decision, hardOverrideActive, externallyModified)
-		c.executeDecision(ctx, homeID, decision)
+		c.executeDecision(ctx, decision)
 	}
 
 	return skipCount, adjustCount, noAdjustCount

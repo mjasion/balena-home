@@ -12,7 +12,7 @@ import (
 )
 
 // runSyncMode executes the control loop in SYNC MODE (schedule sync needed)
-func (c *Controller) runSyncMode(ctx context.Context, homeID string) (skipCount, adjustCount, noAdjustCount int) {
+func (c *Controller) runSyncMode(ctx context.Context, initialHomeStatus *netatmo.HomeStatusResponse) (skipCount, adjustCount, noAdjustCount int) {
 	ctx, span := c.tracer.Start(ctx, "sync_mode")
 	defer span.End()
 
@@ -21,55 +21,54 @@ func (c *Controller) runSyncMode(ctx context.Context, homeID string) (skipCount,
 	)
 
 	// Step 1: Switch all rooms to schedule mode (sequential)
-	c.switchRoomsToScheduleMode(ctx, homeID, &skipCount)
+	// Pass initial home status to avoid redundant API call
+	c.switchRoomsToScheduleMode(ctx, initialHomeStatus, &skipCount)
 
 	// Step 2: Poll until all rooms confirmed in schedule mode
-	c.pollUntilAllRoomsSynced(ctx, homeID)
+	c.pollUntilAllRoomsSynced(ctx)
 
 	// Update last sync time BEFORE final status fetch (fail-safe)
 	c.lastSyncTime = time.Now()
 
 	// Step 3: Fetch final home status for all rooms
-	roomStatusMap, err := c.fetchHomeStatus(ctx, homeID)
+	roomStatusMap, err := c.fetchHomeStatus(ctx)
 	if err != nil {
 		c.logger.Error("failed to fetch final home status after sync", zap.Error(err))
 		return skipCount, adjustCount, noAdjustCount
 	}
 
 	// Step 4: Evaluate and execute for each room (sequential)
-	skip, adjust, noAdjust := c.evaluateAndExecuteRooms(ctx, homeID, roomStatusMap)
+	skip, adjust, noAdjust := c.evaluateAndExecuteRooms(ctx, roomStatusMap)
 	return skipCount + skip, adjust, noAdjust
 }
 
 // runNormalMode executes the control loop in NORMAL MODE (no sync needed)
-func (c *Controller) runNormalMode(ctx context.Context, homeID string) (skipCount, adjustCount, noAdjustCount int) {
+func (c *Controller) runNormalMode(ctx context.Context, homeStatus *netatmo.HomeStatusResponse) (skipCount, adjustCount, noAdjustCount int) {
 	ctx, span := c.tracer.Start(ctx, "normal_mode")
 	defer span.End()
 
 	c.logger.Debug("schedule sync not needed, using normal control loop")
 
-	// Fetch home status once
-	roomStatusMap, err := c.fetchHomeStatus(ctx, homeID)
-	if err != nil {
-		c.logger.Error("failed to fetch home status", zap.Error(err))
-		return 0, 0, 0
+	// Convert homeStatus to roomStatusMap
+	roomStatusMap := make(map[string]*netatmo.RoomStatus)
+	for i := range homeStatus.Body.Home.Rooms {
+		room := &homeStatus.Body.Home.Rooms[i]
+		roomStatusMap[room.ID] = room
 	}
 
 	// Evaluate and execute for each room (sequential)
-	return c.evaluateAndExecuteRooms(ctx, homeID, roomStatusMap)
+	return c.evaluateAndExecuteRooms(ctx, roomStatusMap)
 }
 
 // switchRoomsToScheduleMode switches all rooms to schedule mode (sequential)
 // Optimized: only switches rooms that aren't already in schedule mode
 // Sequential to avoid rate limiting
-func (c *Controller) switchRoomsToScheduleMode(ctx context.Context, homeID string, skipCount *int) {
-	// First, fetch current home status to see which rooms are already in schedule mode
-	roomStatusMap, err := c.fetchHomeStatus(ctx, homeID)
-	if err != nil {
-		c.logger.Warn("failed to fetch home status before sync, will attempt all switches",
-			zap.Error(err))
-		// Continue anyway with empty map - better to attempt switches than skip them
-		roomStatusMap = make(map[string]*netatmo.RoomStatus)
+func (c *Controller) switchRoomsToScheduleMode(ctx context.Context, homeStatus *netatmo.HomeStatusResponse, skipCount *int) {
+	// Convert homeStatus to roomStatusMap
+	roomStatusMap := make(map[string]*netatmo.RoomStatus)
+	for i := range homeStatus.Body.Home.Rooms {
+		room := &homeStatus.Body.Home.Rooms[i]
+		roomStatusMap[room.ID] = room
 	}
 
 	for _, mapping := range c.config.Mappings {
@@ -97,7 +96,7 @@ func (c *Controller) switchRoomsToScheduleMode(ctx context.Context, homeID strin
 		}
 
 		if !c.config.DryRun {
-			err := c.netatmoClient.SetRoomThermpoint(ctx, homeID, mapping.RoomID, "home", 0, 0)
+			err := c.netatmoClient.SetRoomThermpoint(ctx, c.homeID, mapping.RoomID, "home", 0, 0)
 			if err != nil {
 				c.logger.Error("failed to switch room to schedule mode",
 					zap.String("room_name", mapping.RoomName),
@@ -114,7 +113,7 @@ func (c *Controller) switchRoomsToScheduleMode(ctx context.Context, homeID strin
 }
 
 // pollUntilAllRoomsSynced polls until all rooms are confirmed in schedule mode
-func (c *Controller) pollUntilAllRoomsSynced(ctx context.Context, homeID string) {
+func (c *Controller) pollUntilAllRoomsSynced(ctx context.Context) {
 	pollInterval := time.Duration(c.config.ScheduleSyncPollIntervalSeconds) * time.Second
 	pollTimeout := time.Duration(c.config.ScheduleSyncPollTimeoutSeconds) * time.Second
 	deadline := time.Now().Add(pollTimeout)
@@ -125,7 +124,7 @@ func (c *Controller) pollUntilAllRoomsSynced(ctx context.Context, homeID string)
 		time.Sleep(pollInterval)
 
 		// Single GetHomeStatus call for all rooms
-		homeStatus, err := c.netatmoClient.GetHomeStatus(ctx, homeID)
+		homeStatus, err := c.netatmoClient.GetHomeStatus(ctx, c.homeID)
 		if err != nil {
 			c.logger.Warn("failed to fetch home status during sync poll", zap.Error(err))
 			continue
@@ -173,13 +172,13 @@ func (c *Controller) pollUntilAllRoomsSynced(ctx context.Context, homeID string)
 }
 
 // fetchHomeStatus fetches current Netatmo home status and returns room status map
-func (c *Controller) fetchHomeStatus(ctx context.Context, homeID string) (map[string]*netatmo.RoomStatus, error) {
+func (c *Controller) fetchHomeStatus(ctx context.Context) (map[string]*netatmo.RoomStatus, error) {
 	ctx, span := c.tracer.Start(ctx, "fetch_netatmo_home_status",
-		trace.WithAttributes(attribute.String("home_id", homeID)),
+		trace.WithAttributes(attribute.String("home_id", c.homeID)),
 	)
 	defer span.End()
 
-	homeStatus, err := c.netatmoClient.GetHomeStatus(ctx, homeID)
+	homeStatus, err := c.netatmoClient.GetHomeStatus(ctx, c.homeID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch home status: %w", err)
 	}

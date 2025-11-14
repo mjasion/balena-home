@@ -39,12 +39,11 @@ type SensorConfig struct {
 }
 
 // NetatmoConfig contains Netatmo API configuration
+// Note: Netatmo polling is now handled by the thermostat controller
 type NetatmoConfig struct {
-	Enabled      bool   `yaml:"enabled" env:"NETATMO_ENABLED" env-default:"false"`
 	ClientID     string `yaml:"clientId" env:"NETATMO_CLIENT_ID"`
 	ClientSecret string `yaml:"clientSecret" env:"NETATMO_CLIENT_SECRET"`
 	RefreshToken string `yaml:"refreshToken" env:"NETATMO_REFRESH_TOKEN"`
-	Cron         string `yaml:"cron" env:"NETATMO_CRON"` // Required: Cron expression with seconds (e.g., "0 */5 * * * *")
 }
 
 // PowerConfig contains power meter scraping configuration
@@ -207,21 +206,8 @@ func (c *Config) Validate() error {
 		seenMACs[macUpper] = true
 	}
 
-	// Validate Netatmo configuration if enabled
-	if c.Netatmo.Enabled {
-		if c.Netatmo.ClientID == "" {
-			return fmt.Errorf("netatmo client ID is required when Netatmo is enabled")
-		}
-		if c.Netatmo.ClientSecret == "" {
-			return fmt.Errorf("netatmo client secret is required when Netatmo is enabled")
-		}
-		if c.Netatmo.RefreshToken == "" {
-			return fmt.Errorf("netatmo refresh token is required when Netatmo is enabled")
-		}
-		if c.Netatmo.Cron == "" {
-			return fmt.Errorf("netatmo cron expression is required when Netatmo is enabled")
-		}
-	}
+	// Netatmo credentials are validated when thermostat control is enabled
+	// (see thermostat control validation below)
 
 	// Validate Power configuration if enabled
 	if c.Power.Enabled {
@@ -459,9 +445,15 @@ func (c *Config) Validate() error {
 			}
 		}
 
-		// Verify that Netatmo integration is enabled if thermostat control is enabled
-		if !c.Netatmo.Enabled {
-			return fmt.Errorf("thermostat control requires Netatmo integration to be enabled")
+		// Validate Netatmo credentials when thermostat control is enabled
+		if c.Netatmo.ClientID == "" {
+			return fmt.Errorf("netatmo client ID is required when thermostat control is enabled")
+		}
+		if c.Netatmo.ClientSecret == "" {
+			return fmt.Errorf("netatmo client secret is required when thermostat control is enabled")
+		}
+		if c.Netatmo.RefreshToken == "" {
+			return fmt.Errorf("netatmo refresh token is required when thermostat control is enabled")
 		}
 
 		// Validate schedule sync configuration (optional)
@@ -587,9 +579,7 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 	logger.Info("configuration loaded",
 		zap.Int("sensor_count", len(c.BLE.Sensors)),
 		zap.Strings("sensors", sensorInfo),
-		zap.Bool("netatmo_enabled", c.Netatmo.Enabled),
 		zap.Bool("netatmo_configured", c.Netatmo.ClientID != "" && c.Netatmo.RefreshToken != ""),
-		zap.String("netatmo_cron", c.Netatmo.Cron),
 		zap.Bool("power_enabled", c.Power.Enabled),
 		zap.String("power_scrape_url", c.Power.ScrapeURL),
 		zap.Float64("power_scrape_timeout_seconds", c.Power.ScrapeTimeoutSeconds),

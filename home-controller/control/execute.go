@@ -11,7 +11,7 @@ import (
 )
 
 // executeDecision executes the control decision
-func (c *Controller) executeDecision(ctx context.Context, homeID string, decision ControlDecision) {
+func (c *Controller) executeDecision(ctx context.Context, decision ControlDecision) {
 	ctx, span := c.tracer.Start(ctx, "execute_decision_"+decision.RoomName,
 		trace.WithAttributes(
 			attribute.String("room_name", decision.RoomName),
@@ -27,7 +27,7 @@ func (c *Controller) executeDecision(ctx context.Context, homeID string, decisio
 	}
 
 	if decision.Action == "set_manual_override" {
-		c.executeManualOverride(ctx, span, homeID, decision)
+		c.executeManualOverride(ctx, span, decision)
 	}
 }
 
@@ -53,7 +53,7 @@ func (c *Controller) logDecision(span trace.Span, decision ControlDecision) {
 }
 
 // executeManualOverride executes a manual override decision
-func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span, homeID string, decision ControlDecision) {
+func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span, decision ControlDecision) {
 	// Apply safety limits
 	safeSetpoint, clamped := c.applyConfigSafetyLimits(decision.CalculatedSetpoint, decision.RoomName)
 
@@ -98,7 +98,7 @@ func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span,
 	)
 
 	// Call Netatmo API
-	err := c.setNetatmoThermostat(ctx, homeID, decision.RoomID, decision.RoomName, safeSetpoint, decision.OverrideEndTime)
+	err := c.setNetatmoThermostat(ctx, decision.RoomID, decision.RoomName, safeSetpoint, decision.OverrideEndTime)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to set thermostat setpoint")
@@ -149,10 +149,10 @@ func (c *Controller) applyConfigSafetyLimits(setpoint float64, roomName string) 
 }
 
 // setNetatmoThermostat calls Netatmo API to set thermostat setpoint
-func (c *Controller) setNetatmoThermostat(ctx context.Context, homeID, roomID, roomName string, setpoint float64, endTime int64) error {
+func (c *Controller) setNetatmoThermostat(ctx context.Context, roomID, roomName string, setpoint float64, endTime int64) error {
 	ctx, span := c.tracer.Start(ctx, "set_netatmo_thermostat_"+roomName,
 		trace.WithAttributes(
-			attribute.String("home_id", homeID),
+			attribute.String("home_id", c.homeID),
 			attribute.String("room_id", roomID),
 			attribute.Float64("setpoint", setpoint),
 			attribute.String("mode", "manual"),
@@ -160,7 +160,7 @@ func (c *Controller) setNetatmoThermostat(ctx context.Context, homeID, roomID, r
 	)
 	defer span.End()
 
-	err := c.netatmoClient.SetRoomThermpoint(ctx, homeID, roomID, "manual", setpoint, endTime)
+	err := c.netatmoClient.SetRoomThermpoint(ctx, c.homeID, roomID, "manual", setpoint, endTime)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to set thermostat setpoint")

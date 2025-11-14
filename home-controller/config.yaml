@@ -18,28 +18,16 @@ ble:
       id: 4
       macAddress: A4:C1:38:3E:5F:D1
 
-# Netatmo thermostat integration
+# Netatmo API credentials
+# Note: Netatmo polling is now handled by the thermostat controller
+# No separate polling schedule needed - controller manages API calls
 netatmo:
-  # Enable Netatmo thermostat data collection
-  enabled: true
-
   # Netatmo OAuth2 credentials
   # Get these from https://dev.netatmo.com/apps
   # IMPORTANT: Use environment variables for sensitive data
   clientId: ""  # or use NETATMO_CLIENT_ID env var
   clientSecret: ""  # or use NETATMO_CLIENT_SECRET env var
   refreshToken: ""  # or use NETATMO_REFRESH_TOKEN env var
-
-  # Cron syntax for scheduling (REQUIRED)
-  # 6-field cron with seconds: second minute hour day month weekday
-  # Note: Netatmo rate limits apply - don't set too frequently
-  # Examples:
-  #   "0 * * * * *"      - Every minute at second 0
-  #   "0 */5 * * * *"    - Every 5 minutes at second 0
-  #   "0 0 * * * *"      - Every hour at minute 0, second 0
-  #   "0 0 */2 * * *"    - Every 2 hours
-  #   "0 0 8-18 * * *"   - Every hour between 8 AM and 6 PM
-  cron: "0 * * * * *"  # Every minute at second 0 (or use NETATMO_CRON env var)
 
 # Power meter monitoring
 power:
