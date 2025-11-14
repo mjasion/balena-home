@@ -13,6 +13,8 @@ type ThermostatState struct {
 	OverrideEndTime          time.Time // When the current override expires
 	ExternallyModified       bool      // Flag indicating manual override detected
 	ExternalModificationTime time.Time // When external modification was detected
+	SyncedScheduledTemp      float64   // Last synced scheduled temperature from Netatmo
+	SyncedScheduledTime      time.Time // When we synced the scheduled temperature
 }
 
 // Copy creates a defensive copy of the state
@@ -25,6 +27,8 @@ func (s *ThermostatState) Copy() ThermostatState {
 		OverrideEndTime:          s.OverrideEndTime,
 		ExternallyModified:       s.ExternallyModified,
 		ExternalModificationTime: s.ExternalModificationTime,
+		SyncedScheduledTemp:      s.SyncedScheduledTemp,
+		SyncedScheduledTime:      s.SyncedScheduledTime,
 	}
 }
 

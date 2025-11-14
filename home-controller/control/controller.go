@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
@@ -36,6 +37,10 @@ type Controller struct {
 
 	// Mapping of sensor MAC to room IDs
 	sensorToRooms map[string][]string // Key: sensor MAC (uppercase), Value: list of room IDs
+
+	// Schedule sync tracking
+	lastSyncTime time.Time
+	syncMu       sync.RWMutex
 }
 
 // New creates a new thermostat controller
@@ -178,100 +183,299 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		zap.String("span_id", span.SpanContext().SpanID().String()),
 	)
 
-	// Fetch current Netatmo home status
+	// Check if mappings configured
 	if len(c.config.Mappings) == 0 {
 		c.logger.Warn("no thermostat mappings configured, skipping control loop")
 		return
 	}
 
-	// Use cached home ID from initialization
+	// Check if schedule sync is needed
+	c.syncMu.RLock()
+	timeSinceLastSync := time.Since(c.lastSyncTime)
+	c.syncMu.RUnlock()
+
+	needsSync := false
+	if c.config.ScheduleSyncIntervalMinutes > 0 {
+		syncInterval := time.Duration(c.config.ScheduleSyncIntervalMinutes) * time.Minute
+		needsSync = timeSinceLastSync >= syncInterval
+	}
+
 	homeID := c.homeID
-	span.SetAttributes(attribute.String("home_id", homeID))
+	span.SetAttributes(
+		attribute.String("home_id", homeID),
+		attribute.Bool("needs_sync", needsSync),
+	)
 
-	// Fetch home status (rate limiting and retry handled by client)
-	var homeStatus *netatmo.HomeStatusResponse
-	var err error
-	{
-		_, fetchStatusSpan := c.tracer.Start(ctx, "fetch_netatmo_home_status",
-			trace.WithAttributes(attribute.String("home_id", homeID)),
+	// Counters for summary
+	var (
+		skipCount     int32
+		adjustCount   int32
+		noAdjustCount int32
+		wg            sync.WaitGroup
+	)
+
+	if needsSync {
+		// SYNC MODE: Optimized sync with single GetHomeStatus per poll iteration
+		c.logger.Info("schedule sync needed, using optimized sync mode",
+			zap.Duration("time_since_last_sync", timeSinceLastSync),
+			zap.Int("rooms_count", len(c.config.Mappings)),
 		)
-		homeStatus, err = c.netatmoClient.GetHomeStatus(ctx, homeID)
-		if err != nil {
-			fetchStatusSpan.RecordError(err)
-			fetchStatusSpan.SetStatus(codes.Error, "failed to fetch home status")
-			fetchStatusSpan.End()
-			c.logger.Error("failed to fetch home status", zap.Error(err))
-			span.SetStatus(codes.Error, "failed to fetch home status")
-			return
-		}
-		fetchStatusSpan.SetAttributes(attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)))
-		fetchStatusSpan.End()
-	}
 
-	// Build map of room ID to room status
-	roomStatusMap := make(map[string]*netatmo.RoomStatus)
-	for i := range homeStatus.Body.Home.Rooms {
-		room := &homeStatus.Body.Home.Rooms[i]
-		roomStatusMap[room.ID] = room
-	}
+		// Step 1: Switch all rooms to schedule mode in parallel
+		var switchWg sync.WaitGroup
+		for _, mapping := range c.config.Mappings {
+			// Skip externally modified rooms
+			c.stateMu.RLock()
+			state, exists := c.stateByRoom[mapping.RoomID]
+			externallyModified := exists && state != nil && state.ExternallyModified
+			c.stateMu.RUnlock()
 
-	// Process each mapping
-	skipCount := 0
-	adjustCount := 0
-	noAdjustCount := 0
+			if externallyModified {
+				c.logger.Debug("skipping schedule sync for externally modified room",
+					zap.String("room_name", mapping.RoomName),
+				)
+				atomic.AddInt32(&skipCount, 1)
+				continue
+			}
 
-	for _, mapping := range c.config.Mappings {
-		decision := c.evaluateRoom(ctx, mapping, roomStatusMap)
-
-		// Track decision types
-		switch decision.Action {
-		case "skip":
-			skipCount++
-		case "set_manual_override":
-			adjustCount++
-		case "no_adjustment_needed":
-			noAdjustCount++
+			switchWg.Add(1)
+			go func(m config.ThermostatMapping) {
+				defer switchWg.Done()
+				if !c.config.DryRun {
+					err := c.netatmoClient.SetRoomThermpoint(ctx, homeID, m.RoomID, "home", 0, 0)
+					if err != nil {
+						c.logger.Error("failed to switch room to schedule mode",
+							zap.String("room_name", m.RoomName),
+							zap.Error(err),
+						)
+					}
+				}
+			}(mapping)
 		}
 
-		// Push metrics for this decision
-		c.stateMu.RLock()
-		state := c.stateByRoom[mapping.RoomID]
-		externallyModified := false
-		if state != nil {
-			externallyModified = state.ExternallyModified
-		}
-		c.stateMu.RUnlock()
+		switchWg.Wait()
 
-		// Check if hard override is active
-		hardOverrideActive := false
-		for _, override := range c.config.HardOverrides {
-			if override.RoomName == mapping.RoomName {
-				_, active := c.getHardOverrideTemp(override)
-				if active {
-					hardOverrideActive = true
+		// Step 2: Poll until all rooms confirmed in schedule mode (single GetHomeStatus per poll)
+		pollInterval := time.Duration(c.config.ScheduleSyncPollIntervalSeconds) * time.Second
+		pollTimeout := time.Duration(c.config.ScheduleSyncPollTimeoutSeconds) * time.Second
+		deadline := time.Now().Add(pollTimeout)
+
+		roomsSynced := make(map[string]bool)
+		for time.Now().Before(deadline) {
+			time.Sleep(pollInterval)
+
+			// Single GetHomeStatus call for all rooms
+			homeStatus, err := c.netatmoClient.GetHomeStatus(ctx, homeID)
+			if err != nil {
+				c.logger.Warn("failed to fetch home status during sync poll", zap.Error(err))
+				continue
+			}
+
+			// Check all rooms in single response
+			for i := range homeStatus.Body.Home.Rooms {
+				roomStatus := &homeStatus.Body.Home.Rooms[i]
+				if roomStatus.ThermSetpointMode == "schedule" && !roomsSynced[roomStatus.ID] {
+					// Room confirmed in schedule mode - store synced temperature
+					c.stateMu.Lock()
+					if state, exists := c.stateByRoom[roomStatus.ID]; exists {
+						state.SyncedScheduledTemp = roomStatus.ThermSetpointTemperature
+						state.SyncedScheduledTime = time.Now()
+						roomsSynced[roomStatus.ID] = true
+						c.logger.Info("schedule synced for room",
+							zap.String("room_id", roomStatus.ID),
+							zap.String("room_name", state.RoomName),
+							zap.Float64("scheduled_temp", roomStatus.ThermSetpointTemperature),
+						)
+					}
+					c.stateMu.Unlock()
+				}
+			}
+
+			// Check if all rooms synced
+			allSynced := true
+			for _, mapping := range c.config.Mappings {
+				c.stateMu.RLock()
+				state, exists := c.stateByRoom[mapping.RoomID]
+				externallyModified := exists && state != nil && state.ExternallyModified
+				c.stateMu.RUnlock()
+
+				if !externallyModified && !roomsSynced[mapping.RoomID] {
+					allSynced = false
 					break
 				}
 			}
+
+			if allSynced {
+				c.logger.Info("all rooms synced successfully")
+				break
+			}
 		}
 
-		c.pushControlMetrics(decision, hardOverrideActive, externallyModified)
-		c.executeDecision(ctx, homeID, decision)
+		// Step 3: Pre-calculate weighted averages while still in parallel
+		var avgWg sync.WaitGroup
+		for _, mapping := range c.config.Mappings {
+			avgWg.Add(1)
+			go func(m config.ThermostatMapping) {
+				defer avgWg.Done()
+				sensorMAC := strings.ToUpper(strings.TrimSpace(m.SensorMAC))
+				_, _ = c.getWeightedAverageTemperature(sensorMAC)
+			}(mapping)
+		}
+		avgWg.Wait()
+
+		// Update last sync time BEFORE final status fetch
+		// This prevents retrying sync immediately if API calls fail
+		c.syncMu.Lock()
+		c.lastSyncTime = time.Now()
+		c.syncMu.Unlock()
+
+		// Step 4: Fetch final home status for all rooms
+		finalHomeStatus, err := c.netatmoClient.GetHomeStatus(ctx, homeID)
+		if err != nil {
+			c.logger.Error("failed to fetch final home status after sync", zap.Error(err))
+			span.SetStatus(codes.Error, "failed to fetch final home status")
+			return
+		}
+
+		// Build room status map
+		roomStatusMap := make(map[string]*netatmo.RoomStatus)
+		for i := range finalHomeStatus.Body.Home.Rooms {
+			room := &finalHomeStatus.Body.Home.Rooms[i]
+			roomStatusMap[room.ID] = room
+		}
+
+		// Step 5: Process each room's decision and execution in parallel
+		for _, mapping := range c.config.Mappings {
+			wg.Add(1)
+			go func(m config.ThermostatMapping) {
+				defer wg.Done()
+
+				decision := c.evaluateRoom(ctx, m, roomStatusMap)
+
+				// Track decision types
+				switch decision.Action {
+				case "skip":
+					atomic.AddInt32(&skipCount, 1)
+				case "set_manual_override":
+					atomic.AddInt32(&adjustCount, 1)
+				case "no_adjustment_needed":
+					atomic.AddInt32(&noAdjustCount, 1)
+				}
+
+				// Push metrics
+				c.stateMu.RLock()
+				state := c.stateByRoom[m.RoomID]
+				externallyModified := false
+				if state != nil {
+					externallyModified = state.ExternallyModified
+				}
+				c.stateMu.RUnlock()
+
+				hardOverrideActive := false
+				for _, override := range c.config.HardOverrides {
+					if override.RoomName == m.RoomName {
+						_, active := c.getHardOverrideTemp(override)
+						if active {
+							hardOverrideActive = true
+							break
+						}
+					}
+				}
+
+				c.pushControlMetrics(decision, hardOverrideActive, externallyModified)
+				c.executeDecision(ctx, homeID, decision)
+			}(mapping)
+		}
+
+		wg.Wait()
+
+	} else {
+		// NORMAL MODE: Fetch home status once, evaluate all rooms
+		c.logger.Debug("schedule sync not needed, using normal control loop",
+			zap.Duration("time_since_last_sync", timeSinceLastSync),
+		)
+
+		// Fetch home status (rate limiting and retry handled by client)
+		var homeStatus *netatmo.HomeStatusResponse
+		var err error
+		{
+			_, fetchStatusSpan := c.tracer.Start(ctx, "fetch_netatmo_home_status",
+				trace.WithAttributes(attribute.String("home_id", homeID)),
+			)
+			homeStatus, err = c.netatmoClient.GetHomeStatus(ctx, homeID)
+			if err != nil {
+				fetchStatusSpan.RecordError(err)
+				fetchStatusSpan.SetStatus(codes.Error, "failed to fetch home status")
+				fetchStatusSpan.End()
+				c.logger.Error("failed to fetch home status", zap.Error(err))
+				span.SetStatus(codes.Error, "failed to fetch home status")
+				return
+			}
+			fetchStatusSpan.SetAttributes(attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)))
+			fetchStatusSpan.End()
+		}
+
+		// Build map of room ID to room status
+		roomStatusMap := make(map[string]*netatmo.RoomStatus)
+		for i := range homeStatus.Body.Home.Rooms {
+			room := &homeStatus.Body.Home.Rooms[i]
+			roomStatusMap[room.ID] = room
+		}
+
+		// Process each mapping
+		for _, mapping := range c.config.Mappings {
+			decision := c.evaluateRoom(ctx, mapping, roomStatusMap)
+
+			// Track decision types
+			switch decision.Action {
+			case "skip":
+				atomic.AddInt32(&skipCount, 1)
+			case "set_manual_override":
+				atomic.AddInt32(&adjustCount, 1)
+			case "no_adjustment_needed":
+				atomic.AddInt32(&noAdjustCount, 1)
+			}
+
+			// Push metrics for this decision
+			c.stateMu.RLock()
+			state := c.stateByRoom[mapping.RoomID]
+			externallyModified := false
+			if state != nil {
+				externallyModified = state.ExternallyModified
+			}
+			c.stateMu.RUnlock()
+
+			// Check if hard override is active
+			hardOverrideActive := false
+			for _, override := range c.config.HardOverrides {
+				if override.RoomName == mapping.RoomName {
+					_, active := c.getHardOverrideTemp(override)
+					if active {
+						hardOverrideActive = true
+						break
+					}
+				}
+			}
+
+			c.pushControlMetrics(decision, hardOverrideActive, externallyModified)
+			c.executeDecision(ctx, homeID, decision)
+		}
 	}
 
 	// Record summary attributes on span
 	span.SetAttributes(
 		attribute.Int("rooms_evaluated", len(c.config.Mappings)),
-		attribute.Int("skipped", skipCount),
-		attribute.Int("adjusted", adjustCount),
-		attribute.Int("no_adjustment", noAdjustCount),
+		attribute.Int("skipped", int(skipCount)),
+		attribute.Int("adjusted", int(adjustCount)),
+		attribute.Int("no_adjustment", int(noAdjustCount)),
 	)
 
 	c.logger.Info("control loop iteration completed",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.Int("rooms_evaluated", len(c.config.Mappings)),
-		zap.Int("skipped", skipCount),
-		zap.Int("adjusted", adjustCount),
-		zap.Int("no_adjustment", noAdjustCount),
+		zap.Int("skipped", int(skipCount)),
+		zap.Int("adjusted", int(adjustCount)),
+		zap.Int("no_adjustment", int(noAdjustCount)),
 	)
 }
 
@@ -336,9 +540,10 @@ func (c *Controller) evaluateRoom(
 		decision.ThermostatMode = roomStatus.ThermSetpointMode
 
 		// Determine scheduled temperature based on mode:
-		// - If in "schedule" mode: use ThermSetpointTemperature (reflects actual schedule)
-		// - If in "manual" mode: use stored schedule from state (if available) or fallback to setpoint
 		// - Hard overrides always take precedence over everything
+		// - If we have a recent synced schedule temperature, use it
+		// - If in "schedule" mode: use ThermSetpointTemperature (reflects actual schedule)
+		// - If in "manual" mode: use synced schedule (if available) or fallback to setpoint
 		scheduledTemp := roomStatus.ThermSetpointTemperature
 
 		// Check for hard overrides first (highest precedence)
@@ -354,16 +559,39 @@ func (c *Controller) evaluateRoom(
 			}
 		}
 
-		// If no hard override and thermostat is in manual mode, we need the actual schedule
-		// The problem: Netatmo API doesn't expose the schedule when in manual mode
-		// Solution: When in schedule mode, trust ThermSetpointTemperature
-		//           When in manual mode, it could be our override - but we still use it as "scheduled"
-		//           because we want to know if the user changed the schedule itself
-		if !hardOverrideActive && roomStatus.ThermSetpointMode != "schedule" {
-			// Thermostat is in manual mode (could be our override or user's manual change)
-			// We'll use the current setpoint as "scheduled" - this means we compare against
-			// whatever is currently set, which is correct behavior
-			scheduledTemp = roomStatus.ThermSetpointTemperature
+		// If no hard override, prefer synced schedule temperature (if available and recent)
+		if !hardOverrideActive {
+			// Check if we have a synced scheduled temperature for this room
+			if stateCopy.SyncedScheduledTemp > 0 && !stateCopy.SyncedScheduledTime.IsZero() {
+				// Use synced schedule if it was synced recently (within last hour)
+				timeSinceSync := time.Since(stateCopy.SyncedScheduledTime)
+				if timeSinceSync < 1*time.Hour {
+					scheduledTemp = stateCopy.SyncedScheduledTemp
+					c.logger.Debug("using synced schedule temperature",
+						zap.String("room_name", mapping.RoomName),
+						zap.Float64("synced_temp", stateCopy.SyncedScheduledTemp),
+						zap.Duration("time_since_sync", timeSinceSync),
+					)
+				} else {
+					c.logger.Debug("synced schedule temperature too old, using current setpoint",
+						zap.String("room_name", mapping.RoomName),
+						zap.Duration("time_since_sync", timeSinceSync),
+					)
+				}
+			}
+
+			// Fallback logic if no recent synced schedule:
+			// If thermostat is in schedule mode, trust ThermSetpointTemperature
+			// If thermostat is in manual mode and no synced schedule, use current setpoint
+			if stateCopy.SyncedScheduledTemp == 0 || stateCopy.SyncedScheduledTime.IsZero() {
+				if roomStatus.ThermSetpointMode == "schedule" {
+					scheduledTemp = roomStatus.ThermSetpointTemperature
+				} else {
+					// Thermostat is in manual mode and we don't have synced schedule
+					// Use current setpoint (could be our override or user's manual change)
+					scheduledTemp = roomStatus.ThermSetpointTemperature
+				}
+			}
 		}
 
 		decision.ScheduledTemp = scheduledTemp
@@ -908,4 +1136,442 @@ func (c *Controller) warsawLocation() *time.Location {
 		return time.UTC
 	}
 	return loc
+}
+
+// processRoomWithSync processes a single room with parallel sync + avg calc → decision → execution
+func (c *Controller) processRoomWithSync(ctx context.Context, homeID string, mapping config.ThermostatMapping, skipCount, adjustCount, noAdjustCount *int32) {
+	ctx, span := c.tracer.Start(ctx, "process_room_with_sync_"+mapping.RoomName,
+		trace.WithAttributes(
+			attribute.String("room_name", mapping.RoomName),
+			attribute.String("room_id", mapping.RoomID),
+		),
+	)
+	defer span.End()
+
+	c.logger.Debug("processing room with sync pipeline",
+		zap.String("room_name", mapping.RoomName),
+	)
+
+	// Step 1: Run sync + avg calculation in parallel
+	var wg sync.WaitGroup
+	var syncErr error
+	var avgTemp float64
+	var avgErr error
+
+	wg.Add(2)
+
+	// Goroutine 1: Sync schedule for this room
+	go func() {
+		defer wg.Done()
+		syncErr = c.syncScheduleForRoom(ctx, homeID, mapping)
+	}()
+
+	// Goroutine 2: Calculate weighted average for sensor
+	go func() {
+		defer wg.Done()
+		sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
+		avgTemp, avgErr = c.getWeightedAverageTemperature(sensorMAC)
+	}()
+
+	// Wait for both to complete
+	wg.Wait()
+
+	// Check for errors
+	if syncErr != nil {
+		c.logger.Error("sync failed for room",
+			zap.String("room_name", mapping.RoomName),
+			zap.Error(syncErr),
+		)
+		atomic.AddInt32(skipCount, 1)
+		span.RecordError(syncErr)
+		return
+	}
+
+	if avgErr != nil {
+		c.logger.Warn("weighted average calculation failed for room",
+			zap.String("room_name", mapping.RoomName),
+			zap.Error(avgErr),
+		)
+		// Continue anyway - evaluateRoom will handle missing sensor data
+	}
+
+	c.logger.Debug("sync + avg calc completed for room",
+		zap.String("room_name", mapping.RoomName),
+		zap.Float64("avg_temp", avgTemp),
+	)
+
+	// Step 2: Fetch current home status to get room state after sync
+	homeStatus, err := c.netatmoClient.GetHomeStatus(ctx, homeID)
+	if err != nil {
+		c.logger.Error("failed to fetch home status after sync",
+			zap.String("room_name", mapping.RoomName),
+			zap.Error(err),
+		)
+		atomic.AddInt32(skipCount, 1)
+		span.RecordError(err)
+		return
+	}
+
+	// Build room status map
+	roomStatusMap := make(map[string]*netatmo.RoomStatus)
+	for i := range homeStatus.Body.Home.Rooms {
+		room := &homeStatus.Body.Home.Rooms[i]
+		roomStatusMap[room.ID] = room
+	}
+
+	// Step 3: Evaluate decision
+	decision := c.evaluateRoom(ctx, mapping, roomStatusMap)
+
+	// Track decision types
+	switch decision.Action {
+	case "skip":
+		atomic.AddInt32(skipCount, 1)
+	case "set_manual_override":
+		atomic.AddInt32(adjustCount, 1)
+	case "no_adjustment_needed":
+		atomic.AddInt32(noAdjustCount, 1)
+	}
+
+	// Push metrics
+	c.stateMu.RLock()
+	state := c.stateByRoom[mapping.RoomID]
+	externallyModified := false
+	if state != nil {
+		externallyModified = state.ExternallyModified
+	}
+	c.stateMu.RUnlock()
+
+	hardOverrideActive := false
+	for _, override := range c.config.HardOverrides {
+		if override.RoomName == mapping.RoomName {
+			_, active := c.getHardOverrideTemp(override)
+			if active {
+				hardOverrideActive = true
+				break
+			}
+		}
+	}
+
+	c.pushControlMetrics(decision, hardOverrideActive, externallyModified)
+
+	// Step 4: Execute decision
+	c.executeDecision(ctx, homeID, decision)
+
+	c.logger.Debug("room pipeline completed",
+		zap.String("room_name", mapping.RoomName),
+		zap.String("action", decision.Action),
+	)
+}
+
+// syncScheduleForRoom syncs schedule for a single room (returns error instead of counting)
+func (c *Controller) syncScheduleForRoom(ctx context.Context, homeID string, mapping config.ThermostatMapping) error {
+	// Check if room is externally modified
+	c.stateMu.RLock()
+	state, exists := c.stateByRoom[mapping.RoomID]
+	externallyModified := false
+	if exists && state != nil {
+		externallyModified = state.ExternallyModified
+	}
+	c.stateMu.RUnlock()
+
+	if externallyModified {
+		c.logger.Debug("skipping schedule sync for externally modified room",
+			zap.String("room_name", mapping.RoomName),
+		)
+		return nil // Not an error, just skip
+	}
+
+	if c.config.DryRun {
+		c.logger.Info("[DRY-RUN] WOULD switch to schedule mode",
+			zap.String("room_name", mapping.RoomName),
+		)
+		return nil
+	}
+
+	// Switch to schedule mode
+	err := c.netatmoClient.SetRoomThermpoint(ctx, homeID, mapping.RoomID, "home", 0, 0)
+	if err != nil {
+		return fmt.Errorf("failed to switch to schedule mode: %w", err)
+	}
+
+	// Poll until confirmed
+	pollInterval := time.Duration(c.config.ScheduleSyncPollIntervalSeconds) * time.Second
+	pollTimeout := time.Duration(c.config.ScheduleSyncPollTimeoutSeconds) * time.Second
+	deadline := time.Now().Add(pollTimeout)
+
+	for time.Now().Before(deadline) {
+		time.Sleep(pollInterval)
+
+		homeStatus, err := c.netatmoClient.GetHomeStatus(ctx, homeID)
+		if err != nil {
+			c.logger.Warn("failed to fetch home status during poll",
+				zap.String("room_name", mapping.RoomName),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		// Find room
+		var roomStatus *netatmo.RoomStatus
+		for i := range homeStatus.Body.Home.Rooms {
+			if homeStatus.Body.Home.Rooms[i].ID == mapping.RoomID {
+				roomStatus = &homeStatus.Body.Home.Rooms[i]
+				break
+			}
+		}
+
+		if roomStatus == nil {
+			continue
+		}
+
+		// Check if in schedule mode
+		if roomStatus.ThermSetpointMode == "schedule" {
+			scheduledTemp := roomStatus.ThermSetpointTemperature
+
+			// Store synced temperature
+			c.stateMu.Lock()
+			if state, exists := c.stateByRoom[mapping.RoomID]; exists {
+				state.SyncedScheduledTemp = scheduledTemp
+				state.SyncedScheduledTime = time.Now()
+			}
+			c.stateMu.Unlock()
+
+			c.logger.Info("schedule synced for room",
+				zap.String("room_name", mapping.RoomName),
+				zap.Float64("scheduled_temp", scheduledTemp),
+			)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("timeout waiting for schedule mode confirmation")
+}
+
+// SyncSchedule syncs the scheduled temperature by temporarily switching to schedule mode
+// This is needed because Netatmo API doesn't expose the schedule when thermostat is in manual mode
+// Optimized: Syncs all rooms in parallel and pre-calculates weighted averages concurrently
+func (c *Controller) SyncSchedule(ctx context.Context) {
+	ctx, span := c.tracer.Start(ctx, "sync_schedule",
+		trace.WithAttributes(
+			attribute.Int("mapping_count", len(c.config.Mappings)),
+		),
+	)
+	defer span.End()
+
+	c.logger.Info("schedule sync started (parallel mode)",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("rooms_count", len(c.config.Mappings)),
+	)
+
+	homeID := c.homeID
+
+	// Counters (thread-safe with atomic or final aggregation)
+	var (
+		successCount int32
+		skipCount    int32
+		errorCount   int32
+		wg           sync.WaitGroup
+	)
+
+	// Sync all rooms in parallel
+	for _, mapping := range c.config.Mappings {
+		wg.Add(1)
+		go func(m config.ThermostatMapping) {
+			defer wg.Done()
+			c.syncRoom(ctx, homeID, m, &successCount, &skipCount, &errorCount)
+		}(mapping)
+	}
+
+	// While rooms are syncing, pre-calculate weighted averages in parallel
+	c.preCalculateWeightedAverages(ctx)
+
+	// Wait for all room syncs to complete
+	wg.Wait()
+
+	// Record summary
+	span.SetAttributes(
+		attribute.Int("success_count", int(successCount)),
+		attribute.Int("skip_count", int(skipCount)),
+		attribute.Int("error_count", int(errorCount)),
+	)
+
+	c.logger.Info("schedule sync completed (parallel mode)",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("success", int(successCount)),
+		zap.Int("skipped", int(skipCount)),
+		zap.Int("errors", int(errorCount)),
+	)
+}
+
+// syncRoom syncs a single room's schedule (called as goroutine)
+func (c *Controller) syncRoom(ctx context.Context, homeID string, mapping config.ThermostatMapping, successCount, skipCount, errorCount *int32) {
+	// Check if room is externally modified (respect user manual changes)
+	c.stateMu.RLock()
+	state, exists := c.stateByRoom[mapping.RoomID]
+	externallyModified := false
+	if exists && state != nil {
+		externallyModified = state.ExternallyModified
+	}
+	c.stateMu.RUnlock()
+
+	if externallyModified {
+		c.logger.Debug("skipping schedule sync for externally modified room",
+			zap.String("room_name", mapping.RoomName),
+			zap.String("room_id", mapping.RoomID),
+		)
+		atomic.AddInt32(skipCount, 1)
+		return
+	}
+
+	// Switch to schedule mode ("home" mode in Netatmo API)
+	c.logger.Debug("switching thermostat to schedule mode",
+		zap.String("room_name", mapping.RoomName),
+		zap.String("room_id", mapping.RoomID),
+	)
+
+	if c.config.DryRun {
+		c.logger.Info("[DRY-RUN] WOULD switch to schedule mode",
+			zap.String("room_name", mapping.RoomName),
+			zap.String("room_id", mapping.RoomID),
+		)
+		// In dry-run, simulate success without actually syncing
+		atomic.AddInt32(successCount, 1)
+		return
+	}
+
+	// Call Netatmo API to switch to "home" mode (schedule mode)
+	err := c.netatmoClient.SetRoomThermpoint(ctx, homeID, mapping.RoomID, "home", 0, 0)
+	if err != nil {
+		c.logger.Error("failed to switch thermostat to schedule mode",
+			zap.String("room_name", mapping.RoomName),
+			zap.String("room_id", mapping.RoomID),
+			zap.Error(err),
+		)
+		atomic.AddInt32(errorCount, 1)
+		return
+	}
+
+	// Poll until thermostat is confirmed in schedule mode
+	pollInterval := time.Duration(c.config.ScheduleSyncPollIntervalSeconds) * time.Second
+	pollTimeout := time.Duration(c.config.ScheduleSyncPollTimeoutSeconds) * time.Second
+	deadline := time.Now().Add(pollTimeout)
+
+	var scheduledTemp float64
+	synced := false
+
+	for time.Now().Before(deadline) {
+		// Wait before polling
+		time.Sleep(pollInterval)
+
+		// Fetch current home status
+		homeStatus, err := c.netatmoClient.GetHomeStatus(ctx, homeID)
+		if err != nil {
+			c.logger.Warn("failed to fetch home status during schedule sync",
+				zap.String("room_name", mapping.RoomName),
+				zap.Error(err),
+			)
+			continue // Retry until timeout
+		}
+
+		// Find the room in the status
+		var roomStatus *netatmo.RoomStatus
+		for i := range homeStatus.Body.Home.Rooms {
+			if homeStatus.Body.Home.Rooms[i].ID == mapping.RoomID {
+				roomStatus = &homeStatus.Body.Home.Rooms[i]
+				break
+			}
+		}
+
+		if roomStatus == nil {
+			c.logger.Warn("room not found in home status during schedule sync",
+				zap.String("room_name", mapping.RoomName),
+				zap.String("room_id", mapping.RoomID),
+			)
+			continue
+		}
+
+		// Check if thermostat is now in schedule mode
+		if roomStatus.ThermSetpointMode == "schedule" {
+			// Success! Read the scheduled temperature
+			scheduledTemp = roomStatus.ThermSetpointTemperature
+			synced = true
+
+			c.logger.Info("schedule synced successfully",
+				zap.String("room_name", mapping.RoomName),
+				zap.String("room_id", mapping.RoomID),
+				zap.Float64("scheduled_temp", scheduledTemp),
+				zap.String("mode", roomStatus.ThermSetpointMode),
+			)
+			break
+		}
+
+		c.logger.Debug("waiting for thermostat to switch to schedule mode",
+			zap.String("room_name", mapping.RoomName),
+			zap.String("current_mode", roomStatus.ThermSetpointMode),
+		)
+	}
+
+	if !synced {
+		c.logger.Error("timed out waiting for thermostat to switch to schedule mode",
+			zap.String("room_name", mapping.RoomName),
+			zap.String("room_id", mapping.RoomID),
+			zap.Duration("timeout", pollTimeout),
+		)
+		atomic.AddInt32(errorCount, 1)
+		return
+	}
+
+	// Store synced scheduled temperature in state
+	c.stateMu.Lock()
+	if state, exists := c.stateByRoom[mapping.RoomID]; exists {
+		state.SyncedScheduledTemp = scheduledTemp
+		state.SyncedScheduledTime = time.Now()
+	}
+	c.stateMu.Unlock()
+
+	atomic.AddInt32(successCount, 1)
+}
+
+// preCalculateWeightedAverages calculates weighted averages for all sensors while sync is happening
+func (c *Controller) preCalculateWeightedAverages(ctx context.Context) {
+	_, span := c.tracer.Start(ctx, "pre_calculate_weighted_averages")
+	defer span.End()
+
+	// Get unique sensor MACs from all mappings
+	sensorMACs := make(map[string]bool)
+	for _, mapping := range c.config.Mappings {
+		mac := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
+		sensorMACs[mac] = true
+	}
+
+	c.logger.Debug("pre-calculating weighted averages",
+		zap.Int("sensor_count", len(sensorMACs)),
+	)
+
+	// Calculate averages for each sensor in parallel
+	var wg sync.WaitGroup
+	for mac := range sensorMACs {
+		wg.Add(1)
+		go func(sensorMAC string) {
+			defer wg.Done()
+
+			// Calculate weighted average (same logic as getWeightedAverageTemperature)
+			avgTemp, err := c.getWeightedAverageTemperature(sensorMAC)
+			if err != nil {
+				c.logger.Debug("failed to pre-calculate weighted average",
+					zap.String("sensor_mac", sensorMAC),
+					zap.Error(err),
+				)
+				return
+			}
+
+			c.logger.Debug("pre-calculated weighted average",
+				zap.String("sensor_mac", sensorMAC),
+				zap.Float64("avg_temp", avgTemp),
+			)
+		}(mac)
+	}
+
+	wg.Wait()
+	c.logger.Debug("pre-calculation completed")
 }

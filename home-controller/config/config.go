@@ -111,7 +111,10 @@ type ThermostatControlConfig struct {
 	MaxSetpointCelsius               float64             `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
 	Mappings                         []ThermostatMapping `yaml:"mappings"`
 	HardOverrides                    []HardOverride      `yaml:"hardOverrides"`
-	Cron                             string              `yaml:"cron" env:"THERMOSTAT_CONTROL_CRON"` // Required: Cron expression with seconds (e.g., "0 * * * * *")
+	Cron                             string              `yaml:"cron" env:"THERMOSTAT_CONTROL_CRON"`                                                  // Required: Cron expression with seconds (e.g., "0 * * * * *")
+	ScheduleSyncIntervalMinutes      int                 `yaml:"scheduleSyncIntervalMinutes" env:"SCHEDULE_SYNC_INTERVAL_MINUTES" env-default:"15"`   // How often to sync schedule (0 = disabled)
+	ScheduleSyncPollIntervalSeconds  int                 `yaml:"scheduleSyncPollIntervalSeconds" env:"SCHEDULE_SYNC_POLL_INTERVAL" env-default:"2"`   // How often to poll after setting schedule mode
+	ScheduleSyncPollTimeoutSeconds   int                 `yaml:"scheduleSyncPollTimeoutSeconds" env:"SCHEDULE_SYNC_POLL_TIMEOUT" env-default:"30"`    // Max time to wait for schedule mode confirmation
 }
 
 // ThermostatMapping maps a Netatmo room to a Xiaomi sensor
@@ -459,6 +462,25 @@ func (c *Config) Validate() error {
 		// Verify that Netatmo integration is enabled if thermostat control is enabled
 		if !c.Netatmo.Enabled {
 			return fmt.Errorf("thermostat control requires Netatmo integration to be enabled")
+		}
+
+		// Validate schedule sync configuration (optional)
+		if c.ThermostatControl.ScheduleSyncIntervalMinutes > 0 {
+			// Validate sync interval
+			if c.ThermostatControl.ScheduleSyncIntervalMinutes < 1 {
+				return fmt.Errorf("schedule sync interval must be at least 1 minute")
+			}
+
+			// Validate poll interval
+			if c.ThermostatControl.ScheduleSyncPollIntervalSeconds < 1 {
+				return fmt.Errorf("schedule sync poll interval must be at least 1 second")
+			}
+
+			// Validate poll timeout
+			if c.ThermostatControl.ScheduleSyncPollTimeoutSeconds < c.ThermostatControl.ScheduleSyncPollIntervalSeconds {
+				return fmt.Errorf("schedule sync poll timeout (%d seconds) must be greater than poll interval (%d seconds)",
+					c.ThermostatControl.ScheduleSyncPollTimeoutSeconds, c.ThermostatControl.ScheduleSyncPollIntervalSeconds)
+			}
 		}
 	}
 

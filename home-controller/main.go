@@ -235,6 +235,7 @@ func main() {
 			os.Exit(1)
 		}
 
+		// Add main thermostat control job (includes integrated schedule sync)
 		if err := jobScheduler.AddCronJobWithSeconds("Thermostat Controller", cfg.ThermostatControl.Cron, controller.Run); err != nil {
 			logger.Error("failed to add thermostat controller cron job", zap.Error(err))
 			os.Exit(1)

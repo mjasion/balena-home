@@ -237,11 +237,32 @@ thermostatControl:
   #   "0 0 6-22 * * *"   - Every hour from 6 AM to 10 PM
   cron: "0 * * * * *"  # Every minute at second 0 (or use THERMOSTAT_CONTROL_CRON env var)
 
+  # Schedule sync interval in minutes (default: 15, set to 0 to disable)
+  # Syncs actual schedule temperature by temporarily switching to schedule mode
+  # This solves the problem where Netatmo API doesn't expose schedule when in manual mode
+  # How it works:
+  #   1. At the start of control loop (every scheduleSyncIntervalMinutes)
+  #   2. Switch thermostat to schedule mode
+  #   3. Read current setpoint (reflects actual schedule)
+  #   4. Store synced temperature for use in control decisions
+  #   5. Then evaluate if override needed and apply if necessary
+  # IMPORTANT: Runs BEFORE control decisions to ensure fresh schedule data
+  scheduleSyncIntervalMinutes: 15  # or use SCHEDULE_SYNC_INTERVAL_MINUTES env var
+
+  # Poll interval after switching to schedule mode (default: 2 seconds)
+  # How long to wait between API calls when checking if mode has switched
+  scheduleSyncPollIntervalSeconds: 2  # or use SCHEDULE_SYNC_POLL_INTERVAL env var
+
+  # Poll timeout for schedule mode confirmation (default: 30 seconds)
+  # Maximum time to wait for thermostat to confirm it's in schedule mode
+  # If timeout occurs, schedule sync fails and control loop uses fallback logic
+  scheduleSyncPollTimeoutSeconds: 30  # or use SCHEDULE_SYNC_POLL_TIMEOUT env var
+
   # Override duration in minutes (default: 10)
   # SAFETY: All setpoint changes auto-expire after this duration (fail-safe)
   # After expiration, thermostat reverts to schedule mode
   # System will automatically extend the override if temperature still requires control
-  overrideDurationMinutes: 30
+  overrideDurationMinutes: 10
 
   # Extension threshold in minutes (default: 2)
   # When override has less than this time remaining, extend it automatically

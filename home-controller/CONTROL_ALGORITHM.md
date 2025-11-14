@@ -742,6 +742,179 @@ When `dryRun: true`:
   reason="xiaomi=25.5°C, target=22.0°C, diff=3.50°C"
 ```
 
+## Schedule Sync Feature
+
+### Problem
+
+The Netatmo API **does not expose the schedule** when the thermostat is in manual mode. This creates a critical issue:
+
+- At 16:40, schedule says 25°C → Controller sets manual override to 25°C for 30 minutes
+- At 17:00, schedule changes to 24°C → But controller doesn't know!
+- Controller keeps trying to reach 25°C for the remaining 10 minutes
+- Energy waste and fighting against the schedule
+
+### Solution: Periodic Schedule Sync
+
+Every 15 minutes (configurable via `scheduleSyncIntervalMinutes`), the controller performs a "schedule sync":
+
+1. **Switch all rooms to schedule mode** (`"home"` in Netatmo API) in parallel
+2. **Poll until confirmed** - Single `GetHomeStatus` call per poll iteration checks all rooms
+3. **Read current setpoint** - This reflects the actual schedule temperature at this time
+4. **Store synced temperature** - Cached in `ThermostatState.SyncedScheduledTemp`
+5. **Pre-calculate weighted averages** - While polling, calculate sensor data in parallel
+6. **Evaluate and execute** - Make control decisions with fresh schedule data
+
+### Optimized Architecture
+
+```mermaid
+flowchart TB
+    Start[Control Loop: Every 1 minute] --> Check{15 minutes<br/>since last sync?}
+
+    Check -->|No| Normal[NORMAL MODE:<br/>Fetch Status Once<br/>Evaluate All Rooms]
+    Check -->|Yes| Sync[SYNC MODE]
+
+    Sync --> Step1[Step 1: Switch all rooms<br/>to schedule mode<br/>in parallel]
+    Step1 --> Step2[Step 2: Poll with single<br/>GetHomeStatus<br/>Check all rooms at once]
+    Step2 --> Step3[Step 3: Pre-calculate<br/>weighted averages<br/>in parallel]
+    Step3 --> Step4[Step 4: Fetch final<br/>status for all rooms]
+    Step4 --> Step5[Step 5: Evaluate & execute<br/>each room in parallel]
+
+    Normal --> End[End Iteration]
+    Step5 --> End
+```
+
+### API Call Optimization
+
+**Key Optimization**: Single `GetHomeStatus` call per poll iteration checks **all rooms**:
+
+```go
+// OLD: Per-room polling (N rooms × M polls = many API calls)
+for each room {
+    SetRoomThermpoint("home")  // 1 API call
+    for up to timeout {
+        GetHomeStatus()  // 1 API call per room per poll!
+        check this room only
+    }
+}
+
+// NEW: Batch polling (1 call per poll iteration)
+// Step 1: Switch all rooms in parallel
+for each room in parallel {
+    SetRoomThermpoint("home")  // N API calls (unavoidable)
+}
+
+// Step 2: Single poll checks all rooms
+for up to timeout {
+    GetHomeStatus()  // 1 API call total!
+    check ALL rooms in response
+    if all synced: break
+}
+```
+
+**API Calls per Sync** (3 rooms example):
+- Switch to schedule: 3 calls (one per room, parallel)
+- Polling (15 polls @ 2s interval): **15 calls total** (not 45!)
+- Final status: 1 call
+- **Total: ~19 calls** (vs ~49 with per-room polling)
+
+### Configuration
+
+```yaml
+thermostatControl:
+  # Schedule sync interval (0 = disabled)
+  scheduleSyncIntervalMinutes: 15
+
+  # Poll every 2 seconds after switching to schedule mode
+  scheduleSyncPollIntervalSeconds: 2
+
+  # Timeout after 30 seconds if mode not confirmed
+  scheduleSyncPollTimeoutSeconds: 30
+```
+
+### Behavior
+
+**First Run (Never Synced)**:
+- `lastSyncTime` is zero → Triggers sync immediately
+- Switches to schedule mode, reads current schedule
+- Stores synced temperature for all rooms
+
+**Every 15 Minutes**:
+- Timer check: `time.Since(lastSyncTime) >= 15 minutes`
+- Triggers SYNC MODE instead of NORMAL MODE
+- Fetches fresh schedule data before making decisions
+
+**Between Syncs (Minutes 1-14)**:
+- Uses NORMAL MODE (single `GetHomeStatus`, no switching)
+- Uses cached `SyncedScheduledTemp` from last sync
+- Falls back to `ThermSetpointTemperature` if sync is stale (>1 hour)
+
+**Externally Modified Rooms**:
+- Skipped during sync (respects manual user changes)
+- Automation pauses until user switches back to schedule mode
+
+### Example Timeline
+
+```
+00:00 - Control loop (15 min since last sync)
+        ├─ SYNC MODE
+        ├─ Switch all rooms to schedule in parallel
+        │  ├─ Salon: SetRoomThermpoint("home")
+        │  ├─ Hol: SetRoomThermpoint("home")
+        │  └─ Sypialnia: SetRoomThermpoint("home")
+        │
+        ├─ Poll until all confirmed (single GetHomeStatus per poll)
+        │  ├─ Poll 1 (2s): Salon=schedule ✓, Hol=manual, Sypialnia=manual
+        │  ├─ Poll 2 (4s): Salon=schedule ✓, Hol=schedule ✓, Sypialnia=manual
+        │  └─ Poll 3 (6s): All in schedule mode ✓
+        │
+        ├─ Store synced temperatures
+        │  ├─ Salon: 24.0°C
+        │  ├─ Hol: 24.0°C
+        │  └─ Sypialnia: 22.0°C
+        │
+        ├─ Pre-calculate averages (parallel)
+        ├─ Fetch final status
+        └─ Evaluate all rooms with fresh schedule data
+           ├─ Salon: needs override → 24.5°C
+           ├─ Hol: no action needed
+           └─ Sypialnia: needs override → 22.5°C
+
+01:00 - Control loop (1 min since last sync)
+        ├─ NORMAL MODE (sync not needed)
+        ├─ Fetch status once
+        └─ Use cached synced temperatures from 00:00
+
+15:00 - Control loop (15 min since last sync)
+        ├─ SYNC MODE (timer expired)
+        └─ Read new schedule: 22.0°C (schedule changed!)
+           Now using correct target temperature ✓
+```
+
+### Fail-Safe Behavior
+
+**If Sync Fails**:
+- `lastSyncTime` is updated **before** final status fetch
+- Prevents retrying sync immediately if API fails
+- Waits full 15 minutes before next attempt
+- Falls back to `ThermSetpointTemperature` for decisions
+
+**If API Calls Fail**:
+- Logs errors but continues
+- Switches to normal mode for remaining rooms
+- Next sync attempt in 15 minutes
+
+### Testing
+
+Comprehensive unit tests verify:
+- ✅ Sync triggers every 15 minutes exactly
+- ✅ Sync skipped when < 15 minutes elapsed
+- ✅ `lastSyncTime` updated after sync
+- ✅ Externally modified rooms skipped
+- ✅ Normal mode uses single `GetHomeStatus` call
+- ✅ Sync disabled when `scheduleSyncIntervalMinutes = 0`
+
+See `control/sync_timing_test.go` for full test coverage.
+
 ## Future Enhancements
 
 Potential improvements to the algorithm:
