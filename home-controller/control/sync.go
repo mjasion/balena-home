@@ -59,8 +59,19 @@ func (c *Controller) runNormalMode(ctx context.Context, homeID string) (skipCoun
 	return c.evaluateAndExecuteRooms(ctx, homeID, roomStatusMap)
 }
 
-// switchRoomsToScheduleMode switches all rooms to schedule mode (sequential loop)
+// switchRoomsToScheduleMode switches all rooms to schedule mode (sequential)
+// Optimized: only switches rooms that aren't already in schedule mode
+// Sequential to avoid rate limiting
 func (c *Controller) switchRoomsToScheduleMode(ctx context.Context, homeID string, skipCount *int) {
+	// First, fetch current home status to see which rooms are already in schedule mode
+	roomStatusMap, err := c.fetchHomeStatus(ctx, homeID)
+	if err != nil {
+		c.logger.Warn("failed to fetch home status before sync, will attempt all switches",
+			zap.Error(err))
+		// Continue anyway with empty map - better to attempt switches than skip them
+		roomStatusMap = make(map[string]*netatmo.RoomStatus)
+	}
+
 	for _, mapping := range c.config.Mappings {
 		// Skip externally modified rooms
 		c.stateMu.RLock()
@@ -76,12 +87,26 @@ func (c *Controller) switchRoomsToScheduleMode(ctx context.Context, homeID strin
 			continue
 		}
 
+		// Check if room is already in schedule mode
+		if roomStatus, ok := roomStatusMap[mapping.RoomID]; ok && roomStatus.ThermSetpointMode == "schedule" {
+			c.logger.Debug("room already in schedule mode, skipping switch",
+				zap.String("room_name", mapping.RoomName),
+				zap.String("room_id", mapping.RoomID),
+			)
+			continue
+		}
+
 		if !c.config.DryRun {
 			err := c.netatmoClient.SetRoomThermpoint(ctx, homeID, mapping.RoomID, "home", 0, 0)
 			if err != nil {
 				c.logger.Error("failed to switch room to schedule mode",
 					zap.String("room_name", mapping.RoomName),
 					zap.Error(err),
+				)
+			} else {
+				c.logger.Debug("switched room to schedule mode",
+					zap.String("room_name", mapping.RoomName),
+					zap.String("room_id", mapping.RoomID),
 				)
 			}
 		}
@@ -171,13 +196,28 @@ func (c *Controller) fetchHomeStatus(ctx context.Context, homeID string) (map[st
 	return roomStatusMap, nil
 }
 
-// shouldSyncSchedule checks if schedule sync is needed based on interval
+// shouldSyncSchedule checks if schedule sync is needed at specific minutes of the hour
+// For interval=15: syncs at :00, :15, :30, :45
+// For interval=30: syncs at :00, :30
+// For interval=60: syncs at :00
 func (c *Controller) shouldSyncSchedule() bool {
 	if c.config.ScheduleSyncIntervalMinutes <= 0 {
 		return false
 	}
 
-	timeSinceLastSync := time.Since(c.lastSyncTime)
-	syncInterval := time.Duration(c.config.ScheduleSyncIntervalMinutes) * time.Minute
-	return timeSinceLastSync >= syncInterval
+	now := time.Now()
+	currentMinute := now.Minute()
+
+	// Check if current minute is a sync point (e.g., :00, :15, :30, :45 for interval=15)
+	if currentMinute%c.config.ScheduleSyncIntervalMinutes != 0 {
+		return false
+	}
+
+	// Avoid multiple syncs in the same minute window
+	// If last sync was within the last minute, skip
+	if time.Since(c.lastSyncTime) < time.Minute {
+		return false
+	}
+
+	return true
 }

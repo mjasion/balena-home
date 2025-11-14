@@ -114,7 +114,7 @@ func TestSyncTimestampUpdated(t *testing.T) {
 
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                         true,
-		ScheduleSyncIntervalMinutes:     15,
+		ScheduleSyncIntervalMinutes:     1, // Use 1-minute interval so every minute is a sync point
 		ScheduleSyncPollIntervalSeconds: 1,
 		ScheduleSyncPollTimeoutSeconds:  2, // Short timeout since API will fail
 		TemperatureThreshold:            0.5,
@@ -153,6 +153,11 @@ func TestSyncTimestampUpdated(t *testing.T) {
 	if !initialSyncTime.IsZero() {
 		t.Errorf("Expected initial lastSyncTime to be zero, got %v", initialSyncTime)
 	}
+
+	// With interval=1, every minute is a sync point, so no need to wait
+	t.Logf("Current minute: %02d (interval: %d, sync point: %v)",
+		time.Now().Minute(), cfg.ScheduleSyncIntervalMinutes,
+		time.Now().Minute()%cfg.ScheduleSyncIntervalMinutes == 0)
 
 	// Run control loop (will try to sync but fail API calls - that's ok)
 	beforeRun := time.Now()
