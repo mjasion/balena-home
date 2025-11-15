@@ -191,6 +191,13 @@ func (c *Controller) evaluateRoom(
 	// Apply safety bounds
 	calculatedSetpoint = c.applySafetyBounds(calculatedSetpoint)
 
+	// Check if thermostat is already at the target setpoint
+	if c.isSetpointAlreadySet(roomStatus, calculatedSetpoint) && !shouldExtend {
+		decision.Action = "no_adjustment_needed"
+		decision.Reason = fmt.Sprintf("setpoint already at target (%.1f°C), manual mode active", calculatedSetpoint)
+		return decision
+	}
+
 	decision.Action = "set_manual_override"
 	decision.CalculatedSetpoint = calculatedSetpoint
 	decision.OverrideEndTime = time.Now().Add(time.Duration(c.config.OverrideDurationMinutes) * time.Minute).Unix()
@@ -366,4 +373,16 @@ func (c *Controller) getHardOverrideTemp(override config.HardOverride) (float64,
 		}
 	}
 	return 0, false
+}
+
+// isSetpointAlreadySet checks if the thermostat is already at the target setpoint in manual mode
+func (c *Controller) isSetpointAlreadySet(roomStatus *netatmo.RoomStatus, targetSetpoint float64) bool {
+	// Only skip if thermostat is in manual mode (our previous override is still active)
+	if roomStatus.ThermSetpointMode != "manual" {
+		return false
+	}
+
+	// Check if current setpoint matches target (within 0.1°C tolerance)
+	delta := math.Abs(roomStatus.ThermSetpointTemperature - targetSetpoint)
+	return delta < 0.1
 }
