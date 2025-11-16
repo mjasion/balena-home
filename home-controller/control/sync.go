@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/mjasion/balena-home/thermostats/netatmo"
@@ -87,12 +88,43 @@ func (c *Controller) switchRoomsToScheduleMode(ctx context.Context, homeStatus *
 		}
 
 		// Check if room is already in schedule mode
-		if roomStatus, ok := roomStatusMap[mapping.RoomID]; ok && roomStatus.ThermSetpointMode == "schedule" {
+		roomStatus, roomExists := roomStatusMap[mapping.RoomID]
+		if roomExists && roomStatus.ThermSetpointMode == "schedule" {
 			c.logger.Debug("room already in schedule mode, skipping switch",
 				zap.String("room_name", mapping.RoomName),
 				zap.String("room_id", mapping.RoomID),
 			)
 			continue
+		}
+
+		// Skip rooms in manual mode that were NOT set by algorithm
+		if roomExists && roomStatus.ThermSetpointMode == "manual" {
+			c.stateMu.RLock()
+			state, exists := c.stateByRoom[mapping.RoomID]
+			c.stateMu.RUnlock()
+
+			// Check if this is our recent override (we set it within last 15 minutes)
+			isOurOverride := false
+			if exists && state != nil && !state.LastSetpointTime.IsZero() {
+				timeSinceLastCommand := time.Since(state.LastSetpointTime)
+				setpointDelta := math.Abs(roomStatus.ThermSetpointTemperature - state.LastSetpoint)
+
+				if timeSinceLastCommand < 15*time.Minute && setpointDelta < 0.3 {
+					// This is our override, we can reset it to schedule
+					isOurOverride = true
+				}
+			}
+
+			if !isOurOverride {
+				// Manual mode not set by algorithm - skip sync to respect user's manual setting
+				c.logger.Info("skipping schedule sync for manual mode not set by algorithm",
+					zap.String("room_name", mapping.RoomName),
+					zap.String("room_id", mapping.RoomID),
+					zap.Float64("current_setpoint", roomStatus.ThermSetpointTemperature),
+				)
+				*skipCount++
+				continue
+			}
 		}
 
 		if !c.config.DryRun {
