@@ -21,7 +21,8 @@ func TestControllerConstructor(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                          true,
 		TemperatureThreshold:             0.5,
-		Cron:                             "0 * * * * *",
+		HomeStatusFetchCron:              "0 * * * * *",
+		ControlLoopCron:                  "30 * * * * *",
 		ExtensionThresholdMinutes:        2,
 		OverrideDurationMinutes:          30,
 		ExternalModificationResetMinutes: 5,
@@ -85,7 +86,8 @@ func TestWeightedAverageTemperature(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                 true,
 		TemperatureThreshold:    0.5,
-		Cron:                    "0 * * * * *",
+		HomeStatusFetchCron:     "0 * * * * *",
+		ControlLoopCron:         "30 * * * * *",
 		OverrideDurationMinutes: 10,
 	}
 
@@ -459,9 +461,10 @@ func TestStartWithCancelledContext(t *testing.T) {
 	metricsBuffer := buffer.New(100, logger)
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled:  true,
-		Cron:     "0 * * * * *",
-		Mappings: []config.ThermostatMapping{}, // Empty mappings to avoid initialization
+		Enabled:             true,
+		HomeStatusFetchCron: "0 * * * * *",
+		ControlLoopCron:     "30 * * * * *",
+		Mappings:            []config.ThermostatMapping{}, // Empty mappings to avoid initialization
 	}
 
 	client := netatmo.NewClient("test-client-id", "test-secret", "test-refresh-token")
@@ -655,7 +658,8 @@ func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                   true,
 		TemperatureThreshold:      0.5,
-		Cron:                      "0 * * * * *",
+		HomeStatusFetchCron:       "0 * * * * *",
+		ControlLoopCron:           "30 * * * * *",
 		ExtensionThresholdMinutes: 2,
 		OverrideDurationMinutes:   30,
 		Mappings: []config.ThermostatMapping{
@@ -748,7 +752,8 @@ func TestOverrideExtension(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                   true,
 		TemperatureThreshold:      0.3,
-		Cron:                      "0 * * * * *",
+		HomeStatusFetchCron:       "0 * * * * *",
+		ControlLoopCron:           "30 * * * * *",
 		ExtensionThresholdMinutes: 2,  // Extend when < 2 minutes left
 		OverrideDurationMinutes:   30, // Each override lasts 30 minutes
 		Mappings: []config.ThermostatMapping{
@@ -829,7 +834,8 @@ func TestOverrideNotExtendedWhenNotNeeded(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                   true,
 		TemperatureThreshold:      0.3,
-		Cron:                      "0 * * * * *",
+		HomeStatusFetchCron:       "0 * * * * *",
+		ControlLoopCron:           "30 * * * * *",
 		ExtensionThresholdMinutes: 2,  // Extend when < 2 minutes left
 		OverrideDurationMinutes:   30, // Each override lasts 30 minutes
 		Mappings: []config.ThermostatMapping{
@@ -905,7 +911,8 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                   true,
 		TemperatureThreshold:      0.3, // Low threshold to trigger action
-		Cron:                      "0 * * * * *",
+		HomeStatusFetchCron:       "0 * * * * *",
+		ControlLoopCron:           "30 * * * * *",
 		ExtensionThresholdMinutes: 2,
 		OverrideDurationMinutes:   30,
 		Mappings: []config.ThermostatMapping{

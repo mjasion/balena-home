@@ -118,7 +118,8 @@ func TestSyncTimestampUpdated(t *testing.T) {
 		ScheduleSyncPollIntervalSeconds: 1,
 		ScheduleSyncPollTimeoutSeconds:  2, // Short timeout since API will fail
 		TemperatureThreshold:            0.5,
-		Cron:                            "0 * * * * *",
+		HomeStatusFetchCron:             "0 * * * * *",
+		ControlLoopCron:                 "30 * * * * *",
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
 		},
@@ -191,7 +192,8 @@ func TestExternallyModifiedRoomSkipsSync(t *testing.T) {
 		ScheduleSyncPollIntervalSeconds: 1,
 		ScheduleSyncPollTimeoutSeconds:  2,
 		TemperatureThreshold:            0.5,
-		Cron:                            "0 * * * * *",
+		HomeStatusFetchCron:             "0 * * * * *",
+		ControlLoopCron:                 "30 * * * * *",
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
 		},
@@ -251,7 +253,8 @@ func TestNormalModeSkipsSync(t *testing.T) {
 		ScheduleSyncPollIntervalSeconds: 1,
 		ScheduleSyncPollTimeoutSeconds:  2,
 		TemperatureThreshold:            0.5,
-		Cron:                            "0 * * * * *",
+		HomeStatusFetchCron:             "0 * * * * *",
+		ControlLoopCron:                 "30 * * * * *",
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
 		},

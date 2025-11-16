@@ -82,7 +82,8 @@ func New(
 func (c *Controller) Initialize(ctx context.Context) error {
 	c.logger.Info("initializing thermostat controller",
 		zap.Int("mapping_count", len(c.config.Mappings)),
-		zap.String("cron", c.config.Cron),
+		zap.String("home_status_fetch_cron", c.config.HomeStatusFetchCron),
+		zap.String("control_loop_cron", c.config.ControlLoopCron),
 	)
 
 	// Initialize state from Netatmo API (get room IDs)
@@ -283,8 +284,8 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 	span.SetAttributes(
 		attribute.String("home_id", c.homeID),
 		attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
-		attribute.Time("cached_status_fetch_time", cachedStatus.FetchTime),
-		attribute.Duration("status_age", time.Since(cachedStatus.FetchTime)),
+		attribute.String("cached_status_fetch_time", cachedStatus.FetchTime.Format(time.RFC3339)),
+		attribute.String("status_age", time.Since(cachedStatus.FetchTime).String()),
 	)
 
 	c.logger.Debug("using cached home status",
