@@ -114,15 +114,43 @@ func (c *Controller) evaluateRoom(
 		}
 	}
 
-	// Check precedence hierarchy: external modification detected - skip control entirely
+	// Detect home mode changes (away, hg) and reset state if needed
+	if roomExists {
+		c.detectHomeModeChange(&stateCopy, roomStatus)
+		// Get fresh state copy after potential reset
+		c.stateMu.RLock()
+		stateCopy = c.stateByRoom[mapping.RoomID].Copy()
+		c.stateMu.RUnlock()
+	}
+
+	// Detect external manual changes (user changed setpoint or endtime)
+	if roomExists && c.detectExternalManualChange(&stateCopy, roomStatus) {
+		decision.Reason = "external manual change detected, respecting user intent"
+		return decision
+	}
+
+	// Check if we should control this room based on its mode
+	if roomExists {
+		shouldControl, skipReason := c.shouldControlRoom(&stateCopy, roomStatus)
+		if !shouldControl {
+			decision.Reason = skipReason
+			return decision
+		}
+	}
+
+	// Check if external modification flag is set (from old detection logic)
 	if stateCopy.ExternallyModified {
 		if roomExists && roomStatus.ThermSetpointMode == "schedule" {
 			c.logger.Info("external modification cleared: thermostat returned to schedule mode",
 				zap.String("room_name", mapping.RoomName),
 			)
 			c.clearExternalModification(mapping.RoomID)
+			// Get fresh state copy after clearing flag
+			c.stateMu.RLock()
+			stateCopy = c.stateByRoom[mapping.RoomID].Copy()
+			c.stateMu.RUnlock()
 		} else {
-			decision.Reason = "externally modified, respecting manual override"
+			decision.Reason = "externally modified (legacy), respecting manual override"
 			return decision
 		}
 	}
