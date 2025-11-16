@@ -221,10 +221,10 @@ func main() {
 		// Create home status fetcher
 		// Get tracer for home status fetcher
 		tracer := otel.Tracer("home-controller/control")
-		homeStatusFetcher := control.NewHomeStatusFetcher(controller, pusher, logger, tracer)
+		homeStatusFetcher := control.NewHomeStatusFetcher(controller, logger, tracer)
 
 		// Add home status fetch job
-		// This job fetches home status, stores it in cache, adds to metrics buffer, and pushes metrics
+		// This job fetches home status, stores it in cache, and adds to metrics buffer
 		if err := jobScheduler.AddCronJobWithSeconds("Home Status Fetcher", cfg.ThermostatControl.HomeStatusFetchCron, homeStatusFetcher.Run); err != nil {
 			logger.Error("failed to add home status fetcher cron job", zap.Error(err))
 			os.Exit(1)
@@ -243,34 +243,33 @@ func main() {
 		)
 	} else {
 		logger.Info("thermostat control disabled")
+	}
 
-		// Add standalone Prometheus pusher job if thermostat control is disabled
-		// When thermostat control is enabled, metrics are pushed by the home status fetcher
-		if cfg.Prometheus.Cron != "" {
-			if err := jobScheduler.AddCronJobWithSeconds("Prometheus Pusher", cfg.Prometheus.Cron, pusher.Run); err != nil {
-				logger.Error("failed to add prometheus pusher cron job", zap.Error(err))
-				os.Exit(1)
-			}
-		} else {
-			// Use random duration: interval ± 1 second to prevent thundering herd
-			baseInterval := time.Duration(cfg.Prometheus.PushIntervalSeconds) * time.Second
-			minInterval := baseInterval - time.Second
-			maxInterval := baseInterval + time.Second
+	// Add Prometheus pusher job (runs independently)
+	if cfg.Prometheus.Cron != "" {
+		if err := jobScheduler.AddCronJobWithSeconds("Prometheus Pusher", cfg.Prometheus.Cron, pusher.Run); err != nil {
+			logger.Error("failed to add prometheus pusher cron job", zap.Error(err))
+			os.Exit(1)
+		}
+	} else {
+		// Use random duration: interval ± 1 second to prevent thundering herd
+		baseInterval := time.Duration(cfg.Prometheus.PushIntervalSeconds) * time.Second
+		minInterval := baseInterval - time.Second
+		maxInterval := baseInterval + time.Second
 
-			// Ensure minimum interval is at least 1 second
-			if minInterval < time.Second {
-				minInterval = time.Second
-			}
+		// Ensure minimum interval is at least 1 second
+		if minInterval < time.Second {
+			minInterval = time.Second
+		}
 
-			if err := jobScheduler.AddJobWithRandomDuration(
-				"Prometheus Pusher",
-				minInterval,
-				maxInterval,
-				pusher.Run,
-			); err != nil {
-				logger.Error("failed to add prometheus pusher job", zap.Error(err))
-				os.Exit(1)
-			}
+		if err := jobScheduler.AddJobWithRandomDuration(
+			"Prometheus Pusher",
+			minInterval,
+			maxInterval,
+			pusher.Run,
+		); err != nil {
+			logger.Error("failed to add prometheus pusher job", zap.Error(err))
+			os.Exit(1)
 		}
 	}
 

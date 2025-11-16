@@ -253,36 +253,46 @@ stateDiagram-v2
 
 ## Job Scheduling Architecture
 
-The controller uses **two separate jobs** running at different times within each minute:
+The controller uses **three separate jobs** running independently:
 
-### 1. Home Status Fetch Job (Every minute at :00)
+### 1. Home Status Fetch Job (Default: every minute at :00)
 - Fetches current home status from Netatmo API
 - Stores status in cache with timestamp
 - Adds Netatmo readings to metrics buffer
-- Pushes all metrics to Prometheus
+- Configured via `homeStatusFetchCron`
 
-### 2. Control Loop Job (Every minute at :30)
+### 2. Control Loop Job (Default: every minute at :30)
 - Runs at 30th second of each minute
 - Uses cached home status from the same minute (fetched at :00)
 - If no cached status available or fetch failed, skips control
 - Evaluates all rooms and executes control decisions
+- Configured via `controlLoopCron`
+
+### 3. Prometheus Pusher Job (Default: every 30 seconds)
+- Runs independently to push all buffered metrics
+- Pushes BLE sensor data, Netatmo data, power data, and control decisions
+- Configured via `prometheus.cron` or `prometheus.pushIntervalSeconds`
 
 **Timeline Example:**
 ```
 00:00:00 - Home Status Fetch Job runs
-00:00:01 - Fetch completes, metrics pushed
+00:00:01 - Fetch completes, data added to metrics buffer
+00:00:15 - Prometheus Pusher Job runs (pushes all buffered metrics)
 00:00:30 - Control Loop Job runs (uses cached status from 00:00:00)
+00:00:45 - Prometheus Pusher Job runs again
 00:01:00 - Home Status Fetch Job runs again
-00:01:01 - Fetch completes, metrics pushed
+00:01:01 - Fetch completes, data added to metrics buffer
+00:01:15 - Prometheus Pusher Job runs
 00:01:30 - Control Loop Job runs (uses cached status from 00:01:00)
 ```
 
 **Benefits:**
 - Ensures control decisions are based on fresh data (< 30 seconds old)
-- Separates concerns: fetching vs. control logic
-- Metrics are pushed consistently every minute
+- Separates concerns: fetching vs. control logic vs. metrics pushing
+- Metrics are pushed consistently at configured intervals
 - If fetch fails, control is safely skipped
 - Reduces API calls during control evaluation
+- Flexible configuration of all timing parameters
 
 ## Configuration Parameters
 
