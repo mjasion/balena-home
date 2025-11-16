@@ -10,6 +10,39 @@ The thermostat control system uses **Xiaomi BLE temperature sensors** as the aut
 2. **Netatmo schedule is respected** - The system reads the current scheduled temperature
 3. **Minimal intervention** - Only override when temperature differs significantly from target
 4. **Fail-safe design** - All overrides auto-expire after 10 minutes
+5. **User intent is paramount** - Manual user changes are detected and respected
+
+## Recent Implementation Changes
+
+This document reflects the current implementation as of recent commits. Key changes include:
+
+### Architecture Improvements (commit 963c5a9)
+- **Separated jobs**: Home status fetching (runs at :00) and control loop (runs at :30) are now separate jobs
+- **Cached status**: Control loop uses cached home status from fetch job (<30s old)
+- **Enhanced mode detection**: Three-layer detection system for external changes:
+  - `detectHomeModeChange()`: Detects away/hg mode transitions, resets state
+  - `detectExternalManualChange()`: Detects user manual changes with 2-minute grace period
+  - `shouldControlRoom()`: Decides control eligibility (15-min window, ±0.3°C tolerance)
+
+### Schedule Sync Improvements (commit 28950f3, 0d90441)
+- **Cron-like timing**: Syncs at specific minutes (e.g., :00, :15, :30, :45 for 15-min interval)
+- **User-set manual mode protection**: Distinguishes algorithm-set vs user-set manual modes
+  - Algorithm overrides: Recent (<15 min) + matching setpoint (±0.3°C) → reset during sync
+  - User manual modes: Never reset during sync, respects user intent
+- **Smart eligibility**: Only switches rooms that are algorithm-controlled or in schedule/away/hg modes
+
+### State Tracking Enhancements
+- New fields in `ThermostatState`:
+  - `LastHomeMode`: Tracks mode transitions (away, hg, etc.)
+  - `LastManualSetpoint`: Baseline for detecting external changes
+  - `LastManualEndTime`: Baseline for detecting override duration changes
+
+### Implementation Files
+- `control/evaluate.go`: Core evaluation logic with three-zone control
+- `control/mode_detection.go`: New mode detection functions
+- `control/sync.go`: Schedule sync with user mode protection
+- `control/execute.go`: Execution with state tracking
+- `control/home_status_fetcher.go`: Separate home status fetching job
 
 ## Temperature Sources
 
@@ -300,15 +333,19 @@ The controller uses **three separate jobs** running independently:
 |-----------|---------|-------------|
 | `temperatureThreshold` | 0.5°C | Minimum difference to trigger action |
 | `overrideDurationMinutes` | 10 min | Auto-expire time for overrides |
-| `recheckDelayMinutes` | 2 min | Wait time after adjustment |
-| `externalModificationResetMinutes` | 5 min | Pause time after manual change |
-| `minSetpointCelsius` | 10.0°C | Safety minimum |
+| `extensionThresholdMinutes` | 2 min | Time before expiry to extend override |
+| `externalModificationResetMinutes` | 5 min | Legacy parameter (not actively used) |
+| `minSetpointCelsius` | 10.0°C | Safety minimum (config default, code uses 7.0°C) |
 | `maxSetpointCelsius` | 30.0°C | Safety maximum |
 | `homeStatusFetchCron` | "0 * * * * *" | Cron expression for home status fetch job (runs at :00) |
 | `controlLoopCron` | "30 * * * * *" | Cron expression for control loop job (runs at :30) |
 | `scheduleSyncIntervalMinutes` | 15 | How often to sync schedule (0 = disabled) |
+| `scheduleSyncPollIntervalSeconds` | 2 | Poll interval during schedule sync |
+| `scheduleSyncPollTimeoutSeconds` | 30 | Timeout for schedule sync polling |
 
 **Note:** `controlIntervalSeconds` is no longer used. Jobs are scheduled with cron expressions (see Job Scheduling Architecture section).
+
+**Safety Limits Note**: The code applies a **hard-coded minimum of 7.0°C** in `applySafetyBounds()` (evaluate.go:305), overriding the configured `minSetpointCelsius` value. The maximum of 30.0°C is applied from configuration.
 
 ## Sensor Data Processing
 
@@ -376,29 +413,46 @@ All manual overrides automatically expire after 10 minutes, reverting to schedul
 
 ### 3. External Modification Detection
 
-The system now has **improved detection logic** for external changes:
+The system has **three-layer detection logic** for external changes (mode_detection.go):
 
-#### a) Home Mode Change Detection (Away/HG)
+#### a) Home Mode Change Detection (detectHomeModeChange)
 When the home mode changes to or from "away" or "hg" (frost guard):
 - External modification flag is **automatically reset**
 - Control starts fresh with new mode
 - Past overrides are **ignored**
+- Tracks mode changes in `ThermostatState.LastHomeMode`
+
+**Transition Detection:**
+- TO special mode (away/hg): Reset control state, clear external modification flag
+- FROM special mode: Reset control state, clear external modification flag
+- Ensures clean slate when mode changes
 
 **Example:**
 ```
 09:00 - Normal mode, algorithm controls temperature
 10:00 - User enables "Away" mode
-10:01 - Algorithm detects mode change to "away"
+10:01 - detectHomeModeChange() detects transition to "away"
       - Clears external modification flag
+      - Updates LastHomeMode to "away"
       - Starts fresh control from new baseline
 ```
 
-#### b) Manual Setpoint Change Detection
-When user manually changes setpoint or override duration:
-- System detects change after 2-minute grace period
-- Respects user's new setpoint and end time
-- Marks room as externally modified
-- Skips automation until user returns to schedule mode
+**Implementation:** mode_detection.go:13-74
+
+#### b) Manual Setpoint Change Detection (detectExternalManualChange)
+Detects when user manually changes setpoint or override duration (not algorithm):
+- Only checks when thermostat is in manual mode
+- 2-minute grace period after algorithm's last command
+- Compares current setpoint/endtime with tracked baseline
+- Marks room as externally modified if changed
+- Tracks changes in `ThermostatState.LastManualSetpoint` and `LastManualEndTime`
+
+**Detection Logic:**
+- Skip if no previous commands sent (initialize baseline)
+- Skip if < 2 minutes since last algorithm command (API propagation)
+- Compare current vs. tracked setpoint (>0.1°C difference)
+- Compare current vs. tracked end time (any difference)
+- If changed: mark externally modified, update baseline
 
 **Detection Algorithm:**
 ```mermaid
@@ -408,7 +462,7 @@ sequenceDiagram
     participant User
 
     System->>Netatmo: Set Override to 22°C, endtime 10:00
-    Note over System: Record: lastManualSetpoint=22°C<br/>lastManualEndTime=10:00
+    Note over System: Record: lastManualSetpoint=22°C<br/>lastManualEndTime=10:00<br/>lastSetpointTime=now
     System->>System: Wait 2 minutes (grace period)
 
     User->>Netatmo: Change to 25°C, endtime 11:00
@@ -416,33 +470,57 @@ sequenceDiagram
     System->>Netatmo: Fetch Status
     Netatmo-->>System: Current: 25°C, endtime 11:00
 
-    Note over System: Expected: 22°C, endtime 10:00<br/>Actual: 25°C, endtime 11:00<br/>Change detected!
+    Note over System: Expected: 22°C, endtime 10:00<br/>Actual: 25°C, endtime 11:00<br/>timeSinceLastCommand > 2 min<br/>Change detected!
     System->>System: Mark Externally Modified
     System->>System: Update baseline to 25°C, 11:00
     System->>System: Skip Control (respect user intent)
 ```
 
-#### c) Control Mode Decision Logic
+**Implementation:** mode_detection.go:76-138
 
-The algorithm decides whether to control a room based on:
+#### c) Control Mode Decision Logic (shouldControlRoom)
 
-1. **Schedule Mode** → Control allowed
-2. **Manual Mode set by algorithm** (recently, setpoint matches) → Control allowed (can extend)
-3. **Away/HG Mode without manual override** → Control allowed
-4. **Manual Mode (external)** → Skip control, respect user intent
-5. **Away/HG Mode with manual override** → Skip control, respect user intent
+Determines whether to control a room based on its mode and state:
+
+**Decision Tree:**
+1. **Schedule Mode** → Control allowed (return true)
+2. **Manual Mode:**
+   - Check if algorithm-set override (within 15 min AND setpoint matches ±0.3°C)
+     - YES → Control allowed (can extend)
+     - NO → Skip (respect manual override)
+3. **Away/HG Mode:**
+   - Check for manual override on top (ThermSetpointEndTime > 0)
+     - YES → Skip (respect user override)
+     - NO → Control allowed (adjust for sensor differences)
+4. **Unknown Mode** → Skip (safety)
 
 **Example Scenarios:**
 
-| Thermostat Mode | Last Set By | Time Since | Decision |
-|----------------|-------------|------------|----------|
-| schedule | - | - | **Control** (normal operation) |
-| manual | Algorithm | 5 min | **Control** (can extend our override) |
-| manual | User | 5 min | **Skip** (respect user intent) |
-| away | System | - | **Control** (adjust for sensor differences) |
-| away + manual override | User | - | **Skip** (respect user override on away mode) |
-| hg | System | - | **Control** (adjust for sensor differences) |
-| hg + manual override | User | - | **Skip** (respect user override on hg mode) |
+| Thermostat Mode | Last Set By | Time Since | Setpoint Delta | Decision |
+|----------------|-------------|------------|----------------|----------|
+| schedule | - | - | - | **Control** (normal operation) |
+| manual | Algorithm | 5 min | 0.1°C | **Control** (can extend our override) |
+| manual | Algorithm | 20 min | 0.1°C | **Skip** (too long ago, treat as external) |
+| manual | Algorithm | 5 min | 0.5°C | **Skip** (setpoint changed externally) |
+| manual | User | 5 min | - | **Skip** (respect user intent) |
+| away | System | - | - | **Control** (adjust for sensor differences) |
+| away + manual override | User | - | - | **Skip** (ThermSetpointEndTime > 0) |
+| hg | System | - | - | **Control** (adjust for sensor differences) |
+| hg + manual override | User | - | - | **Skip** (ThermSetpointEndTime > 0) |
+
+**Algorithm-Set Override Detection:**
+```go
+// From shouldControlRoom() - mode_detection.go:152-159
+if !state.LastSetpointTime.IsZero() && time.Since(state.LastSetpointTime) < 15*time.Minute {
+    setpointDelta := math.Abs(roomStatus.ThermSetpointTemperature - state.LastSetpoint)
+    if setpointDelta < 0.3 {
+        // This is our override - we can extend it
+        return true, ""
+    }
+}
+```
+
+**Implementation:** mode_detection.go:140-186
 
 ## Example Scenarios
 
@@ -850,14 +928,19 @@ The Netatmo API **does not expose the schedule** when the thermostat is in manua
 
 ### Solution: Periodic Schedule Sync
 
-Every 15 minutes (configurable via `scheduleSyncIntervalMinutes`), the controller performs a "schedule sync":
+At specific minute intervals (e.g., :00, :15, :30, :45 for 15-minute interval), the controller performs a "schedule sync":
 
-1. **Switch all rooms to schedule mode** (`"home"` in Netatmo API) in parallel
+1. **Switch rooms to schedule mode** - Only switches rooms that:
+   - Are NOT externally modified by user
+   - Are already in schedule mode (skipped)
+   - Are in manual mode SET BY ALGORITHM (within 15 min, setpoint matches ±0.3°C)
+   - User-set manual modes are NEVER reset (respects user intent)
 2. **Poll until confirmed** - Single `GetHomeStatus` call per poll iteration checks all rooms
 3. **Read current setpoint** - This reflects the actual schedule temperature at this time
 4. **Store synced temperature** - Cached in `ThermostatState.SyncedScheduledTemp`
-5. **Pre-calculate weighted averages** - While polling, calculate sensor data in parallel
-6. **Evaluate and execute** - Make control decisions with fresh schedule data
+5. **Evaluate and execute** - Make control decisions with fresh schedule data
+
+**Key Improvement**: The sync mode now distinguishes between algorithm-set and user-set manual modes. Only algorithm-set manual overrides (recent + matching setpoint) are reset to read the schedule. User-set manual modes are respected and skipped during sync.
 
 ### Optimized Architecture
 
@@ -893,9 +976,20 @@ for each room {
 }
 
 // NEW: Batch polling (1 call per poll iteration)
-// Step 1: Switch all rooms in parallel
-for each room in parallel {
-    SetRoomThermpoint("home")  // N API calls (unavoidable)
+// Step 1: Switch eligible rooms (sequential to avoid rate limiting)
+for each room {
+    // Skip if:
+    // - Externally modified by user
+    // - Already in schedule mode
+    // - User-set manual mode (NOT set by algorithm)
+
+    // Only switch if:
+    // - Algorithm-set manual mode (within 15 min, setpoint matches ±0.3°C)
+    // - Away/HG mode
+
+    if shouldSwitch {
+        SetRoomThermpoint("home")  // 1 API call per eligible room
+    }
 }
 
 // Step 2: Single poll checks all rooms
@@ -906,11 +1000,17 @@ for up to timeout {
 }
 ```
 
-**API Calls per Sync** (3 rooms example):
-- Switch to schedule: 3 calls (one per room, parallel)
+**API Calls per Sync** (3 rooms example, all eligible for switching):
+- Switch to schedule: 3 calls (one per room, sequential to avoid rate limiting)
 - Polling (15 polls @ 2s interval): **15 calls total** (not 45!)
 - Final status: 1 call
 - **Total: ~19 calls** (vs ~49 with per-room polling)
+
+**API Calls with User Manual Modes** (1 algorithm override, 2 user-set manual):
+- Switch to schedule: 1 call (only algorithm override)
+- Polling: **15 calls total** (checks all rooms)
+- Final status: 1 call
+- **Total: ~17 calls** (user-set manual modes skipped)
 
 ### Configuration
 
@@ -928,17 +1028,25 @@ thermostatControl:
 
 ### Behavior
 
+**Cron-Like Timing** (New Implementation):
+- Sync triggers at specific minutes of the hour based on `scheduleSyncIntervalMinutes`
+- For interval=15: syncs at :00, :15, :30, :45
+- For interval=30: syncs at :00, :30
+- For interval=60: syncs at :00
+- Check: `currentMinute % scheduleSyncIntervalMinutes == 0`
+- Prevents multiple syncs in the same minute: `time.Since(lastSyncTime) < 1 minute`
+
 **First Run (Never Synced)**:
-- `lastSyncTime` is zero → Triggers sync immediately
-- Switches to schedule mode, reads current schedule
+- At first sync point (e.g., :00), triggers sync
+- Switches eligible rooms to schedule mode, reads current schedule
 - Stores synced temperature for all rooms
 
-**Every 15 Minutes**:
-- Timer check: `time.Since(lastSyncTime) >= 15 minutes`
+**At Sync Points** (e.g., :00, :15, :30, :45):
 - Triggers SYNC MODE instead of NORMAL MODE
+- Switches eligible rooms (respects user-set manual modes)
 - Fetches fresh schedule data before making decisions
 
-**Between Syncs (Minutes 1-14)**:
+**Between Syncs**:
 - Uses NORMAL MODE (single `GetHomeStatus`, no switching)
 - Uses cached `SyncedScheduledTemp` from last sync
 - Falls back to `ThermSetpointTemperature` if sync is stale (>1 hour)
@@ -947,40 +1055,47 @@ thermostatControl:
 - Skipped during sync (respects manual user changes)
 - Automation pauses until user switches back to schedule mode
 
-### Example Timeline
+**User-Set Manual Modes**:
+- Detected if manual mode NOT set by algorithm (>15 min ago OR setpoint differs by >0.3°C)
+- Never reset during sync (respects user intent)
+- Marked as externally modified, skipped from automation
+
+### Example Timeline (15-minute sync interval)
 
 ```
-00:00 - Control loop (15 min since last sync)
-        ├─ SYNC MODE
-        ├─ Switch all rooms to schedule in parallel
-        │  ├─ Salon: SetRoomThermpoint("home")
-        │  ├─ Hol: SetRoomThermpoint("home")
-        │  └─ Sypialnia: SetRoomThermpoint("home")
+00:00 - Home Status Fetch Job runs
+        └─ Fetches status, stores in cache, adds to metrics buffer
+
+00:15 - Home Status Fetch Job + SYNC MODE (sync point: 15 % 15 == 0)
+        ├─ Fetch status and cache
+        ├─ SYNC MODE in Control Loop
+        ├─ Switch eligible rooms to schedule (sequential)
+        │  ├─ Salon: algorithm override (recent + matching) → SetRoomThermpoint("home")
+        │  ├─ Hol: user-set manual mode → SKIP (respect user intent)
+        │  └─ Sypialnia: already in schedule mode → SKIP
         │
         ├─ Poll until all confirmed (single GetHomeStatus per poll)
-        │  ├─ Poll 1 (2s): Salon=schedule ✓, Hol=manual, Sypialnia=manual
-        │  ├─ Poll 2 (4s): Salon=schedule ✓, Hol=schedule ✓, Sypialnia=manual
-        │  └─ Poll 3 (6s): All in schedule mode ✓
+        │  ├─ Poll 1 (2s): Check all rooms at once
+        │  ├─ Poll 2 (4s): Salon confirmed in schedule mode ✓
+        │  └─ Poll 3 (6s): All eligible rooms synced ✓
         │
         ├─ Store synced temperatures
         │  ├─ Salon: 24.0°C
-        │  ├─ Hol: 24.0°C
+        │  ├─ Hol: skipped (user-set manual)
         │  └─ Sypialnia: 22.0°C
         │
-        ├─ Pre-calculate averages (parallel)
         ├─ Fetch final status
         └─ Evaluate all rooms with fresh schedule data
            ├─ Salon: needs override → 24.5°C
-           ├─ Hol: no action needed
+           ├─ Hol: externally modified → SKIP
            └─ Sypialnia: needs override → 22.5°C
 
-01:00 - Control loop (1 min since last sync)
-        ├─ NORMAL MODE (sync not needed)
-        ├─ Fetch status once
-        └─ Use cached synced temperatures from 00:00
+00:16 - Home Status Fetch Job
+        └─ NORMAL MODE (16 % 15 != 0, no sync)
+        └─ Use cached synced temperatures from 00:15
 
-15:00 - Control loop (15 min since last sync)
-        ├─ SYNC MODE (timer expired)
+00:30 - Home Status Fetch Job + SYNC MODE (sync point: 30 % 15 == 0)
+        ├─ SYNC MODE (15 minutes since last sync)
         └─ Read new schedule: 22.0°C (schedule changed!)
            Now using correct target temperature ✓
 ```
@@ -1000,15 +1115,41 @@ thermostatControl:
 
 ### Testing
 
-Comprehensive unit tests verify:
-- ✅ Sync triggers every 15 minutes exactly
-- ✅ Sync skipped when < 15 minutes elapsed
+Comprehensive unit tests verify all recent changes:
+
+**Schedule Sync Tests** (`control/sync_timing_test.go`):
+- ✅ Sync triggers at cron-like intervals (e.g., :00, :15, :30, :45)
+- ✅ Sync skipped between interval points
 - ✅ `lastSyncTime` updated after sync
-- ✅ Externally modified rooms skipped
+- ✅ Externally modified rooms skipped during sync
+- ✅ User-set manual modes NEVER reset during sync
+- ✅ Algorithm-set manual overrides (recent + matching) reset during sync
+- ✅ Algorithm-set manual overrides (old or mismatched) treated as user-set
+- ✅ Rooms already in schedule mode skipped (no redundant API calls)
 - ✅ Normal mode uses single `GetHomeStatus` call
 - ✅ Sync disabled when `scheduleSyncIntervalMinutes = 0`
+- ✅ Multiple syncs within same minute prevented
 
-See `control/sync_timing_test.go` for full test coverage.
+**Mode Detection Tests** (`control/mode_detection_test.go`):
+- ✅ Home mode change detection (away/hg transitions)
+- ✅ External modification flag reset on mode change
+- ✅ External manual change detection (setpoint and endtime)
+- ✅ 2-minute grace period for API propagation
+- ✅ shouldControlRoom logic for all modes
+- ✅ Algorithm-set override detection (15-min window, ±0.3°C tolerance)
+
+**Home Status Fetching Tests** (`control/home_status_fetcher_test.go`):
+- ✅ Status caching with timestamps
+- ✅ Metrics buffering for Netatmo readings
+- ✅ Error handling and logging
+
+**Setpoint Calculation Tests** (`control/controller_setpoint_test.go`):
+- ✅ Three-zone control logic
+- ✅ Safety bounds application
+- ✅ Temperature threshold behavior
+- ✅ Override extension logic
+
+See test files for full coverage details and edge cases.
 
 ## Future Enhancements
 
