@@ -325,9 +325,12 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("thermostat control temperature threshold must be between 0.1 and 5.0°C, got: %.2f", c.ThermostatControl.TemperatureThreshold)
 		}
 
-		// Validate cron expression
-		if c.ThermostatControl.Cron == "" {
-			return fmt.Errorf("thermostat control cron expression is required when thermostat control is enabled")
+		// Validate cron expressions
+		if c.ThermostatControl.HomeStatusFetchCron == "" {
+			return fmt.Errorf("thermostat control home status fetch cron expression is required when thermostat control is enabled")
+		}
+		if c.ThermostatControl.ControlLoopCron == "" {
+			return fmt.Errorf("thermostat control loop cron expression is required when thermostat control is enabled")
 		}
 
 		// Validate override duration
@@ -609,7 +612,8 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.String("aggregator_cron", c.Aggregator.Cron),
 		zap.Bool("thermostat_control_enabled", c.ThermostatControl.Enabled),
 		zap.Float64("thermostat_temperature_threshold", c.ThermostatControl.TemperatureThreshold),
-		zap.String("thermostat_cron", c.ThermostatControl.Cron),
+		zap.String("thermostat_home_status_fetch_cron", c.ThermostatControl.HomeStatusFetchCron),
+		zap.String("thermostat_control_loop_cron", c.ThermostatControl.ControlLoopCron),
 		zap.Int("thermostat_override_duration_minutes", c.ThermostatControl.OverrideDurationMinutes),
 		zap.Int("thermostat_extension_threshold_minutes", c.ThermostatControl.ExtensionThresholdMinutes),
 		zap.Int("thermostat_external_mod_reset_minutes", c.ThermostatControl.ExternalModificationResetMinutes),
