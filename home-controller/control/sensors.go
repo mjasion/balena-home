@@ -21,7 +21,7 @@ func (c *Controller) getWeightedAverageTemperature(ctx context.Context, sensorMA
 	defer span.End()
 
 	now := time.Now()
-	cutoff := now.Add(-60 * time.Second)
+	cutoff := now.Add(-SensorReadingWindowSeconds * time.Second)
 
 	// Get readings from control buffer
 	readings := c.controlBuffer.GetReadingsByTimeWindow(cutoff, now)
@@ -57,7 +57,7 @@ func (c *Controller) getWeightedAverageTemperature(ctx context.Context, sensorMA
 	span.SetAttributes(
 		attribute.Int("reading_count", len(sensorReadings)),
 		attribute.Float64("weighted_average", weightedAvg),
-		attribute.Int("time_window_seconds", 60),
+		attribute.Int("time_window_seconds", SensorReadingWindowSeconds),
 	)
 
 	c.logger.Debug("calculated weighted average temperature",

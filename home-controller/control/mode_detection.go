@@ -8,8 +8,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// detectHomeModeChange detects if the home mode has changed (e.g., from normal to away/hg)
-// Returns true if a mode change was detected that should reset the control state
+// detectHomeModeChange detects if the home mode has changed (e.g., from normal to away/hg).
+// Returns true if a mode change was detected that should reset the control state.
+//
+// When transitioning to/from special modes (away, frost guard), the external modification
+// flag is cleared to allow the controller to start fresh in the new mode.
 func (c *Controller) detectHomeModeChange(state *ThermostatState, roomStatus *netatmo.RoomStatus) bool {
 	currentMode := roomStatus.ThermSetpointMode
 
@@ -74,8 +77,11 @@ func (c *Controller) detectHomeModeChange(state *ThermostatState, roomStatus *ne
 }
 
 // detectExternalManualChange detects if the manual setpoint or endtime was changed externally
-// (i.e., by the user directly changing the thermostat or via the app)
-// Returns true if we should respect the external change and skip automation
+// (i.e., by the user directly changing the thermostat or via the app).
+// Returns true if we should respect the external change and skip automation.
+//
+// This function tracks changes to manual setpoints and override end times, allowing
+// the system to detect when a user has intervened and should be left in control.
 func (c *Controller) detectExternalManualChange(state *ThermostatState, roomStatus *netatmo.RoomStatus) bool {
 	// Only check if thermostat is in manual mode
 	if roomStatus.ThermSetpointMode != "manual" {
@@ -95,7 +101,7 @@ func (c *Controller) detectExternalManualChange(state *ThermostatState, roomStat
 	// Wait at least 2 minutes since our last command before detecting external changes
 	// (to allow API propagation time)
 	timeSinceLastCommand := time.Since(state.LastSetpointTime)
-	if timeSinceLastCommand < 2*time.Minute {
+	if timeSinceLastCommand < MinTimeSinceCommandForDetection {
 		return false
 	}
 
@@ -103,7 +109,7 @@ func (c *Controller) detectExternalManualChange(state *ThermostatState, roomStat
 	setpointDelta := math.Abs(roomStatus.ThermSetpointTemperature - state.LastManualSetpoint)
 	endTimeChanged := roomStatus.ThermSetpointEndTime != state.LastManualEndTime
 
-	if setpointDelta > 0.1 || endTimeChanged {
+	if setpointDelta > SetpointToleranceCelsius || endTimeChanged {
 		c.logger.Info("external manual change detected, respecting user's intent",
 			zap.String("room_name", state.RoomName),
 			zap.Float64("old_setpoint", state.LastManualSetpoint),
@@ -137,8 +143,18 @@ func (c *Controller) detectExternalManualChange(state *ThermostatState, roomStat
 	return false
 }
 
-// shouldControlRoom determines if we should control this room based on its mode and state
-// Returns true if we should proceed with control, false if we should skip
+// shouldControlRoom determines if we should control this room based on its mode and state.
+// Returns (true, "") if we should proceed with control, or (false, reason) if we should skip.
+//
+// Control is allowed in these cases:
+//  - Room is in schedule mode
+//  - Room is in manual mode and was set by our algorithm (recent override)
+//  - Room is in away/hg mode without manual overrides
+//
+// Control is NOT allowed when:
+//  - Manual mode not set by us (user intervention)
+//  - Externally modified flag is set
+//  - Manual override on top of away/hg mode
 func (c *Controller) shouldControlRoom(state *ThermostatState, roomStatus *netatmo.RoomStatus) (bool, string) {
 	mode := roomStatus.ThermSetpointMode
 
@@ -150,10 +166,10 @@ func (c *Controller) shouldControlRoom(state *ThermostatState, roomStatus *netat
 	// Case 2: Room is in manual mode and was set by our algorithm - we can control/extend
 	if mode == "manual" {
 		// Check if this is our override (we set it recently)
-		if !state.LastSetpointTime.IsZero() && time.Since(state.LastSetpointTime) < 15*time.Minute {
+		if !state.LastSetpointTime.IsZero() && time.Since(state.LastSetpointTime) < MaxTimeForOurOverride {
 			// Check if setpoint matches what we set (within tolerance)
 			setpointDelta := math.Abs(roomStatus.ThermSetpointTemperature - state.LastSetpoint)
-			if setpointDelta < 0.3 {
+			if setpointDelta < ManualSetpointToleranceCelsius {
 				// This is our override - we can extend it
 				return true, ""
 			}

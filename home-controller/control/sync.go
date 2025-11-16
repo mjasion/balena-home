@@ -12,7 +12,16 @@ import (
 	"go.uber.org/zap"
 )
 
-// runSyncMode executes the control loop in SYNC MODE (schedule sync needed)
+// runSyncMode executes the control loop in SYNC MODE (schedule sync needed).
+// Sync mode is triggered periodically (e.g., every 15 minutes) to refresh the
+// scheduled temperatures from Netatmo and ensure our control decisions are based
+// on the latest schedule.
+//
+// Steps:
+//  1. Switch all rooms to schedule mode (unless externally modified)
+//  2. Poll until all rooms confirm schedule mode
+//  3. Fetch final home status to get updated scheduled temps
+//  4. Evaluate and execute control decisions for all rooms
 func (c *Controller) runSyncMode(ctx context.Context, initialHomeStatus *netatmo.HomeStatusResponse) (skipCount, adjustCount, noAdjustCount int) {
 	ctx, span := c.tracer.Start(ctx, "sync_mode")
 	defer span.End()
@@ -109,7 +118,7 @@ func (c *Controller) switchRoomsToScheduleMode(ctx context.Context, homeStatus *
 				timeSinceLastCommand := time.Since(state.LastSetpointTime)
 				setpointDelta := math.Abs(roomStatus.ThermSetpointTemperature - state.LastSetpoint)
 
-				if timeSinceLastCommand < 15*time.Minute && setpointDelta < 0.3 {
+				if timeSinceLastCommand < MaxTimeForOurOverride && setpointDelta < ManualSetpointToleranceCelsius {
 					// This is our override, we can reset it to schedule
 					isOurOverride = true
 				}

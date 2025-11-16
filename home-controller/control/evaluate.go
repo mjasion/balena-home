@@ -14,7 +14,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// evaluateAndExecuteRooms evaluates and executes control decisions for all rooms (sequential loop)
+// evaluateAndExecuteRooms evaluates and executes control decisions for all rooms.
+// Processes rooms sequentially to avoid API rate limiting.
+// Returns counts of skipped, adjusted, and no-adjustment-needed rooms.
 func (c *Controller) evaluateAndExecuteRooms(ctx context.Context, roomStatusMap map[string]*netatmo.RoomStatus) (skipCount, adjustCount, noAdjustCount int) {
 	for _, mapping := range c.config.Mappings {
 		decision := c.evaluateRoom(ctx, mapping, roomStatusMap)
@@ -48,7 +50,14 @@ func (c *Controller) evaluateAndExecuteRooms(ctx context.Context, roomStatusMap 
 	return skipCount, adjustCount, noAdjustCount
 }
 
-// evaluateRoom evaluates whether a room needs thermostat adjustment
+// evaluateRoom evaluates whether a room needs thermostat adjustment.
+// This is the main decision-making function that:
+//  1. Retrieves room state and current status
+//  2. Populates decision with temperature readings
+//  3. Validates if the room can be controlled
+//  4. Calculates optimal setpoint with sensor offset compensation
+//
+// The function respects user manual overrides and home mode changes (away, frost guard).
 func (c *Controller) evaluateRoom(
 	ctx context.Context,
 	mapping config.ThermostatMapping,
@@ -69,111 +78,156 @@ func (c *Controller) evaluateRoom(
 	}
 
 	defer func() {
-		// Record decision attributes before span ends
-		span.SetAttributes(
-			attribute.String("decision_action", decision.Action),
-			attribute.String("decision_reason", decision.Reason),
-			attribute.Float64("xiaomi_temperature", decision.XiaomiTemperature),
-			attribute.Float64("scheduled_temperature", decision.ScheduledTemp),
-			attribute.Float64("thermostat_measured", decision.ThermostatMeasured),
-			attribute.Float64("setpoint_temperature", decision.SetpointTemperature),
-			attribute.String("thermostat_mode", decision.ThermostatMode),
-		)
-		if decision.Action == "set_manual_override" {
-			span.SetAttributes(attribute.Float64("calculated_setpoint", decision.CalculatedSetpoint))
-		}
+		c.recordDecisionSpanAttributes(span, decision)
 		span.End()
 	}()
 
-	// Get current state (defensive copy)
-	c.stateMu.RLock()
-	state, exists := c.stateByRoom[mapping.RoomID]
-	if !exists {
-		c.stateMu.RUnlock()
+	// Get room state and status
+	state, roomStatus := c.getRoomStateAndStatus(mapping.RoomID, roomStatusMap)
+	if state == nil {
 		decision.Reason = "room state not initialized"
 		return decision
 	}
-	stateCopy := state.Copy()
-	c.stateMu.RUnlock()
 
-	// Get room status early to populate temperature fields in all cases
-	roomStatus, roomExists := roomStatusMap[mapping.RoomID]
-	if roomExists && roomStatus.Reachable {
-		decision.ThermostatMeasured = roomStatus.ThermMeasuredTemperature
-		decision.SetpointTemperature = roomStatus.ThermSetpointTemperature
-		decision.ThermostatMode = roomStatus.ThermSetpointMode
+	// Populate basic temperature fields
+	c.populateDecisionTemperatures(ctx, &decision, mapping, roomStatus, state)
 
-		// Determine scheduled temperature
-		decision.ScheduledTemp = c.determineScheduledTemp(mapping.RoomName, &stateCopy, roomStatus)
-
-		// Get Xiaomi sensor readings (last 60 seconds, weighted average)
-		sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
-		xiaomiTemp, err := c.getWeightedAverageTemperature(ctx, sensorMAC)
-		if err == nil {
-			decision.XiaomiTemperature = xiaomiTemp
-		}
-	}
-
-	// Detect home mode changes (away, hg) and reset state if needed
-	if roomExists {
-		c.detectHomeModeChange(&stateCopy, roomStatus)
-		// Get fresh state copy after potential reset
-		c.stateMu.RLock()
-		stateCopy = c.stateByRoom[mapping.RoomID].Copy()
-		c.stateMu.RUnlock()
-	}
-
-	// Detect external manual changes (user changed setpoint or endtime)
-	if roomExists && c.detectExternalManualChange(&stateCopy, roomStatus) {
-		decision.Reason = "external manual change detected, respecting user intent"
+	// Validate if we can control this room
+	if skipReason := c.validateRoomForControl(mapping, state, roomStatus); skipReason != "" {
+		decision.Reason = skipReason
 		return decision
 	}
 
-	// Check if we should control this room based on its mode
-	if roomExists {
-		shouldControl, skipReason := c.shouldControlRoom(&stateCopy, roomStatus)
-		if !shouldControl {
-			decision.Reason = skipReason
-			return decision
+	// Calculate the setpoint decision
+	return c.calculateSetpointDecision(ctx, mapping, state, roomStatus, decision)
+}
+
+// recordDecisionSpanAttributes records decision attributes on the span
+func (c *Controller) recordDecisionSpanAttributes(span trace.Span, decision ControlDecision) {
+	span.SetAttributes(
+		attribute.String("decision_action", decision.Action),
+		attribute.String("decision_reason", decision.Reason),
+		attribute.Float64("xiaomi_temperature", decision.XiaomiTemperature),
+		attribute.Float64("scheduled_temperature", decision.ScheduledTemp),
+		attribute.Float64("thermostat_measured", decision.ThermostatMeasured),
+		attribute.Float64("setpoint_temperature", decision.SetpointTemperature),
+		attribute.String("thermostat_mode", decision.ThermostatMode),
+	)
+	if decision.Action == "set_manual_override" {
+		span.SetAttributes(attribute.Float64("calculated_setpoint", decision.CalculatedSetpoint))
+	}
+}
+
+// getRoomStateAndStatus gets the room state and status with a single lock
+func (c *Controller) getRoomStateAndStatus(
+	roomID string,
+	roomStatusMap map[string]*netatmo.RoomStatus,
+) (*ThermostatState, *netatmo.RoomStatus) {
+	c.stateMu.RLock()
+	state, exists := c.stateByRoom[roomID]
+	c.stateMu.RUnlock()
+
+	if !exists || state == nil {
+		return nil, nil
+	}
+
+	roomStatus := roomStatusMap[roomID]
+	return state, roomStatus
+}
+
+// populateDecisionTemperatures populates temperature fields in the decision
+func (c *Controller) populateDecisionTemperatures(
+	ctx context.Context,
+	decision *ControlDecision,
+	mapping config.ThermostatMapping,
+	roomStatus *netatmo.RoomStatus,
+	state *ThermostatState,
+) {
+	if roomStatus == nil || !roomStatus.Reachable {
+		return
+	}
+
+	decision.ThermostatMeasured = roomStatus.ThermMeasuredTemperature
+	decision.SetpointTemperature = roomStatus.ThermSetpointTemperature
+	decision.ThermostatMode = roomStatus.ThermSetpointMode
+	decision.ScheduledTemp = c.determineScheduledTemp(mapping.RoomName, state, roomStatus)
+
+	// Get Xiaomi sensor readings
+	sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
+	if xiaomiTemp, err := c.getWeightedAverageTemperature(ctx, sensorMAC); err == nil {
+		decision.XiaomiTemperature = xiaomiTemp
+	}
+}
+
+// validateRoomForControl checks if the room can be controlled, returns skip reason if not
+func (c *Controller) validateRoomForControl(
+	mapping config.ThermostatMapping,
+	state *ThermostatState,
+	roomStatus *netatmo.RoomStatus,
+) string {
+	// Detect home mode changes and handle state resets
+	if roomStatus != nil {
+		c.detectHomeModeChange(state, roomStatus)
+
+		// Refresh state after potential mode change
+		c.stateMu.RLock()
+		freshState := c.stateByRoom[mapping.RoomID]
+		c.stateMu.RUnlock()
+		if freshState != nil {
+			*state = *freshState
 		}
 	}
 
-	// Check if external modification flag is set (from old detection logic)
-	if stateCopy.ExternallyModified {
-		if roomExists && roomStatus.ThermSetpointMode == "schedule" {
+	// Check for external manual changes
+	if roomStatus != nil && c.detectExternalManualChange(state, roomStatus) {
+		return "external manual change detected, respecting user intent"
+	}
+
+	// Check if we should control based on mode
+	if roomStatus != nil {
+		if shouldControl, skipReason := c.shouldControlRoom(state, roomStatus); !shouldControl {
+			return skipReason
+		}
+	}
+
+	// Handle legacy external modification flag
+	if state.ExternallyModified {
+		if roomStatus != nil && roomStatus.ThermSetpointMode == "schedule" {
 			c.logger.Info("external modification cleared: thermostat returned to schedule mode",
 				zap.String("room_name", mapping.RoomName),
 			)
 			c.clearExternalModification(mapping.RoomID)
-			// Get fresh state copy after clearing flag
-			c.stateMu.RLock()
-			stateCopy = c.stateByRoom[mapping.RoomID].Copy()
-			c.stateMu.RUnlock()
+			state.ExternallyModified = false
 		} else {
-			decision.Reason = "externally modified (legacy), respecting manual override"
-			return decision
+			return "externally modified (legacy), respecting manual override"
 		}
 	}
 
-	// Check if we should extend an existing override
-	shouldExtend, timeUntilExpiry := c.shouldExtendOverride(&stateCopy)
-
-	// Validate room status is available and reachable
-	if !roomExists {
-		decision.Reason = "room not found in Netatmo status"
+	// Validate room exists and is reachable
+	if roomStatus == nil {
 		c.logger.Warn("room not found in Netatmo home status",
 			zap.String("room_name", mapping.RoomName),
 			zap.String("room_id", mapping.RoomID),
 		)
-		return decision
+		return "room not found in Netatmo status"
 	}
 
 	if !roomStatus.Reachable {
-		decision.Reason = "thermostat not reachable"
-		return decision
+		return "thermostat not reachable"
 	}
 
-	// Validate Xiaomi sensor data is available
+	return ""
+}
+
+// calculateSetpointDecision calculates the setpoint and builds the final decision
+func (c *Controller) calculateSetpointDecision(
+	ctx context.Context,
+	mapping config.ThermostatMapping,
+	state *ThermostatState,
+	roomStatus *netatmo.RoomStatus,
+	decision ControlDecision,
+) ControlDecision {
+	// Validate sensor data
 	if decision.XiaomiTemperature == 0 {
 		decision.Reason = "sensor data unavailable"
 		c.logger.Warn("sensor data unavailable for control",
@@ -183,14 +237,10 @@ func (c *Controller) evaluateRoom(
 		return decision
 	}
 
-	// Calculate temperature difference
+	// Calculate setpoint with sensor offset compensation
 	xiaomiTemp := decision.XiaomiTemperature
 	scheduledTemp := decision.ScheduledTemp
 	tempDiff := xiaomiTemp - scheduledTemp
-
-	// Calculate sensor offset (how much Netatmo sensor differs from reality)
-	// Positive offset means Netatmo reads higher than actual
-	// Negative offset means Netatmo reads lower than actual
 	sensorOffset := decision.ThermostatMeasured - xiaomiTemp
 
 	// Calculate compensated setpoint to account for sensor inaccuracy
@@ -209,60 +259,31 @@ func (c *Controller) evaluateRoom(
 		zap.Float64("calculated_setpoint", calculatedSetpoint),
 	)
 
-	// Check if calculated setpoint matches schedule (means no sensor offset to compensate)
-	// AND actual temperature is within threshold (room is at correct temp)
-	noSensorOffset := math.Abs(calculatedSetpoint-scheduledTemp) < 0.1
-	tempWithinThreshold := math.Abs(tempDiff) < c.config.TemperatureThreshold
+	// Check if override extension is needed
+	shouldExtend, timeUntilExpiry := c.shouldExtendOverride(state)
 
-	if noSensorOffset && tempWithinThreshold && !shouldExtend {
-		decision.Action = "no_adjustment_needed"
-		decision.Reason = fmt.Sprintf("no sensor offset detected and temperature within threshold (%.2f°C)", math.Abs(tempDiff))
+	// Check if no adjustment is needed
+	if decision := c.checkIfAdjustmentNeeded(
+		decision, calculatedSetpoint, scheduledTemp, tempDiff,
+		roomStatus.ThermSetpointTemperature, shouldExtend, timeUntilExpiry,
+	); decision.Action != "" {
 		return decision
-	}
-
-	if shouldExtend {
-		c.logger.Debug("extending override",
-			zap.String("room_name", mapping.RoomName),
-			zap.Float64("calculated_setpoint", calculatedSetpoint),
-			zap.Duration("time_until_expiry", timeUntilExpiry),
-		)
 	}
 
 	// Apply safety bounds
 	calculatedSetpoint = c.applySafetyBounds(calculatedSetpoint)
 
-	// Check if current setpoint already matches our calculated target (within 0.1°C tolerance)
-	// This applies to BOTH schedule mode and manual mode - no need to override if already correct
-	currentSetpoint := roomStatus.ThermSetpointTemperature
-	if math.Abs(currentSetpoint-calculatedSetpoint) < 0.1 && !shouldExtend {
-		decision.Action = "no_adjustment_needed"
-		decision.Reason = fmt.Sprintf("setpoint already at target (%.1f°C), mode=%s", calculatedSetpoint, roomStatus.ThermSetpointMode)
-		return decision
-	}
-
+	// Build override decision
 	decision.Action = "set_manual_override"
 	decision.CalculatedSetpoint = calculatedSetpoint
 	decision.OverrideEndTime = time.Now().Add(time.Duration(c.config.OverrideDurationMinutes) * time.Minute).Unix()
+	decision.Reason = c.buildDecisionReason(
+		xiaomiTemp, scheduledTemp, decision.ThermostatMeasured,
+		sensorOffset, calculatedSetpoint, shouldExtend, timeUntilExpiry, mapping.RoomName,
+	)
 
-	// Build reason message
-	reasonParts := []string{
-		fmt.Sprintf("xiaomi=%.1f°C", xiaomiTemp),
-		fmt.Sprintf("target=%.1f°C", scheduledTemp),
-		fmt.Sprintf("netatmo=%.1f°C", decision.ThermostatMeasured),
-		fmt.Sprintf("offset=%.2f°C", sensorOffset),
-		fmt.Sprintf("setpoint=%.1f°C", calculatedSetpoint),
-	}
-
-	if c.isHardOverrideActive(mapping.RoomName) {
-		reasonParts = append(reasonParts, "hard override")
-	} else if shouldExtend {
-		reasonParts = append(reasonParts, fmt.Sprintf("extending, %.0fm left", timeUntilExpiry.Minutes()))
-	}
-
-	decision.Reason = strings.Join(reasonParts, ", ")
-
-	// Detect external modification
-	if c.detectExternalModification(&stateCopy, roomStatus) {
+	// Final check for external modification (legacy detection)
+	if c.detectExternalModification(state, roomStatus) {
 		c.markExternallyModified(mapping.RoomID)
 		decision.Action = "skip"
 		decision.Reason = "external modification detected"
@@ -271,7 +292,70 @@ func (c *Controller) evaluateRoom(
 	return decision
 }
 
-// determineScheduledTemp determines the scheduled temperature for a room
+// checkIfAdjustmentNeeded checks if adjustment is needed or if current state is acceptable
+func (c *Controller) checkIfAdjustmentNeeded(
+	decision ControlDecision,
+	calculatedSetpoint, scheduledTemp, tempDiff, currentSetpoint float64,
+	shouldExtend bool,
+	timeUntilExpiry time.Duration,
+) ControlDecision {
+	// Check if no sensor offset and temperature is fine
+	noSensorOffset := math.Abs(calculatedSetpoint-scheduledTemp) < SetpointToleranceCelsius
+	tempWithinThreshold := math.Abs(tempDiff) < c.config.TemperatureThreshold
+
+	if noSensorOffset && tempWithinThreshold && !shouldExtend {
+		decision.Action = "no_adjustment_needed"
+		decision.Reason = fmt.Sprintf("no sensor offset detected and temperature within threshold (%.2f°C)", math.Abs(tempDiff))
+		return decision
+	}
+
+	// Check if current setpoint already matches target
+	if math.Abs(currentSetpoint-calculatedSetpoint) < SetpointToleranceCelsius && !shouldExtend {
+		decision.Action = "no_adjustment_needed"
+		decision.Reason = fmt.Sprintf("setpoint already at target (%.1f°C), mode=%s", calculatedSetpoint, decision.ThermostatMode)
+		return decision
+	}
+
+	if shouldExtend {
+		c.logger.Debug("extending override",
+			zap.String("room_name", decision.RoomName),
+			zap.Float64("calculated_setpoint", calculatedSetpoint),
+			zap.Duration("time_until_expiry", timeUntilExpiry),
+		)
+	}
+
+	// Return empty decision to indicate adjustment is needed
+	decision.Action = ""
+	return decision
+}
+
+// buildDecisionReason builds a human-readable reason for the decision
+func (c *Controller) buildDecisionReason(
+	xiaomiTemp, scheduledTemp, thermostatMeasured, sensorOffset, calculatedSetpoint float64,
+	shouldExtend bool, timeUntilExpiry time.Duration, roomName string,
+) string {
+	reasonParts := []string{
+		fmt.Sprintf("xiaomi=%.1f°C", xiaomiTemp),
+		fmt.Sprintf("target=%.1f°C", scheduledTemp),
+		fmt.Sprintf("netatmo=%.1f°C", thermostatMeasured),
+		fmt.Sprintf("offset=%.2f°C", sensorOffset),
+		fmt.Sprintf("setpoint=%.1f°C", calculatedSetpoint),
+	}
+
+	if c.isHardOverrideActive(roomName) {
+		reasonParts = append(reasonParts, "hard override")
+	} else if shouldExtend {
+		reasonParts = append(reasonParts, fmt.Sprintf("extending, %.0fm left", timeUntilExpiry.Minutes()))
+	}
+
+	return strings.Join(reasonParts, ", ")
+}
+
+// determineScheduledTemp determines the scheduled temperature for a room.
+// Priority order:
+//  1. Hard overrides (from config)
+//  2. Synced scheduled temperature (if recent)
+//  3. Current setpoint temperature (fallback)
 func (c *Controller) determineScheduledTemp(roomName string, state *ThermostatState, roomStatus *netatmo.RoomStatus) float64 {
 	// Check for hard overrides first (highest precedence)
 	for _, override := range c.config.HardOverrides {
@@ -285,7 +369,7 @@ func (c *Controller) determineScheduledTemp(roomName string, state *ThermostatSt
 	// Prefer synced schedule temperature (if available and recent)
 	if state.SyncedScheduledTemp > 0 && !state.SyncedScheduledTime.IsZero() {
 		timeSinceSync := time.Since(state.SyncedScheduledTime)
-		if timeSinceSync < 1*time.Hour {
+		if timeSinceSync < MaxSyncedScheduleTempAge {
 			c.logger.Debug("using synced schedule temperature",
 				zap.String("room_name", roomName),
 				zap.Float64("synced_temp", state.SyncedScheduledTemp),
@@ -312,10 +396,10 @@ func roundToHalfDegree(temp float64) float64 {
 
 // applySafetyBounds applies safety limits to the calculated setpoint
 func (c *Controller) applySafetyBounds(setpoint float64) float64 {
-	if setpoint < 7.0 {
-		return 7.0
-	} else if setpoint > 30.0 {
-		return 30.0
+	if setpoint < MinAbsoluteSetpointCelsius {
+		return MinAbsoluteSetpointCelsius
+	} else if setpoint > MaxAbsoluteSetpointCelsius {
+		return MaxAbsoluteSetpointCelsius
 	}
 	return setpoint
 }
@@ -347,13 +431,13 @@ func (c *Controller) detectExternalModification(state *ThermostatState, roomStat
 	overrideExpired := !state.OverrideEndTime.IsZero() && time.Now().After(state.OverrideEndTime)
 
 	// Only detect if: command was sent >2min ago, override not expired, not in schedule mode
-	if timeSinceLastCommand <= 2*time.Minute || overrideExpired || roomStatus.ThermSetpointMode == "schedule" {
+	if timeSinceLastCommand <= MinTimeSinceCommandForDetection || overrideExpired || roomStatus.ThermSetpointMode == "schedule" {
 		return false
 	}
 
 	// Check if current setpoint differs from what we sent
 	delta := roomStatus.ThermSetpointTemperature - state.LastSetpoint
-	if math.Abs(delta) > 0.1 {
+	if math.Abs(delta) > SetpointToleranceCelsius {
 		c.logger.Warn("external modification detected - backing off from automation indefinitely",
 			zap.String("room_name", state.RoomName),
 			zap.Float64("expected_setpoint", state.LastSetpoint),
