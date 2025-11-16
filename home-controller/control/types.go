@@ -2,6 +2,8 @@ package control
 
 import (
 	"time"
+
+	"github.com/mjasion/balena-home/thermostats/netatmo"
 )
 
 // ThermostatState tracks the state of a controlled thermostat
@@ -15,6 +17,9 @@ type ThermostatState struct {
 	ExternalModificationTime time.Time // When external modification was detected
 	SyncedScheduledTemp      float64   // Last synced scheduled temperature from Netatmo
 	SyncedScheduledTime      time.Time // When we synced the scheduled temperature
+	LastHomeMode             string    // Last known home mode (away, hg, etc.)
+	LastManualSetpoint       float64   // Last manual setpoint observed from Netatmo
+	LastManualEndTime        int64     // Last manual override end time observed from Netatmo
 }
 
 // Copy creates a defensive copy of the state
@@ -29,6 +34,9 @@ func (s *ThermostatState) Copy() ThermostatState {
 		ExternalModificationTime: s.ExternalModificationTime,
 		SyncedScheduledTemp:      s.SyncedScheduledTemp,
 		SyncedScheduledTime:      s.SyncedScheduledTime,
+		LastHomeMode:             s.LastHomeMode,
+		LastManualSetpoint:       s.LastManualSetpoint,
+		LastManualEndTime:        s.LastManualEndTime,
 	}
 }
 
@@ -51,4 +59,11 @@ type ControlDecision struct {
 	ThermostatMode      string  // Thermostat mode: "schedule", "manual", "away", "hg" (frost guard), etc.
 	CalculatedSetpoint  float64 // New setpoint (if action is set_manual_override)
 	OverrideEndTime     int64   // Unix timestamp for override expiration
+}
+
+// CachedHomeStatus stores the latest home status with timestamp
+type CachedHomeStatus struct {
+	HomeStatus *netatmo.HomeStatusResponse
+	FetchTime  time.Time
+	FetchError error
 }

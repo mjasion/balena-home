@@ -251,17 +251,51 @@ stateDiagram-v2
     end note
 ```
 
+## Job Scheduling Architecture
+
+The controller uses **two separate jobs** running at different times within each minute:
+
+### 1. Home Status Fetch Job (Every minute at :00)
+- Fetches current home status from Netatmo API
+- Stores status in cache with timestamp
+- Adds Netatmo readings to metrics buffer
+- Pushes all metrics to Prometheus
+
+### 2. Control Loop Job (Every minute at :30)
+- Runs at 30th second of each minute
+- Uses cached home status from the same minute (fetched at :00)
+- If no cached status available or fetch failed, skips control
+- Evaluates all rooms and executes control decisions
+
+**Timeline Example:**
+```
+00:00:00 - Home Status Fetch Job runs
+00:00:01 - Fetch completes, metrics pushed
+00:00:30 - Control Loop Job runs (uses cached status from 00:00:00)
+00:01:00 - Home Status Fetch Job runs again
+00:01:01 - Fetch completes, metrics pushed
+00:01:30 - Control Loop Job runs (uses cached status from 00:01:00)
+```
+
+**Benefits:**
+- Ensures control decisions are based on fresh data (< 30 seconds old)
+- Separates concerns: fetching vs. control logic
+- Metrics are pushed consistently every minute
+- If fetch fails, control is safely skipped
+- Reduces API calls during control evaluation
+
 ## Configuration Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `temperatureThreshold` | 0.5°C | Minimum difference to trigger action |
-| `controlIntervalSeconds` | 60s | How often to evaluate rooms |
 | `overrideDurationMinutes` | 10 min | Auto-expire time for overrides |
 | `recheckDelayMinutes` | 2 min | Wait time after adjustment |
 | `externalModificationResetMinutes` | 5 min | Pause time after manual change |
 | `minSetpointCelsius` | 10.0°C | Safety minimum |
 | `maxSetpointCelsius` | 30.0°C | Safety maximum |
+
+**Note:** `controlIntervalSeconds` is no longer used. Jobs are scheduled with cron expressions (see Job Scheduling Architecture section).
 
 ## Sensor Data Processing
 
@@ -329,25 +363,73 @@ All manual overrides automatically expire after 10 minutes, reverting to schedul
 
 ### 3. External Modification Detection
 
+The system now has **improved detection logic** for external changes:
+
+#### a) Home Mode Change Detection (Away/HG)
+When the home mode changes to or from "away" or "hg" (frost guard):
+- External modification flag is **automatically reset**
+- Control starts fresh with new mode
+- Past overrides are **ignored**
+
+**Example:**
+```
+09:00 - Normal mode, algorithm controls temperature
+10:00 - User enables "Away" mode
+10:01 - Algorithm detects mode change to "away"
+      - Clears external modification flag
+      - Starts fresh control from new baseline
+```
+
+#### b) Manual Setpoint Change Detection
+When user manually changes setpoint or override duration:
+- System detects change after 2-minute grace period
+- Respects user's new setpoint and end time
+- Marks room as externally modified
+- Skips automation until user returns to schedule mode
+
+**Detection Algorithm:**
 ```mermaid
 sequenceDiagram
     participant System
     participant Netatmo
     participant User
 
-    System->>Netatmo: Set Override to 22°C
-    Note over System: Record: lastSetpoint=22°C
-    System->>System: Wait 2 minutes
+    System->>Netatmo: Set Override to 22°C, endtime 10:00
+    Note over System: Record: lastManualSetpoint=22°C<br/>lastManualEndTime=10:00
+    System->>System: Wait 2 minutes (grace period)
 
-    User->>Netatmo: Manually set to 25°C
+    User->>Netatmo: Change to 25°C, endtime 11:00
 
     System->>Netatmo: Fetch Status
-    Netatmo-->>System: Current: 25°C
+    Netatmo-->>System: Current: 25°C, endtime 11:00
 
-    Note over System: Expected: 22°C<br/>Actual: 25°C<br/>Difference > 0.1°C
+    Note over System: Expected: 22°C, endtime 10:00<br/>Actual: 25°C, endtime 11:00<br/>Change detected!
     System->>System: Mark Externally Modified
-    System->>System: Pause Control (1 hour)
+    System->>System: Update baseline to 25°C, 11:00
+    System->>System: Skip Control (respect user intent)
 ```
+
+#### c) Control Mode Decision Logic
+
+The algorithm decides whether to control a room based on:
+
+1. **Schedule Mode** → Control allowed
+2. **Manual Mode set by algorithm** (recently, setpoint matches) → Control allowed (can extend)
+3. **Away/HG Mode without manual override** → Control allowed
+4. **Manual Mode (external)** → Skip control, respect user intent
+5. **Away/HG Mode with manual override** → Skip control, respect user intent
+
+**Example Scenarios:**
+
+| Thermostat Mode | Last Set By | Time Since | Decision |
+|----------------|-------------|------------|----------|
+| schedule | - | - | **Control** (normal operation) |
+| manual | Algorithm | 5 min | **Control** (can extend our override) |
+| manual | User | 5 min | **Skip** (respect user intent) |
+| away | System | - | **Control** (adjust for sensor differences) |
+| away + manual override | User | - | **Skip** (respect user override on away mode) |
+| hg | System | - | **Control** (adjust for sensor differences) |
+| hg + manual override | User | - | **Skip** (respect user override on hg mode) |
 
 ## Example Scenarios
 

@@ -179,5 +179,8 @@ func (c *Controller) updateRoomState(roomID string, setpoint float64, endTime ti
 		state.LastSetpoint = setpoint
 		state.LastSetpointTime = time.Now()
 		state.OverrideEndTime = endTime
+		// Track the manual setpoint and endtime for external change detection
+		state.LastManualSetpoint = setpoint
+		state.LastManualEndTime = endTime.Unix()
 	}
 }

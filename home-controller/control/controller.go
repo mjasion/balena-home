@@ -37,6 +37,10 @@ type Controller struct {
 
 	// Schedule sync tracking
 	lastSyncTime time.Time
+
+	// Cached home status (thread-safe with mutex)
+	cachedStatusMu sync.RWMutex
+	cachedStatus   *CachedHomeStatus
 }
 
 // New creates a new thermostat controller
@@ -231,6 +235,7 @@ func (c *Controller) addToMetricsBuffer(ctx context.Context, homeStatus *netatmo
 }
 
 // runControlLoop executes one iteration of the control loop
+// Uses cached home status from the same minute
 func (c *Controller) runControlLoop(ctx context.Context) {
 	// Start a new trace span for this control loop iteration
 	ctx, span := c.tracer.Start(ctx, "control_loop_iteration",
@@ -254,24 +259,39 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		return
 	}
 
-	// Fetch home status once upfront for all operations
-	homeStatus, err := c.netatmoClient.GetHomeStatus(ctx, c.homeID)
-	if err != nil {
-		c.logger.Error("failed to fetch home status",
-			zap.Error(err),
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
-		)
-		span.RecordError(err)
+	// Get cached home status from the same minute
+	cachedStatus := c.GetCachedHomeStatus()
+	if cachedStatus == nil {
+		c.logger.Warn("no cached home status available, skipping control loop (waiting for next fetch)")
+		span.SetAttributes(attribute.String("skip_reason", "no_cached_status"))
 		return
 	}
+
+	// Check if there was an error during fetch
+	if cachedStatus.FetchError != nil {
+		c.logger.Warn("cached home status has error, skipping control loop",
+			zap.Error(cachedStatus.FetchError),
+			zap.Time("fetch_time", cachedStatus.FetchTime),
+		)
+		span.SetAttributes(attribute.String("skip_reason", "fetch_error"))
+		span.RecordError(cachedStatus.FetchError)
+		return
+	}
+
+	homeStatus := cachedStatus.HomeStatus
 
 	span.SetAttributes(
 		attribute.String("home_id", c.homeID),
 		attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+		attribute.Time("cached_status_fetch_time", cachedStatus.FetchTime),
+		attribute.Duration("status_age", time.Since(cachedStatus.FetchTime)),
 	)
 
-	// Add to metrics buffer in background goroutine
-	c.addToMetricsBuffer(ctx, homeStatus)
+	c.logger.Debug("using cached home status",
+		zap.Time("fetch_time", cachedStatus.FetchTime),
+		zap.Duration("status_age", time.Since(cachedStatus.FetchTime)),
+		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+	)
 
 	// Determine if schedule sync is needed
 	needsSync := c.shouldSyncSchedule()
