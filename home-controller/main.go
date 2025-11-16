@@ -218,30 +218,28 @@ func main() {
 			os.Exit(1)
 		}
 
-		// Create home status fetcher (runs every minute at :00)
+		// Create home status fetcher
 		// Get tracer for home status fetcher
 		tracer := otel.Tracer("home-controller/control")
 		homeStatusFetcher := control.NewHomeStatusFetcher(controller, pusher, logger, tracer)
 
-		// Add home status fetch job (runs at :00 of every minute)
+		// Add home status fetch job
 		// This job fetches home status, stores it in cache, adds to metrics buffer, and pushes metrics
-		homeStatusCron := "0 * * * * *" // Every minute at :00
-		if err := jobScheduler.AddCronJobWithSeconds("Home Status Fetcher", homeStatusCron, homeStatusFetcher.Run); err != nil {
+		if err := jobScheduler.AddCronJobWithSeconds("Home Status Fetcher", cfg.ThermostatControl.HomeStatusFetchCron, homeStatusFetcher.Run); err != nil {
 			logger.Error("failed to add home status fetcher cron job", zap.Error(err))
 			os.Exit(1)
 		}
 
-		// Add thermostat control job (runs at :30 of every minute)
+		// Add thermostat control job
 		// This job uses cached home status from the fetch job
-		controlCron := "30 * * * * *" // Every minute at :30
-		if err := jobScheduler.AddCronJobWithSeconds("Thermostat Controller", controlCron, controller.Run); err != nil {
+		if err := jobScheduler.AddCronJobWithSeconds("Thermostat Controller", cfg.ThermostatControl.ControlLoopCron, controller.Run); err != nil {
 			logger.Error("failed to add thermostat controller cron job", zap.Error(err))
 			os.Exit(1)
 		}
 
 		logger.Info("thermostat control jobs configured",
-			zap.String("home_status_cron", homeStatusCron),
-			zap.String("control_cron", controlCron),
+			zap.String("home_status_cron", cfg.ThermostatControl.HomeStatusFetchCron),
+			zap.String("control_cron", cfg.ThermostatControl.ControlLoopCron),
 		)
 	} else {
 		logger.Info("thermostat control disabled")
