@@ -299,3 +299,185 @@ func TestNormalModeSkipsSync(t *testing.T) {
 
 	t.Logf("✓ Normal mode correctly skipped sync (lastSyncTime unchanged: %v)", finalSyncTime)
 }
+
+// TestManualModeNotSetByAlgorithmSkipsSync tests that manual mode not set by algorithm is skipped during sync
+func TestManualModeNotSetByAlgorithmSkipsSync(t *testing.T) {
+	tests := []struct {
+		name                 string
+		lastSetpointTime     time.Time
+		lastSetpoint         float64
+		currentSetpoint      float64
+		shouldSkipSync       bool
+		description          string
+	}{
+		{
+			name:             "User manual mode - never controlled by algorithm",
+			lastSetpointTime: time.Time{}, // Never set by algorithm
+			lastSetpoint:     0,
+			currentSetpoint:  21.0,
+			shouldSkipSync:   true,
+			description:      "Algorithm never controlled this room, manual mode should be respected",
+		},
+		{
+			name:             "User manual mode - algorithm controlled long ago",
+			lastSetpointTime: time.Now().Add(-20 * time.Minute), // Over 15 minutes ago
+			lastSetpoint:     22.0,
+			currentSetpoint:  21.0,
+			shouldSkipSync:   true,
+			description:      "Algorithm controlled >15 minutes ago, not our recent override",
+		},
+		{
+			name:             "User manual mode - different setpoint",
+			lastSetpointTime: time.Now().Add(-5 * time.Minute), // Recent
+			lastSetpoint:     22.0,
+			currentSetpoint:  21.0, // Different from what we set (delta > 0.3)
+			shouldSkipSync:   true,
+			description:      "Setpoint changed from what we set, manual mode should be respected",
+		},
+		{
+			name:             "Algorithm override - recent and matching setpoint",
+			lastSetpointTime: time.Now().Add(-5 * time.Minute), // Recent (< 15 min)
+			lastSetpoint:     21.0,
+			currentSetpoint:  21.1, // Close to what we set (delta < 0.3)
+			shouldSkipSync:   false,
+			description:      "Recent algorithm override with matching setpoint, can reset to schedule",
+		},
+		{
+			name:             "Algorithm override - exact match",
+			lastSetpointTime: time.Now().Add(-2 * time.Minute), // Very recent
+			lastSetpoint:     21.5,
+			currentSetpoint:  21.5, // Exact match
+			shouldSkipSync:   false,
+			description:      "Exact setpoint match with recent command, our override",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := zap.NewNop()
+			controlBuffer := buffer.New(100, logger)
+			metricsBuffer := buffer.New(100, logger)
+
+			cfg := &config.ThermostatControlConfig{
+				Enabled:                         true,
+				ScheduleSyncIntervalMinutes:     15,
+				ScheduleSyncPollIntervalSeconds: 1,
+				ScheduleSyncPollTimeoutSeconds:  2,
+				TemperatureThreshold:            0.5,
+				HomeStatusFetchCron:             "0 * * * * *",
+				ControlLoopCron:                 "30 * * * * *",
+				Mappings: []config.ThermostatMapping{
+					{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
+				},
+			}
+
+			client := netatmo.NewClient("test-id", "test-secret", "test-token")
+			c := New(cfg, client, controlBuffer, metricsBuffer, logger)
+			c.homeID = "home123"
+
+			// Initialize state
+			c.stateMu.Lock()
+			c.stateByRoom["room1"] = &ThermostatState{
+				RoomID:           "room1",
+				RoomName:         "Living Room",
+				LastSetpointTime: tt.lastSetpointTime,
+				LastSetpoint:     tt.lastSetpoint,
+			}
+			c.stateMu.Unlock()
+
+			// Create mock home status with room in manual mode
+			homeStatus := &netatmo.HomeStatusResponse{
+				Body: netatmo.HomeStatusBody{
+					Home: netatmo.Home{
+						Rooms: []netatmo.RoomStatus{
+							{
+								ID:                        "room1",
+								Reachable:                 true,
+								ThermSetpointMode:         "manual", // Room in manual mode
+								ThermSetpointTemperature:  tt.currentSetpoint,
+								ThermMeasuredTemperature:  tt.currentSetpoint - 0.2,
+								ThermSetpointEndTime:      time.Now().Add(30 * time.Minute).Unix(),
+							},
+						},
+					},
+				},
+			}
+
+			// Call switchRoomsToScheduleMode directly to test the logic
+			skipCount := 0
+			c.switchRoomsToScheduleMode(context.Background(), homeStatus, &skipCount)
+
+			// Verify skip behavior
+			if tt.shouldSkipSync && skipCount == 0 {
+				t.Errorf("Expected room to be skipped during sync, but skipCount=0\n%s", tt.description)
+			}
+
+			if !tt.shouldSkipSync && skipCount > 0 {
+				t.Errorf("Expected room NOT to be skipped during sync, but skipCount=%d\n%s", skipCount, tt.description)
+			}
+
+			t.Logf("✓ %s: skipCount=%d (expected skip=%v)", tt.description, skipCount, tt.shouldSkipSync)
+		})
+	}
+}
+
+// TestScheduleModeNotSkippedDuringSync tests that rooms in schedule mode are not skipped
+func TestScheduleModeNotSkippedDuringSync(t *testing.T) {
+	logger := zap.NewNop()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	cfg := &config.ThermostatControlConfig{
+		Enabled:                         true,
+		ScheduleSyncIntervalMinutes:     15,
+		ScheduleSyncPollIntervalSeconds: 1,
+		ScheduleSyncPollTimeoutSeconds:  2,
+		TemperatureThreshold:            0.5,
+		HomeStatusFetchCron:             "0 * * * * *",
+		ControlLoopCron:                 "30 * * * * *",
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
+		},
+	}
+
+	client := netatmo.NewClient("test-id", "test-secret", "test-token")
+	c := New(cfg, client, controlBuffer, metricsBuffer, logger)
+	c.homeID = "home123"
+
+	// Initialize state
+	c.stateMu.Lock()
+	c.stateByRoom["room1"] = &ThermostatState{
+		RoomID:   "room1",
+		RoomName: "Living Room",
+	}
+	c.stateMu.Unlock()
+
+	// Create mock home status with room already in schedule mode
+	homeStatus := &netatmo.HomeStatusResponse{
+		Body: netatmo.HomeStatusBody{
+			Home: netatmo.Home{
+				Rooms: []netatmo.RoomStatus{
+					{
+						ID:                       "room1",
+						Reachable:                true,
+						ThermSetpointMode:        "schedule", // Already in schedule mode
+						ThermSetpointTemperature: 21.0,
+						ThermMeasuredTemperature: 20.8,
+					},
+				},
+			},
+		},
+	}
+
+	// Call switchRoomsToScheduleMode
+	skipCount := 0
+	c.switchRoomsToScheduleMode(context.Background(), homeStatus, &skipCount)
+
+	// Verify room was not skipped (already in schedule mode, no API call needed but not counted as "skip")
+	// Note: The function logs "already in schedule mode, skipping switch" but doesn't increment skipCount
+	if skipCount > 0 {
+		t.Errorf("Expected skipCount=0 for room already in schedule mode, got %d", skipCount)
+	}
+
+	t.Log("✓ Room in schedule mode handled correctly (no skip count increment)")
+}
