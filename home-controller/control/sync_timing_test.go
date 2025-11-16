@@ -387,16 +387,18 @@ func TestManualModeNotSetByAlgorithmSkipsSync(t *testing.T) {
 
 			// Create mock home status with room in manual mode
 			homeStatus := &netatmo.HomeStatusResponse{
-				Body: netatmo.HomeStatusBody{
-					Home: netatmo.Home{
+				Body: struct {
+					Home netatmo.HomeStatus `json:"home"`
+				}{
+					Home: netatmo.HomeStatus{
 						Rooms: []netatmo.RoomStatus{
 							{
-								ID:                        "room1",
-								Reachable:                 true,
-								ThermSetpointMode:         "manual", // Room in manual mode
-								ThermSetpointTemperature:  tt.currentSetpoint,
-								ThermMeasuredTemperature:  tt.currentSetpoint - 0.2,
-								ThermSetpointEndTime:      time.Now().Add(30 * time.Minute).Unix(),
+								ID:                       "room1",
+								Reachable:                true,
+								ThermSetpointMode:        "manual", // Room in manual mode
+								ThermSetpointTemperature: tt.currentSetpoint,
+								ThermMeasuredTemperature: tt.currentSetpoint - 0.2,
+								ThermSetpointEndTime:     time.Now().Add(30 * time.Minute).Unix(),
 							},
 						},
 					},
@@ -454,8 +456,10 @@ func TestScheduleModeNotSkippedDuringSync(t *testing.T) {
 
 	// Create mock home status with room already in schedule mode
 	homeStatus := &netatmo.HomeStatusResponse{
-		Body: netatmo.HomeStatusBody{
-			Home: netatmo.Home{
+		Body: struct {
+			Home netatmo.HomeStatus `json:"home"`
+		}{
+			Home: netatmo.HomeStatus{
 				Rooms: []netatmo.RoomStatus{
 					{
 						ID:                       "room1",

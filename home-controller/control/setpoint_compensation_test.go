@@ -176,6 +176,111 @@ func TestSetpointCompensation_RealWorldScenario(t *testing.T) {
 	t.Logf("✅ Heating will stop (instead of running at 100%%)")
 }
 
+// TestRoundToHalfDegree tests that setpoints are rounded to 0.5°C increments
+func TestRoundToHalfDegree(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    float64
+		expected float64
+	}{
+		{"Exact 27.0", 27.0, 27.0},
+		{"Exact 27.5", 27.5, 27.5},
+		{"27.1 rounds down to 27.0", 27.1, 27.0},
+		{"27.2 rounds down to 27.0", 27.2, 27.0},
+		{"27.24 rounds down to 27.0", 27.24, 27.0},
+		{"27.25 rounds up to 27.5", 27.25, 27.5},
+		{"27.3 rounds up to 27.5", 27.3, 27.5},
+		{"27.4 rounds up to 27.5", 27.4, 27.5},
+		{"27.6 rounds up to 27.5", 27.6, 27.5},
+		{"27.74 rounds up to 27.5", 27.74, 27.5},
+		{"27.75 rounds up to 28.0", 27.75, 28.0},
+		{"27.8 rounds up to 28.0", 27.8, 28.0},
+		{"27.9 rounds up to 28.0", 27.9, 28.0},
+		{"19.3 rounds to 19.5", 19.3, 19.5},
+		{"19.7 rounds to 19.5", 19.7, 19.5},
+		{"19.75 rounds to 20.0", 19.75, 20.0},
+		{"User scenario: 27.8 -> 28.0", 27.8, 28.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := roundToHalfDegree(tt.input)
+			if result != tt.expected {
+				t.Errorf("roundToHalfDegree(%.2f) = %.1f, expected %.1f", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestSetpointCompensation_WithRounding tests that setpoint compensation includes rounding
+func TestSetpointCompensation_WithRounding(t *testing.T) {
+	tests := []struct {
+		name             string
+		xiaomiTemp       float64
+		netatmoMeasured  float64
+		scheduledTemp    float64
+		expectedRaw      float64
+		expectedRounded  float64
+	}{
+		{
+			name:            "User's exact scenario: offset 0.3 should round to 0.5",
+			xiaomiTemp:      24.2,
+			netatmoMeasured: 24.5,
+			scheduledTemp:   27.5,
+			expectedRaw:     27.8,  // 27.5 + (24.5 - 24.2)
+			expectedRounded: 28.0,  // Rounded to nearest 0.5
+		},
+		{
+			name:            "Offset 0.2 should round down",
+			xiaomiTemp:      24.0,
+			netatmoMeasured: 24.2,
+			scheduledTemp:   22.0,
+			expectedRaw:     22.2,  // 22.0 + 0.2
+			expectedRounded: 22.0,  // Rounded down
+		},
+		{
+			name:            "Offset 0.4 should round up",
+			xiaomiTemp:      24.0,
+			netatmoMeasured: 24.4,
+			scheduledTemp:   22.0,
+			expectedRaw:     22.4,  // 22.0 + 0.4
+			expectedRounded: 22.5,  // Rounded up
+		},
+		{
+			name:            "Negative offset -0.3 should round to -0.5",
+			xiaomiTemp:      24.5,
+			netatmoMeasured: 24.2,
+			scheduledTemp:   22.0,
+			expectedRaw:     21.7,  // 22.0 + (24.2 - 24.5)
+			expectedRounded: 21.5,  // Rounded to nearest 0.5
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Calculate raw setpoint
+			sensorOffset := tt.netatmoMeasured - tt.xiaomiTemp
+			rawSetpoint := tt.scheduledTemp + sensorOffset
+
+			// Verify raw calculation
+			if abs(rawSetpoint-tt.expectedRaw) > 0.01 {
+				t.Errorf("Raw setpoint = %.2f, expected %.2f", rawSetpoint, tt.expectedRaw)
+			}
+
+			// Apply rounding
+			roundedSetpoint := roundToHalfDegree(rawSetpoint)
+
+			// Verify rounding
+			if roundedSetpoint != tt.expectedRounded {
+				t.Errorf("Rounded setpoint = %.1f, expected %.1f", roundedSetpoint, tt.expectedRounded)
+			}
+
+			t.Logf("✓ %.1f°C + offset %.2f°C = %.2f°C → rounded to %.1f°C",
+				tt.scheduledTemp, sensorOffset, rawSetpoint, roundedSetpoint)
+		})
+	}
+}
+
 // Helper function for absolute value
 func abs(x float64) float64 {
 	if x < 0 {

@@ -196,7 +196,8 @@ func (c *Controller) evaluateRoom(
 	// Calculate compensated setpoint to account for sensor inaccuracy
 	// If Netatmo reads 1°C too low, we need to set setpoint 1°C lower
 	// so when Netatmo reaches that setpoint, actual temp will be at target
-	calculatedSetpoint := scheduledTemp + sensorOffset
+	rawSetpoint := scheduledTemp + sensorOffset
+	calculatedSetpoint := roundToHalfDegree(rawSetpoint)
 
 	c.logger.Debug("calculated compensated setpoint",
 		zap.String("room_name", mapping.RoomName),
@@ -204,6 +205,7 @@ func (c *Controller) evaluateRoom(
 		zap.Float64("thermostat_measured", decision.ThermostatMeasured),
 		zap.Float64("sensor_offset", sensorOffset),
 		zap.Float64("scheduled_temp", scheduledTemp),
+		zap.Float64("raw_setpoint", rawSetpoint),
 		zap.Float64("calculated_setpoint", calculatedSetpoint),
 	)
 
@@ -301,6 +303,12 @@ func (c *Controller) determineScheduledTemp(roomName string, state *ThermostatSt
 	return roomStatus.ThermSetpointTemperature
 }
 
+
+// roundToHalfDegree rounds a temperature to the nearest 0.5°C
+// Netatmo thermostats only accept setpoints in 0.5°C increments
+func roundToHalfDegree(temp float64) float64 {
+	return math.Round(temp*2.0) / 2.0
+}
 
 // applySafetyBounds applies safety limits to the calculated setpoint
 func (c *Controller) applySafetyBounds(setpoint float64) float64 {
