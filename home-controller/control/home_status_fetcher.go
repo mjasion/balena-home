@@ -4,33 +4,30 @@ import (
 	"context"
 	"time"
 
-	"github.com/mjasion/balena-home/thermostats/metrics"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
-// HomeStatusFetcher handles fetching home status and pushing metrics
+// HomeStatusFetcher handles fetching home status and adding to metrics buffer
 type HomeStatusFetcher struct {
 	controller *Controller
-	pusher     *metrics.Pusher
 	logger     *zap.Logger
 	tracer     trace.Tracer
 }
 
 // NewHomeStatusFetcher creates a new home status fetcher
-func NewHomeStatusFetcher(controller *Controller, pusher *metrics.Pusher, logger *zap.Logger, tracer trace.Tracer) *HomeStatusFetcher {
+func NewHomeStatusFetcher(controller *Controller, logger *zap.Logger, tracer trace.Tracer) *HomeStatusFetcher {
 	return &HomeStatusFetcher{
 		controller: controller,
-		pusher:     pusher,
 		logger:     logger,
 		tracer:     tracer,
 	}
 }
 
-// Run executes the home status fetch and metrics push (called by scheduler every minute at :00)
+// Run executes the home status fetch (called by scheduler every minute at :00)
 func (f *HomeStatusFetcher) Run(ctx context.Context) {
-	ctx, span := f.tracer.Start(ctx, "home_status_fetch_and_push",
+	ctx, span := f.tracer.Start(ctx, "home_status_fetch",
 		trace.WithAttributes(
 			attribute.String("home_id", f.controller.homeID),
 		),
@@ -39,7 +36,7 @@ func (f *HomeStatusFetcher) Run(ctx context.Context) {
 
 	fetchStart := time.Now()
 
-	f.logger.Debug("fetching home status and pushing metrics",
+	f.logger.Debug("fetching home status",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.String("span_id", span.SpanContext().SpanID().String()),
 	)
@@ -62,7 +59,6 @@ func (f *HomeStatusFetcher) Run(ctx context.Context) {
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
 		)
 		span.RecordError(err)
-		// Don't push metrics if fetch failed
 		return
 	}
 
@@ -79,10 +75,7 @@ func (f *HomeStatusFetcher) Run(ctx context.Context) {
 	// Step 3: Add Netatmo data to metrics buffer
 	f.controller.addToMetricsBuffer(ctx, homeStatus)
 
-	// Step 4: Push metrics to Prometheus
-	f.pusher.Run(ctx)
-
-	f.logger.Info("home status fetch and metrics push completed",
+	f.logger.Debug("home status fetch completed",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.Duration("total_duration", time.Since(fetchStart)),
 	)
