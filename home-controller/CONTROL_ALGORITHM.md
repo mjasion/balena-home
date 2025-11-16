@@ -294,6 +294,9 @@ The controller uses **two separate jobs** running at different times within each
 | `externalModificationResetMinutes` | 5 min | Pause time after manual change |
 | `minSetpointCelsius` | 10.0°C | Safety minimum |
 | `maxSetpointCelsius` | 30.0°C | Safety maximum |
+| `homeStatusFetchCron` | "0 * * * * *" | Cron expression for home status fetch job (runs at :00) |
+| `controlLoopCron` | "30 * * * * *" | Cron expression for control loop job (runs at :30) |
+| `scheduleSyncIntervalMinutes` | 15 | How often to sync schedule (0 = disabled) |
 
 **Note:** `controlIntervalSeconds` is no longer used. Jobs are scheduled with cron expressions (see Job Scheduling Architecture section).
 

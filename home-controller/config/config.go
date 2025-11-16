@@ -110,7 +110,8 @@ type ThermostatControlConfig struct {
 	MaxSetpointCelsius               float64             `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
 	Mappings                         []ThermostatMapping `yaml:"mappings"`
 	HardOverrides                    []HardOverride      `yaml:"hardOverrides"`
-	Cron                             string              `yaml:"cron" env:"THERMOSTAT_CONTROL_CRON"`                                                // Required: Cron expression with seconds (e.g., "0 * * * * *")
+	HomeStatusFetchCron              string              `yaml:"homeStatusFetchCron" env:"HOME_STATUS_FETCH_CRON" env-default:"0 * * * * *"`        // Cron expression for home status fetch job (runs at :00)
+	ControlLoopCron                  string              `yaml:"controlLoopCron" env:"CONTROL_LOOP_CRON" env-default:"30 * * * * *"`                // Cron expression for control loop job (runs at :30)
 	ScheduleSyncIntervalMinutes      int                 `yaml:"scheduleSyncIntervalMinutes" env:"SCHEDULE_SYNC_INTERVAL_MINUTES" env-default:"15"` // How often to sync schedule (0 = disabled)
 	ScheduleSyncPollIntervalSeconds  int                 `yaml:"scheduleSyncPollIntervalSeconds" env:"SCHEDULE_SYNC_POLL_INTERVAL" env-default:"2"` // How often to poll after setting schedule mode
 	ScheduleSyncPollTimeoutSeconds   int                 `yaml:"scheduleSyncPollTimeoutSeconds" env:"SCHEDULE_SYNC_POLL_TIMEOUT" env-default:"30"`  // Max time to wait for schedule mode confirmation
