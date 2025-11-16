@@ -168,14 +168,6 @@ func (c *Controller) validateRoomForControl(
 	// Detect home mode changes and handle state resets
 	if roomStatus != nil {
 		c.detectHomeModeChange(state, roomStatus)
-
-		// Refresh state after potential mode change
-		c.stateMu.RLock()
-		freshState := c.stateByRoom[mapping.RoomID]
-		c.stateMu.RUnlock()
-		if freshState != nil {
-			*state = *freshState
-		}
 	}
 
 	// Check for external manual changes
@@ -227,6 +219,8 @@ func (c *Controller) calculateSetpointDecision(
 	roomStatus *netatmo.RoomStatus,
 	decision ControlDecision,
 ) ControlDecision {
+	_ = ctx // context reserved for future use
+
 	// Validate sensor data
 	if decision.XiaomiTemperature == 0 {
 		decision.Reason = "sensor data unavailable"
@@ -263,11 +257,12 @@ func (c *Controller) calculateSetpointDecision(
 	shouldExtend, timeUntilExpiry := c.shouldExtendOverride(state)
 
 	// Check if no adjustment is needed
-	if decision := c.checkIfAdjustmentNeeded(
+	adjustmentDecision := c.checkIfAdjustmentNeeded(
 		decision, calculatedSetpoint, scheduledTemp, tempDiff,
 		roomStatus.ThermSetpointTemperature, shouldExtend, timeUntilExpiry,
-	); decision.Action != "" {
-		return decision
+	)
+	if adjustmentDecision.Action != "" {
+		return adjustmentDecision
 	}
 
 	// Apply safety bounds
