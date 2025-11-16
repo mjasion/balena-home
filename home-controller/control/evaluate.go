@@ -188,28 +188,38 @@ func (c *Controller) evaluateRoom(
 	scheduledTemp := decision.ScheduledTemp
 	tempDiff := xiaomiTemp - scheduledTemp
 
-	// Check if temperature is within acceptable range
-	withinThreshold := math.Abs(tempDiff) < c.config.TemperatureThreshold
+	// Calculate sensor offset (how much Netatmo sensor differs from reality)
+	// Positive offset means Netatmo reads higher than actual
+	// Negative offset means Netatmo reads lower than actual
+	sensorOffset := decision.ThermostatMeasured - xiaomiTemp
 
-	// If within threshold and no extension needed, skip action
-	if withinThreshold && !shouldExtend {
+	// Calculate compensated setpoint to account for sensor inaccuracy
+	// If Netatmo reads 1°C too low, we need to set setpoint 1°C lower
+	// so when Netatmo reaches that setpoint, actual temp will be at target
+	calculatedSetpoint := scheduledTemp + sensorOffset
+
+	c.logger.Debug("calculated compensated setpoint",
+		zap.String("room_name", mapping.RoomName),
+		zap.Float64("xiaomi_temp", xiaomiTemp),
+		zap.Float64("thermostat_measured", decision.ThermostatMeasured),
+		zap.Float64("sensor_offset", sensorOffset),
+		zap.Float64("scheduled_temp", scheduledTemp),
+		zap.Float64("calculated_setpoint", calculatedSetpoint),
+	)
+
+	// Check if calculated setpoint matches schedule (means no sensor offset to compensate)
+	// AND actual temperature is within threshold (room is at correct temp)
+	noSensorOffset := math.Abs(calculatedSetpoint-scheduledTemp) < 0.1
+	tempWithinThreshold := math.Abs(tempDiff) < c.config.TemperatureThreshold
+
+	if noSensorOffset && tempWithinThreshold && !shouldExtend {
 		decision.Action = "no_adjustment_needed"
-		decision.Reason = fmt.Sprintf("temperature difference %.2f°C below threshold %.2f°C",
-			math.Abs(tempDiff), c.config.TemperatureThreshold)
+		decision.Reason = fmt.Sprintf("no sensor offset detected and temperature within threshold (%.2f°C)", math.Abs(tempDiff))
 		return decision
 	}
 
-	// Calculate setpoint using three-zone control strategy
-	calculatedSetpoint := c.calculateSetpoint(tempDiff, scheduledTemp, decision.ThermostatMeasured)
-
-	// Check if setpoint matches schedule (within 0.1°C tolerance)
-	if math.Abs(calculatedSetpoint-scheduledTemp) < 0.1 {
-		if !shouldExtend {
-			decision.Action = "no_adjustment_needed"
-			decision.Reason = fmt.Sprintf("calculated setpoint (%.1f°C) matches schedule, no override needed", calculatedSetpoint)
-			return decision
-		}
-		c.logger.Debug("extending override even though setpoint matches schedule",
+	if shouldExtend {
+		c.logger.Debug("extending override",
 			zap.String("room_name", mapping.RoomName),
 			zap.Float64("calculated_setpoint", calculatedSetpoint),
 			zap.Duration("time_until_expiry", timeUntilExpiry),
@@ -219,10 +229,12 @@ func (c *Controller) evaluateRoom(
 	// Apply safety bounds
 	calculatedSetpoint = c.applySafetyBounds(calculatedSetpoint)
 
-	// Check if thermostat is already at the target setpoint
-	if c.isSetpointAlreadySet(roomStatus, calculatedSetpoint) && !shouldExtend {
+	// Check if current setpoint already matches our calculated target (within 0.1°C tolerance)
+	// This applies to BOTH schedule mode and manual mode - no need to override if already correct
+	currentSetpoint := roomStatus.ThermSetpointTemperature
+	if math.Abs(currentSetpoint-calculatedSetpoint) < 0.1 && !shouldExtend {
 		decision.Action = "no_adjustment_needed"
-		decision.Reason = fmt.Sprintf("setpoint already at target (%.1f°C), manual mode active", calculatedSetpoint)
+		decision.Reason = fmt.Sprintf("setpoint already at target (%.1f°C), mode=%s", calculatedSetpoint, roomStatus.ThermSetpointMode)
 		return decision
 	}
 
@@ -231,14 +243,21 @@ func (c *Controller) evaluateRoom(
 	decision.OverrideEndTime = time.Now().Add(time.Duration(c.config.OverrideDurationMinutes) * time.Minute).Unix()
 
 	// Build reason message
-	reasonSuffix := ""
-	if c.isHardOverrideActive(mapping.RoomName) {
-		reasonSuffix = " (hard override)"
-	} else if shouldExtend {
-		reasonSuffix = fmt.Sprintf(" (extending, %.0fm left)", timeUntilExpiry.Minutes())
+	reasonParts := []string{
+		fmt.Sprintf("xiaomi=%.1f°C", xiaomiTemp),
+		fmt.Sprintf("target=%.1f°C", scheduledTemp),
+		fmt.Sprintf("netatmo=%.1f°C", decision.ThermostatMeasured),
+		fmt.Sprintf("offset=%.2f°C", sensorOffset),
+		fmt.Sprintf("setpoint=%.1f°C", calculatedSetpoint),
 	}
-	decision.Reason = fmt.Sprintf("xiaomi=%.1f°C, target=%.1f°C, diff=%.2f°C%s",
-		xiaomiTemp, scheduledTemp, tempDiff, reasonSuffix)
+
+	if c.isHardOverrideActive(mapping.RoomName) {
+		reasonParts = append(reasonParts, "hard override")
+	} else if shouldExtend {
+		reasonParts = append(reasonParts, fmt.Sprintf("extending, %.0fm left", timeUntilExpiry.Minutes()))
+	}
+
+	decision.Reason = strings.Join(reasonParts, ", ")
 
 	// Detect external modification
 	if c.detectExternalModification(&stateCopy, roomStatus) {
@@ -282,23 +301,6 @@ func (c *Controller) determineScheduledTemp(roomName string, state *ThermostatSt
 	return roomStatus.ThermSetpointTemperature
 }
 
-// calculateSetpoint calculates the target setpoint using three-zone control
-func (c *Controller) calculateSetpoint(tempDiff, scheduledTemp, thermostatMeasured float64) float64 {
-	var setpoint float64
-
-	if tempDiff < -c.config.TemperatureThreshold {
-		// Room too cold - need to heat
-		setpoint = math.Max(scheduledTemp, thermostatMeasured+0.5)
-	} else if tempDiff > c.config.TemperatureThreshold {
-		// Room too warm - need to cool (or stop heating)
-		setpoint = math.Min(scheduledTemp, thermostatMeasured-0.5)
-	} else {
-		// Temperature within acceptable range but extension needed
-		setpoint = thermostatMeasured
-	}
-
-	return setpoint
-}
 
 // applySafetyBounds applies safety limits to the calculated setpoint
 func (c *Controller) applySafetyBounds(setpoint float64) float64 {
@@ -403,14 +405,3 @@ func (c *Controller) getHardOverrideTemp(override config.HardOverride) (float64,
 	return 0, false
 }
 
-// isSetpointAlreadySet checks if the thermostat is already at the target setpoint in manual mode
-func (c *Controller) isSetpointAlreadySet(roomStatus *netatmo.RoomStatus, targetSetpoint float64) bool {
-	// Only skip if thermostat is in manual mode (our previous override is still active)
-	if roomStatus.ThermSetpointMode != "manual" {
-		return false
-	}
-
-	// Check if current setpoint matches target (within 0.1°C tolerance)
-	delta := math.Abs(roomStatus.ThermSetpointTemperature - targetSetpoint)
-	return delta < 0.1
-}
