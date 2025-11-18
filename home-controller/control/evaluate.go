@@ -308,9 +308,87 @@ func (c *Controller) evaluateRoom(
 	// This applies to BOTH schedule mode and manual mode - no need to override if already correct
 	currentSetpoint := roomStatus.ThermSetpointTemperature
 	if math.Abs(currentSetpoint-calculatedSetpoint) < 0.1 && !shouldExtend {
+		// Clear pending since no change needed
+		c.stateMu.Lock()
+		if state, exists := c.stateByRoom[mapping.RoomID]; exists && state.PendingSetpoint != 0 {
+			c.logger.Debug("clearing pending setpoint (no change needed)",
+				zap.String("room_name", mapping.RoomName),
+				zap.Float64("pending_setpoint", state.PendingSetpoint),
+			)
+			state.PendingSetpoint = 0
+			state.PendingSetpointTime = time.Time{}
+		}
+		c.stateMu.Unlock()
+
 		decision.Action = "no_adjustment_needed"
 		decision.Reason = fmt.Sprintf("setpoint already at target (%.1f°C), mode=%s", calculatedSetpoint, roomStatus.ThermSetpointMode)
 		return decision
+	}
+
+	// DELAYED EXECUTION: Require same change needed twice before executing
+	// This prevents feedback loops where setpoint becomes the "schedule"
+	// Exception: When extending an existing override, execute immediately
+	if !shouldExtend {
+		pendingSetpoint := stateCopy.PendingSetpoint
+		pendingTime := stateCopy.PendingSetpointTime
+
+		if pendingSetpoint != 0 && !pendingTime.IsZero() {
+			// We have a pending setpoint from last iteration
+			if math.Abs(calculatedSetpoint-pendingSetpoint) < 0.1 {
+				// Same change needed twice in a row → EXECUTE
+				c.logger.Info("delayed execution: confirmed - executing override",
+					zap.String("room_name", mapping.RoomName),
+					zap.Float64("pending_setpoint", pendingSetpoint),
+					zap.Float64("calculated_setpoint", calculatedSetpoint),
+					zap.Duration("pending_age", time.Since(pendingTime)),
+				)
+
+				// Clear pending since we're executing
+				c.stateMu.Lock()
+				if state, exists := c.stateByRoom[mapping.RoomID]; exists {
+					state.PendingSetpoint = 0
+					state.PendingSetpointTime = time.Time{}
+				}
+				c.stateMu.Unlock()
+				// Fall through to execute
+			} else {
+				// Different setpoint needed → UPDATE PENDING, don't execute
+				c.logger.Info("delayed execution: target changed - updating pending",
+					zap.String("room_name", mapping.RoomName),
+					zap.Float64("previous_pending", pendingSetpoint),
+					zap.Float64("new_pending", calculatedSetpoint),
+					zap.Float64("change", calculatedSetpoint-pendingSetpoint),
+				)
+
+				c.stateMu.Lock()
+				if state, exists := c.stateByRoom[mapping.RoomID]; exists {
+					state.PendingSetpoint = calculatedSetpoint
+					state.PendingSetpointTime = time.Now()
+				}
+				c.stateMu.Unlock()
+
+				decision.Action = "skip"
+				decision.Reason = fmt.Sprintf("delayed execution: target changed from %.1f°C to %.1f°C, awaiting confirmation", pendingSetpoint, calculatedSetpoint)
+				return decision
+			}
+		} else {
+			// No pending setpoint → SET PENDING, don't execute
+			c.logger.Info("delayed execution: marking for confirmation",
+				zap.String("room_name", mapping.RoomName),
+				zap.Float64("calculated_setpoint", calculatedSetpoint),
+			)
+
+			c.stateMu.Lock()
+			if state, exists := c.stateByRoom[mapping.RoomID]; exists {
+				state.PendingSetpoint = calculatedSetpoint
+				state.PendingSetpointTime = time.Now()
+			}
+			c.stateMu.Unlock()
+
+			decision.Action = "skip"
+			decision.Reason = fmt.Sprintf("delayed execution: marked %.1f°C for confirmation (will execute next iteration if still needed)", calculatedSetpoint)
+			return decision
+		}
 	}
 
 	decision.Action = "set_manual_override"

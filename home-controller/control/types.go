@@ -21,10 +21,14 @@ type ThermostatState struct {
 	LastManualSetpoint       float64   // Last manual setpoint observed from Netatmo
 	LastManualEndTime        int64     // Last manual override end time observed from Netatmo
 
-	// Runaway detection
+	// Runaway detection (backup safety layer)
 	ConsecutiveIncreases   int       // Count of consecutive setpoint increases
 	LastCalculatedSetpoint float64   // Last calculated setpoint (before safety limits)
 	RunawayHaltUntil       time.Time // Control halted until this time (runaway protection)
+
+	// Delayed execution (primary feedback loop prevention)
+	PendingSetpoint     float64   // Setpoint calculated last iteration but not yet executed
+	PendingSetpointTime time.Time // When the pending setpoint was calculated
 }
 
 // Copy creates a defensive copy of the state
@@ -45,6 +49,8 @@ func (s *ThermostatState) Copy() ThermostatState {
 		ConsecutiveIncreases:     s.ConsecutiveIncreases,
 		LastCalculatedSetpoint:   s.LastCalculatedSetpoint,
 		RunawayHaltUntil:         s.RunawayHaltUntil,
+		PendingSetpoint:          s.PendingSetpoint,
+		PendingSetpointTime:      s.PendingSetpointTime,
 	}
 }
 
