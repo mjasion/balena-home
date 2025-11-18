@@ -209,78 +209,11 @@ func (c *Controller) evaluateRoom(
 		zap.Float64("calculated_setpoint", calculatedSetpoint),
 	)
 
-	// RUNAWAY PROTECTION: Check if control is halted due to runaway detection
-	if !stateCopy.RunawayHaltUntil.IsZero() && time.Now().Before(stateCopy.RunawayHaltUntil) {
-		timeRemaining := time.Until(stateCopy.RunawayHaltUntil)
-		decision.Reason = fmt.Sprintf("runaway protection: control halted for %.0fm (%.0fs remaining)",
-			timeRemaining.Minutes(), timeRemaining.Seconds())
-		c.logger.Warn("runaway protection active",
-			zap.String("room_name", mapping.RoomName),
-			zap.Duration("time_remaining", timeRemaining),
-		)
+	// Check runaway protection (backup safety layer)
+	if halted, reason := c.checkRunawayProtection(mapping, &stateCopy, calculatedSetpoint); halted {
+		decision.Reason = reason
 		return decision
 	}
-
-	// RUNAWAY DETECTION: Check for consecutive increases
-	consecutiveIncreases := stateCopy.ConsecutiveIncreases
-	lastCalculated := stateCopy.LastCalculatedSetpoint
-
-	// Detect if setpoint is increasing consecutively (>0.1°C increase)
-	if calculatedSetpoint > lastCalculated+0.1 {
-		consecutiveIncreases++
-		c.logger.Debug("consecutive increase detected",
-			zap.String("room_name", mapping.RoomName),
-			zap.Int("consecutive_count", consecutiveIncreases),
-			zap.Float64("last_calculated", lastCalculated),
-			zap.Float64("current_calculated", calculatedSetpoint),
-			zap.Float64("increase", calculatedSetpoint-lastCalculated),
-		)
-	} else {
-		// Reset counter if not increasing
-		if consecutiveIncreases > 0 {
-			c.logger.Debug("consecutive increases reset",
-				zap.String("room_name", mapping.RoomName),
-				zap.Int("previous_count", consecutiveIncreases),
-			)
-		}
-		consecutiveIncreases = 0
-	}
-
-	// RUNAWAY PROTECTION: Halt control if 3+ consecutive increases
-	if consecutiveIncreases >= 3 {
-		haltDuration := 5 * time.Minute
-		haltUntil := time.Now().Add(haltDuration)
-
-		c.logger.Error("RUNAWAY DETECTED: 3+ consecutive increases, halting control",
-			zap.String("room_name", mapping.RoomName),
-			zap.Float64("last_calculated_setpoint", lastCalculated),
-			zap.Float64("current_calculated_setpoint", calculatedSetpoint),
-			zap.Int("consecutive_increases", consecutiveIncreases),
-			zap.Duration("halt_duration", haltDuration),
-			zap.Time("halt_until", haltUntil),
-		)
-
-		// Update state: halt control for 5 minutes and reset counter
-		c.stateMu.Lock()
-		if state, exists := c.stateByRoom[mapping.RoomID]; exists {
-			state.RunawayHaltUntil = haltUntil
-			state.ConsecutiveIncreases = 0
-			state.LastCalculatedSetpoint = 0
-		}
-		c.stateMu.Unlock()
-
-		decision.Reason = fmt.Sprintf("RUNAWAY DETECTED: 3 consecutive increases (%.1f→%.1f→%.1f°C), halting for %dm",
-			lastCalculated-1.0, lastCalculated-0.5, calculatedSetpoint, int(haltDuration.Minutes()))
-		return decision
-	}
-
-	// Update runaway tracking state for next iteration
-	c.stateMu.Lock()
-	if state, exists := c.stateByRoom[mapping.RoomID]; exists {
-		state.ConsecutiveIncreases = consecutiveIncreases
-		state.LastCalculatedSetpoint = calculatedSetpoint
-	}
-	c.stateMu.Unlock()
 
 	// Check if calculated setpoint matches schedule (means no sensor offset to compensate)
 	// AND actual temperature is within threshold (room is at correct temp)
@@ -304,89 +237,21 @@ func (c *Controller) evaluateRoom(
 	// Apply safety bounds
 	calculatedSetpoint = c.applySafetyBounds(calculatedSetpoint)
 
-	// Check if current setpoint already matches our calculated target (within 0.1°C tolerance)
-	// This applies to BOTH schedule mode and manual mode - no need to override if already correct
+	// Check if current setpoint already matches target
 	currentSetpoint := roomStatus.ThermSetpointTemperature
 	if math.Abs(currentSetpoint-calculatedSetpoint) < 0.1 && !shouldExtend {
-		// Clear pending since no change needed
-		c.stateMu.Lock()
-		if state, exists := c.stateByRoom[mapping.RoomID]; exists && state.PendingSetpoint != 0 {
-			c.logger.Debug("clearing pending setpoint (no change needed)",
-				zap.String("room_name", mapping.RoomName),
-				zap.Float64("pending_setpoint", state.PendingSetpoint),
-			)
-			state.PendingSetpoint = 0
-			state.PendingSetpointTime = time.Time{}
-		}
-		c.stateMu.Unlock()
-
+		c.clearPendingSetpoint(mapping.RoomID, mapping.RoomName)
 		decision.Action = "no_adjustment_needed"
 		decision.Reason = fmt.Sprintf("setpoint already at target (%.1f°C), mode=%s", calculatedSetpoint, roomStatus.ThermSetpointMode)
 		return decision
 	}
 
-	// DELAYED EXECUTION: Require same change needed twice before executing
-	// This prevents feedback loops where setpoint becomes the "schedule"
+	// Check delayed execution (primary feedback loop prevention)
 	// Exception: When extending an existing override, execute immediately
 	if !shouldExtend {
-		pendingSetpoint := stateCopy.PendingSetpoint
-		pendingTime := stateCopy.PendingSetpointTime
-
-		if pendingSetpoint != 0 && !pendingTime.IsZero() {
-			// We have a pending setpoint from last iteration
-			if math.Abs(calculatedSetpoint-pendingSetpoint) < 0.1 {
-				// Same change needed twice in a row → EXECUTE
-				c.logger.Info("delayed execution: confirmed - executing override",
-					zap.String("room_name", mapping.RoomName),
-					zap.Float64("pending_setpoint", pendingSetpoint),
-					zap.Float64("calculated_setpoint", calculatedSetpoint),
-					zap.Duration("pending_age", time.Since(pendingTime)),
-				)
-
-				// Clear pending since we're executing
-				c.stateMu.Lock()
-				if state, exists := c.stateByRoom[mapping.RoomID]; exists {
-					state.PendingSetpoint = 0
-					state.PendingSetpointTime = time.Time{}
-				}
-				c.stateMu.Unlock()
-				// Fall through to execute
-			} else {
-				// Different setpoint needed → UPDATE PENDING, don't execute
-				c.logger.Info("delayed execution: target changed - updating pending",
-					zap.String("room_name", mapping.RoomName),
-					zap.Float64("previous_pending", pendingSetpoint),
-					zap.Float64("new_pending", calculatedSetpoint),
-					zap.Float64("change", calculatedSetpoint-pendingSetpoint),
-				)
-
-				c.stateMu.Lock()
-				if state, exists := c.stateByRoom[mapping.RoomID]; exists {
-					state.PendingSetpoint = calculatedSetpoint
-					state.PendingSetpointTime = time.Now()
-				}
-				c.stateMu.Unlock()
-
-				decision.Action = "skip"
-				decision.Reason = fmt.Sprintf("delayed execution: target changed from %.1f°C to %.1f°C, awaiting confirmation", pendingSetpoint, calculatedSetpoint)
-				return decision
-			}
-		} else {
-			// No pending setpoint → SET PENDING, don't execute
-			c.logger.Info("delayed execution: marking for confirmation",
-				zap.String("room_name", mapping.RoomName),
-				zap.Float64("calculated_setpoint", calculatedSetpoint),
-			)
-
-			c.stateMu.Lock()
-			if state, exists := c.stateByRoom[mapping.RoomID]; exists {
-				state.PendingSetpoint = calculatedSetpoint
-				state.PendingSetpointTime = time.Now()
-			}
-			c.stateMu.Unlock()
-
+		if shouldDelay, reason := c.checkDelayedExecution(mapping, &stateCopy, calculatedSetpoint); shouldDelay {
 			decision.Action = "skip"
-			decision.Reason = fmt.Sprintf("delayed execution: marked %.1f°C for confirmation (will execute next iteration if still needed)", calculatedSetpoint)
+			decision.Reason = reason
 			return decision
 		}
 	}
@@ -562,5 +427,145 @@ func (c *Controller) getHardOverrideTemp(override config.HardOverride) (float64,
 		}
 	}
 	return 0, false
+}
+
+// checkRunawayProtection checks if control should be halted due to runaway detection
+// Returns (halted, reason)
+func (c *Controller) checkRunawayProtection(mapping config.ThermostatMapping, state *ThermostatState, calculatedSetpoint float64) (bool, string) {
+	// Check if control is currently halted
+	if !state.RunawayHaltUntil.IsZero() && time.Now().Before(state.RunawayHaltUntil) {
+		timeRemaining := time.Until(state.RunawayHaltUntil)
+		c.logger.Warn("runaway protection active",
+			zap.String("room_name", mapping.RoomName),
+			zap.Duration("time_remaining", timeRemaining),
+		)
+		return true, fmt.Sprintf("runaway protection: control halted for %.0fm (%.0fs remaining)",
+			timeRemaining.Minutes(), timeRemaining.Seconds())
+	}
+
+	// Track consecutive increases
+	consecutiveIncreases := state.ConsecutiveIncreases
+	lastCalculated := state.LastCalculatedSetpoint
+
+	if calculatedSetpoint > lastCalculated+0.1 {
+		consecutiveIncreases++
+		c.logger.Debug("consecutive increase detected",
+			zap.String("room_name", mapping.RoomName),
+			zap.Int("consecutive_count", consecutiveIncreases),
+			zap.Float64("last_calculated", lastCalculated),
+			zap.Float64("current_calculated", calculatedSetpoint),
+			zap.Float64("increase", calculatedSetpoint-lastCalculated),
+		)
+	} else {
+		if consecutiveIncreases > 0 {
+			c.logger.Debug("consecutive increases reset",
+				zap.String("room_name", mapping.RoomName),
+				zap.Int("previous_count", consecutiveIncreases),
+			)
+		}
+		consecutiveIncreases = 0
+	}
+
+	// Halt if 3+ consecutive increases detected
+	if consecutiveIncreases >= 3 {
+		haltDuration := 5 * time.Minute
+		haltUntil := time.Now().Add(haltDuration)
+
+		c.logger.Error("RUNAWAY DETECTED: 3+ consecutive increases, halting control",
+			zap.String("room_name", mapping.RoomName),
+			zap.Float64("last_calculated_setpoint", lastCalculated),
+			zap.Float64("current_calculated_setpoint", calculatedSetpoint),
+			zap.Int("consecutive_increases", consecutiveIncreases),
+			zap.Duration("halt_duration", haltDuration),
+			zap.Time("halt_until", haltUntil),
+		)
+
+		c.stateMu.Lock()
+		if roomState, exists := c.stateByRoom[mapping.RoomID]; exists {
+			roomState.RunawayHaltUntil = haltUntil
+			roomState.ConsecutiveIncreases = 0
+			roomState.LastCalculatedSetpoint = 0
+		}
+		c.stateMu.Unlock()
+
+		return true, fmt.Sprintf("RUNAWAY DETECTED: 3 consecutive increases (%.1f→%.1f→%.1f°C), halting for %dm",
+			lastCalculated-1.0, lastCalculated-0.5, calculatedSetpoint, int(haltDuration.Minutes()))
+	}
+
+	// Update tracking state
+	c.stateMu.Lock()
+	if roomState, exists := c.stateByRoom[mapping.RoomID]; exists {
+		roomState.ConsecutiveIncreases = consecutiveIncreases
+		roomState.LastCalculatedSetpoint = calculatedSetpoint
+	}
+	c.stateMu.Unlock()
+
+	return false, ""
+}
+
+// checkDelayedExecution implements delayed execution pattern to prevent feedback loops
+// Returns (shouldDelay, reason)
+func (c *Controller) checkDelayedExecution(mapping config.ThermostatMapping, state *ThermostatState, calculatedSetpoint float64) (bool, string) {
+	pendingSetpoint := state.PendingSetpoint
+	pendingTime := state.PendingSetpointTime
+
+	if pendingSetpoint != 0 && !pendingTime.IsZero() {
+		// Pending setpoint exists - check if target changed
+		if math.Abs(calculatedSetpoint-pendingSetpoint) < 0.1 {
+			// Same change needed twice → EXECUTE
+			c.logger.Info("delayed execution: confirmed - executing override",
+				zap.String("room_name", mapping.RoomName),
+				zap.Float64("pending_setpoint", pendingSetpoint),
+				zap.Float64("calculated_setpoint", calculatedSetpoint),
+				zap.Duration("pending_age", time.Since(pendingTime)),
+			)
+			c.clearPendingSetpoint(mapping.RoomID, mapping.RoomName)
+			return false, ""
+		}
+
+		// Different setpoint needed → UPDATE PENDING
+		c.logger.Info("delayed execution: target changed - updating pending",
+			zap.String("room_name", mapping.RoomName),
+			zap.Float64("previous_pending", pendingSetpoint),
+			zap.Float64("new_pending", calculatedSetpoint),
+			zap.Float64("change", calculatedSetpoint-pendingSetpoint),
+		)
+		c.setPendingSetpoint(mapping.RoomID, calculatedSetpoint)
+		return true, fmt.Sprintf("delayed execution: target changed from %.1f°C to %.1f°C, awaiting confirmation", pendingSetpoint, calculatedSetpoint)
+	}
+
+	// No pending setpoint → SET PENDING
+	c.logger.Info("delayed execution: marking for confirmation",
+		zap.String("room_name", mapping.RoomName),
+		zap.Float64("calculated_setpoint", calculatedSetpoint),
+	)
+	c.setPendingSetpoint(mapping.RoomID, calculatedSetpoint)
+	return true, fmt.Sprintf("delayed execution: marked %.1f°C for confirmation (will execute next iteration if still needed)", calculatedSetpoint)
+}
+
+// clearPendingSetpoint clears the pending setpoint for a room
+func (c *Controller) clearPendingSetpoint(roomID, roomName string) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+
+	if state, exists := c.stateByRoom[roomID]; exists && state.PendingSetpoint != 0 {
+		c.logger.Debug("clearing pending setpoint",
+			zap.String("room_name", roomName),
+			zap.Float64("pending_setpoint", state.PendingSetpoint),
+		)
+		state.PendingSetpoint = 0
+		state.PendingSetpointTime = time.Time{}
+	}
+}
+
+// setPendingSetpoint sets the pending setpoint for a room
+func (c *Controller) setPendingSetpoint(roomID string, setpoint float64) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+
+	if state, exists := c.stateByRoom[roomID]; exists {
+		state.PendingSetpoint = setpoint
+		state.PendingSetpointTime = time.Now()
+	}
 }
 
