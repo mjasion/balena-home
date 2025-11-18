@@ -223,7 +223,14 @@ thermostatControl:
   #   "0 */5 * * * *"    - Every 5 minutes at second 0
   #   "0 */15 * * * *"   - Every 15 minutes at second 0
   #   "0 0 6-22 * * *"   - Every hour from 6 AM to 10 PM
-  cron: "0 * * * * *"  # Every minute at second 0 (or use THERMOSTAT_CONTROL_CRON env var)
+
+  # Home status fetch cron (fetches Netatmo API data and caches it)
+  # Runs shortly before control loop to ensure fresh data
+  homeStatusFetchCron: "0 * * * * *"  # Every at second 0 (or use HOME_STATUS_FETCH_CRON env var)
+
+  # Control loop cron (evaluates control decisions using cached data)
+  # Runs 30 seconds after home status fetch to use fresh data
+  controlLoopCron: "30 */3 * * * *"  # Every 3 minutes at second 30 (or use CONTROL_LOOP_CRON env var)
 
   # Schedule sync interval in minutes (default: 15, set to 0 to disable)
   # Syncs actual schedule temperature by temporarily switching to schedule mode
