@@ -220,6 +220,8 @@ thermostatControl:
   # 6-field cron with seconds: second minute hour day month weekday
   # Examples:
   #   "0 * * * * *"      - Every minute at second 0
+  #   "0 */2 * * * *"    - Every 2 minutes at second 0
+  #   "0 */3 * * * *"    - Every 3 minutes at second 0
   #   "0 */5 * * * *"    - Every 5 minutes at second 0
   #   "0 */15 * * * *"   - Every 15 minutes at second 0
   #   "0 0 6-22 * * *"   - Every hour from 6 AM to 10 PM

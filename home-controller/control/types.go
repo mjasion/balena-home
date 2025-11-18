@@ -20,6 +20,11 @@ type ThermostatState struct {
 	LastHomeMode             string    // Last known home mode (away, hg, etc.)
 	LastManualSetpoint       float64   // Last manual setpoint observed from Netatmo
 	LastManualEndTime        int64     // Last manual override end time observed from Netatmo
+
+	// Runaway detection
+	ConsecutiveIncreases   int       // Count of consecutive setpoint increases
+	LastCalculatedSetpoint float64   // Last calculated setpoint (before safety limits)
+	RunawayHaltUntil       time.Time // Control halted until this time (runaway protection)
 }
 
 // Copy creates a defensive copy of the state
@@ -37,6 +42,9 @@ func (s *ThermostatState) Copy() ThermostatState {
 		LastHomeMode:             s.LastHomeMode,
 		LastManualSetpoint:       s.LastManualSetpoint,
 		LastManualEndTime:        s.LastManualEndTime,
+		ConsecutiveIncreases:     s.ConsecutiveIncreases,
+		LastCalculatedSetpoint:   s.LastCalculatedSetpoint,
+		RunawayHaltUntil:         s.RunawayHaltUntil,
 	}
 }
 
