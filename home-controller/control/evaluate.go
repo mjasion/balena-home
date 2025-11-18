@@ -209,6 +209,79 @@ func (c *Controller) evaluateRoom(
 		zap.Float64("calculated_setpoint", calculatedSetpoint),
 	)
 
+	// RUNAWAY PROTECTION: Check if control is halted due to runaway detection
+	if !stateCopy.RunawayHaltUntil.IsZero() && time.Now().Before(stateCopy.RunawayHaltUntil) {
+		timeRemaining := time.Until(stateCopy.RunawayHaltUntil)
+		decision.Reason = fmt.Sprintf("runaway protection: control halted for %.0fm (%.0fs remaining)",
+			timeRemaining.Minutes(), timeRemaining.Seconds())
+		c.logger.Warn("runaway protection active",
+			zap.String("room_name", mapping.RoomName),
+			zap.Duration("time_remaining", timeRemaining),
+		)
+		return decision
+	}
+
+	// RUNAWAY DETECTION: Check for consecutive increases
+	consecutiveIncreases := stateCopy.ConsecutiveIncreases
+	lastCalculated := stateCopy.LastCalculatedSetpoint
+
+	// Detect if setpoint is increasing consecutively (>0.1°C increase)
+	if calculatedSetpoint > lastCalculated+0.1 {
+		consecutiveIncreases++
+		c.logger.Debug("consecutive increase detected",
+			zap.String("room_name", mapping.RoomName),
+			zap.Int("consecutive_count", consecutiveIncreases),
+			zap.Float64("last_calculated", lastCalculated),
+			zap.Float64("current_calculated", calculatedSetpoint),
+			zap.Float64("increase", calculatedSetpoint-lastCalculated),
+		)
+	} else {
+		// Reset counter if not increasing
+		if consecutiveIncreases > 0 {
+			c.logger.Debug("consecutive increases reset",
+				zap.String("room_name", mapping.RoomName),
+				zap.Int("previous_count", consecutiveIncreases),
+			)
+		}
+		consecutiveIncreases = 0
+	}
+
+	// RUNAWAY PROTECTION: Halt control if 3+ consecutive increases
+	if consecutiveIncreases >= 3 {
+		haltDuration := 5 * time.Minute
+		haltUntil := time.Now().Add(haltDuration)
+
+		c.logger.Error("RUNAWAY DETECTED: 3+ consecutive increases, halting control",
+			zap.String("room_name", mapping.RoomName),
+			zap.Float64("last_calculated_setpoint", lastCalculated),
+			zap.Float64("current_calculated_setpoint", calculatedSetpoint),
+			zap.Int("consecutive_increases", consecutiveIncreases),
+			zap.Duration("halt_duration", haltDuration),
+			zap.Time("halt_until", haltUntil),
+		)
+
+		// Update state: halt control for 5 minutes and reset counter
+		c.stateMu.Lock()
+		if state, exists := c.stateByRoom[mapping.RoomID]; exists {
+			state.RunawayHaltUntil = haltUntil
+			state.ConsecutiveIncreases = 0
+			state.LastCalculatedSetpoint = 0
+		}
+		c.stateMu.Unlock()
+
+		decision.Reason = fmt.Sprintf("RUNAWAY DETECTED: 3 consecutive increases (%.1f→%.1f→%.1f°C), halting for %dm",
+			lastCalculated-1.0, lastCalculated-0.5, calculatedSetpoint, int(haltDuration.Minutes()))
+		return decision
+	}
+
+	// Update runaway tracking state for next iteration
+	c.stateMu.Lock()
+	if state, exists := c.stateByRoom[mapping.RoomID]; exists {
+		state.ConsecutiveIncreases = consecutiveIncreases
+		state.LastCalculatedSetpoint = calculatedSetpoint
+	}
+	c.stateMu.Unlock()
+
 	// Check if calculated setpoint matches schedule (means no sensor offset to compensate)
 	// AND actual temperature is within threshold (room is at correct temp)
 	noSensorOffset := math.Abs(calculatedSetpoint-scheduledTemp) < 0.1
