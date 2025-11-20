@@ -337,8 +337,14 @@ thermostatControl:
      schedule:
        - startTime: "06:10"
          endTime: "07:30"
-         targetTemperature: 24.0
+         targetTemperature: 23.0
          days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
+   - roomName: "Sypialnia"
+     schedule:
+       - startTime: "00:00"
+         endTime: "05:00"
+         targetTemperature: 23.0
+         days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 # Job Scheduler Configuration
 scheduler:
