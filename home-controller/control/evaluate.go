@@ -506,6 +506,24 @@ func (c *Controller) checkRunawayProtection(mapping config.ThermostatMapping, st
 // checkDelayedExecution implements delayed execution pattern to prevent feedback loops
 // Returns (shouldDelay, reason)
 func (c *Controller) checkDelayedExecution(mapping config.ThermostatMapping, state *ThermostatState, calculatedSetpoint float64) (bool, string) {
+	// Bypass delayed execution if schedule just changed during sync
+	// This allows immediate response to schedule changes
+	if state.ScheduleJustChanged {
+		c.logger.Info("delayed execution: bypassing for schedule change",
+			zap.String("room_name", mapping.RoomName),
+			zap.Float64("calculated_setpoint", calculatedSetpoint),
+		)
+		// Clear the flag and pending setpoint
+		c.stateMu.Lock()
+		if s, exists := c.stateByRoom[mapping.RoomID]; exists {
+			s.ScheduleJustChanged = false
+			s.PendingSetpoint = 0
+			s.PendingSetpointTime = time.Time{}
+		}
+		c.stateMu.Unlock()
+		return false, "" // Don't delay, execute immediately
+	}
+
 	pendingSetpoint := state.PendingSetpoint
 	pendingTime := state.PendingSetpointTime
 

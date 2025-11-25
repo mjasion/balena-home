@@ -29,6 +29,9 @@ type ThermostatState struct {
 	// Delayed execution (primary feedback loop prevention)
 	PendingSetpoint     float64   // Setpoint calculated last iteration but not yet executed
 	PendingSetpointTime time.Time // When the pending setpoint was calculated
+
+	// Schedule sync flags
+	ScheduleJustChanged bool // True when schedule changed during last sync, bypasses delayed execution once
 }
 
 // Copy creates a defensive copy of the state
@@ -51,6 +54,7 @@ func (s *ThermostatState) Copy() ThermostatState {
 		RunawayHaltUntil:         s.RunawayHaltUntil,
 		PendingSetpoint:          s.PendingSetpoint,
 		PendingSetpointTime:      s.PendingSetpointTime,
+		ScheduleJustChanged:      s.ScheduleJustChanged,
 	}
 }
 

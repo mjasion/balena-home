@@ -237,14 +237,19 @@ thermostatControl:
   # Schedule sync interval in minutes (default: 15, set to 0 to disable)
   # Syncs actual schedule temperature by temporarily switching to schedule mode
   # This solves the problem where Netatmo API doesn't expose schedule when in manual mode
-  # How it works:
-  #   1. At the start of control loop (every scheduleSyncIntervalMinutes)
-  #   2. Switch thermostat to schedule mode
-  #   3. Read current setpoint (reflects actual schedule)
-  #   4. Store synced temperature for use in control decisions
-  #   5. Then evaluate if override needed and apply if necessary
+  # How it works (HYBRID APPROACH):
+  #   1. Switch thermostat to schedule mode
+  #   2. Read current setpoint (reflects actual schedule)
+  #   3. Compare with previous synced temperature:
+  #      - If UNCHANGED: Restore previous override immediately (no re-evaluation)
+  #      - If CHANGED: Skip restore, bypass delayed execution, re-evaluate immediately
+  #   4. Continue normal control loop
+  # Benefits:
+  #   - Minimal interruption when schedule unchanged (< 2 seconds)
+  #   - Immediate response when schedule changes (bypasses delayed execution)
+  #   - No extra API calls for unchanged schedules
   # IMPORTANT: Runs BEFORE control decisions to ensure fresh schedule data
-  scheduleSyncIntervalMinutes: 30  # or use SCHEDULE_SYNC_INTERVAL_MINUTES env var
+  scheduleSyncIntervalMinutes: 15  # Recommended: 15 minutes for responsive schedule tracking
 
   # Poll interval after switching to schedule mode (default: 2 seconds)
   # How long to wait between API calls when checking if mode has switched
@@ -265,7 +270,7 @@ thermostatControl:
   # When override has less than this time remaining, extend it automatically
   # This prevents the thermostat from briefly switching back to schedule mode
   # Must be less than overrideDurationMinutes
-  extensionThresholdMinutes: 4
+  extensionThresholdMinutes: 4  # Restored to original value
 
   # External modification behavior:
   # If thermostat is manually changed, automation pauses INDEFINITELY

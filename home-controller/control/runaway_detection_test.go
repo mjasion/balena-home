@@ -38,8 +38,8 @@ func TestRunawayDetection(t *testing.T) {
 	}
 
 	// Create mock buffers
-	controlBuffer := buffer.NewRingBuffer(100)
-	metricsBuffer := buffer.NewRingBuffer(100)
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
 
 	// Create mock Netatmo client (won't be called in dry-run)
 	mockClient := &netatmo.Client{}
@@ -60,10 +60,10 @@ func TestRunawayDetection(t *testing.T) {
 	// Add mock sensor reading to control buffer (25.3°C - the actual value from the incident)
 	reading := &buffer.Reading{
 		Type: buffer.ReadingTypeBLE,
-		BLE: &buffer.BLEReading{
+		BLE: &buffer.SensorReading{
 			Timestamp:   time.Now(),
 			MAC:         "A4:C1:38:F1:2D:0D",
-			Temperature: 25.3,
+			TemperatureCelsius:25.3,
 		},
 	}
 	controlBuffer.Add(reading)
@@ -77,7 +77,6 @@ func TestRunawayDetection(t *testing.T) {
 	roomStatusMap1 := map[string]*netatmo.RoomStatus{
 		"test-room-1": {
 			ID:                        "test-room-1",
-			Name:                      "Bathroom",
 			Reachable:                 true,
 			ThermSetpointMode:         "schedule",
 			ThermSetpointTemperature:  24.0, // This becomes the "scheduled" temp due to fallback bug
@@ -105,7 +104,6 @@ func TestRunawayDetection(t *testing.T) {
 	roomStatusMap2 := map[string]*netatmo.RoomStatus{
 		"test-room-1": {
 			ID:                        "test-room-1",
-			Name:                      "Bathroom",
 			Reachable:                 true,
 			ThermSetpointMode:         "manual",
 			ThermSetpointTemperature:  24.5, // Previous setpoint, used as "scheduled"
@@ -138,7 +136,6 @@ func TestRunawayDetection(t *testing.T) {
 	roomStatusMap3 := map[string]*netatmo.RoomStatus{
 		"test-room-1": {
 			ID:                        "test-room-1",
-			Name:                      "Bathroom",
 			Reachable:                 true,
 			ThermSetpointMode:         "manual",
 			ThermSetpointTemperature:  25.0, // Previous setpoint, used as "scheduled"
@@ -221,8 +218,8 @@ func TestRunawayDetectionReset(t *testing.T) {
 		},
 	}
 
-	controlBuffer := buffer.NewRingBuffer(100)
-	metricsBuffer := buffer.NewRingBuffer(100)
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
 	mockClient := &netatmo.Client{}
 
 	controller := New(cfg, mockClient, controlBuffer, metricsBuffer, logger)
@@ -241,10 +238,10 @@ func TestRunawayDetectionReset(t *testing.T) {
 	// Add sensor reading showing room is warmer now (will cause setpoint to decrease)
 	reading := &buffer.Reading{
 		Type: buffer.ReadingTypeBLE,
-		BLE: &buffer.BLEReading{
+		BLE: &buffer.SensorReading{
 			Timestamp:   time.Now(),
 			MAC:         "A4:C1:38:F1:2D:0D",
-			Temperature: 24.5, // Warmer than scheduled (24.0)
+			TemperatureCelsius:24.5, // Warmer than scheduled (24.0)
 		},
 	}
 	controlBuffer.Add(reading)
@@ -256,7 +253,6 @@ func TestRunawayDetectionReset(t *testing.T) {
 	roomStatusMap := map[string]*netatmo.RoomStatus{
 		"test-room-1": {
 			ID:                        "test-room-1",
-			Name:                      "Bathroom",
 			Reachable:                 true,
 			ThermSetpointMode:         "schedule",
 			ThermSetpointTemperature:  24.0,
@@ -300,8 +296,8 @@ func TestRunawayHaltExpiry(t *testing.T) {
 		},
 	}
 
-	controlBuffer := buffer.NewRingBuffer(100)
-	metricsBuffer := buffer.NewRingBuffer(100)
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
 	mockClient := &netatmo.Client{}
 
 	controller := New(cfg, mockClient, controlBuffer, metricsBuffer, logger)
@@ -321,10 +317,10 @@ func TestRunawayHaltExpiry(t *testing.T) {
 	// Add sensor reading
 	reading := &buffer.Reading{
 		Type: buffer.ReadingTypeBLE,
-		BLE: &buffer.BLEReading{
+		BLE: &buffer.SensorReading{
 			Timestamp:   time.Now(),
 			MAC:         "A4:C1:38:F1:2D:0D",
-			Temperature: 23.0,
+			TemperatureCelsius:23.0,
 		},
 	}
 	controlBuffer.Add(reading)
@@ -334,7 +330,6 @@ func TestRunawayHaltExpiry(t *testing.T) {
 	roomStatusMap := map[string]*netatmo.RoomStatus{
 		"test-room-1": {
 			ID:                        "test-room-1",
-			Name:                      "Bathroom",
 			Reachable:                 true,
 			ThermSetpointMode:         "schedule",
 			ThermSetpointTemperature:  24.0,

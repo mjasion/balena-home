@@ -36,8 +36,8 @@ func TestDelayedExecution_FeedbackLoopPrevention(t *testing.T) {
 		},
 	}
 
-	controlBuffer := buffer.NewRingBuffer(100)
-	metricsBuffer := buffer.NewRingBuffer(100)
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
 	mockClient := &netatmo.Client{}
 
 	controller := New(cfg, mockClient, controlBuffer, metricsBuffer, logger)
@@ -54,10 +54,10 @@ func TestDelayedExecution_FeedbackLoopPrevention(t *testing.T) {
 	// Add sensor reading (25.3°C - actual value from incident)
 	reading := &buffer.Reading{
 		Type: buffer.ReadingTypeBLE,
-		BLE: &buffer.BLEReading{
-			Timestamp:   time.Now(),
-			MAC:         "A4:C1:38:F1:2D:0D",
-			Temperature: 25.3,
+		BLE: &buffer.SensorReading{
+			Timestamp:          time.Now(),
+			MAC:                "A4:C1:38:F1:2D:0D",
+			TemperatureCelsius: 25.3,
 		},
 	}
 	controlBuffer.Add(reading)
@@ -68,7 +68,6 @@ func TestDelayedExecution_FeedbackLoopPrevention(t *testing.T) {
 	roomStatusMap1 := map[string]*netatmo.RoomStatus{
 		"test-room-1": {
 			ID:                       "test-room-1",
-			Name:                     "Bathroom",
 			Reachable:                true,
 			ThermSetpointMode:        "schedule",
 			ThermSetpointTemperature: 24.0,
@@ -104,7 +103,6 @@ func TestDelayedExecution_FeedbackLoopPrevention(t *testing.T) {
 	roomStatusMap2 := map[string]*netatmo.RoomStatus{
 		"test-room-1": {
 			ID:                       "test-room-1",
-			Name:                     "Bathroom",
 			Reachable:                true,
 			ThermSetpointMode:        "manual",
 			ThermSetpointTemperature: 24.5, // Would calculate 25.0°C (different from pending)
@@ -134,7 +132,6 @@ func TestDelayedExecution_FeedbackLoopPrevention(t *testing.T) {
 	roomStatusMap3 := map[string]*netatmo.RoomStatus{
 		"test-room-1": {
 			ID:                       "test-room-1",
-			Name:                     "Bathroom",
 			Reachable:                true,
 			ThermSetpointMode:        "manual",
 			ThermSetpointTemperature: 25.0, // Would calculate 25.5°C (different from pending)
@@ -184,8 +181,8 @@ func TestDelayedExecution_NormalOperation(t *testing.T) {
 		},
 	}
 
-	controlBuffer := buffer.NewRingBuffer(100)
-	metricsBuffer := buffer.NewRingBuffer(100)
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
 	mockClient := &netatmo.Client{}
 
 	controller := New(cfg, mockClient, controlBuffer, metricsBuffer, logger)
@@ -202,10 +199,10 @@ func TestDelayedExecution_NormalOperation(t *testing.T) {
 	// Add sensor reading (23.0°C - room is cold)
 	reading := &buffer.Reading{
 		Type: buffer.ReadingTypeBLE,
-		BLE: &buffer.BLEReading{
+		BLE: &buffer.SensorReading{
 			Timestamp:   time.Now(),
 			MAC:         "A4:C1:38:F1:2D:0D",
-			Temperature: 23.0,
+			TemperatureCelsius:23.0,
 		},
 	}
 	controlBuffer.Add(reading)
@@ -216,7 +213,6 @@ func TestDelayedExecution_NormalOperation(t *testing.T) {
 	roomStatusMap1 := map[string]*netatmo.RoomStatus{
 		"test-room-1": {
 			ID:                       "test-room-1",
-			Name:                     "Bathroom",
 			Reachable:                true,
 			ThermSetpointMode:        "schedule",
 			ThermSetpointTemperature: 24.0, // Target 24°C
@@ -279,8 +275,8 @@ func TestDelayedExecution_TargetChanges(t *testing.T) {
 		},
 	}
 
-	controlBuffer := buffer.NewRingBuffer(100)
-	metricsBuffer := buffer.NewRingBuffer(100)
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
 	mockClient := &netatmo.Client{}
 
 	controller := New(cfg, mockClient, controlBuffer, metricsBuffer, logger)
@@ -297,10 +293,10 @@ func TestDelayedExecution_TargetChanges(t *testing.T) {
 	// Add sensor reading
 	reading := &buffer.Reading{
 		Type: buffer.ReadingTypeBLE,
-		BLE: &buffer.BLEReading{
+		BLE: &buffer.SensorReading{
 			Timestamp:   time.Now(),
 			MAC:         "A4:C1:38:F1:2D:0D",
-			Temperature: 23.0,
+			TemperatureCelsius:23.0,
 		},
 	}
 	controlBuffer.Add(reading)
@@ -311,7 +307,6 @@ func TestDelayedExecution_TargetChanges(t *testing.T) {
 	roomStatusMap1 := map[string]*netatmo.RoomStatus{
 		"test-room-1": {
 			ID:                       "test-room-1",
-			Name:                     "Bathroom",
 			Reachable:                true,
 			ThermSetpointMode:        "schedule",
 			ThermSetpointTemperature: 24.0,
@@ -327,7 +322,6 @@ func TestDelayedExecution_TargetChanges(t *testing.T) {
 	roomStatusMap2 := map[string]*netatmo.RoomStatus{
 		"test-room-1": {
 			ID:                       "test-room-1",
-			Name:                     "Bathroom",
 			Reachable:                true,
 			ThermSetpointMode:        "schedule",
 			ThermSetpointTemperature: 25.0, // Schedule changed!
@@ -385,8 +379,8 @@ func TestDelayedExecution_ClearedWhenNoChangeNeeded(t *testing.T) {
 		},
 	}
 
-	controlBuffer := buffer.NewRingBuffer(100)
-	metricsBuffer := buffer.NewRingBuffer(100)
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
 	mockClient := &netatmo.Client{}
 
 	controller := New(cfg, mockClient, controlBuffer, metricsBuffer, logger)
@@ -405,10 +399,10 @@ func TestDelayedExecution_ClearedWhenNoChangeNeeded(t *testing.T) {
 	// Add sensor reading (room at target temperature)
 	reading := &buffer.Reading{
 		Type: buffer.ReadingTypeBLE,
-		BLE: &buffer.BLEReading{
+		BLE: &buffer.SensorReading{
 			Timestamp:   time.Now(),
 			MAC:         "A4:C1:38:F1:2D:0D",
-			Temperature: 24.0,
+			TemperatureCelsius:24.0,
 		},
 	}
 	controlBuffer.Add(reading)
@@ -419,7 +413,6 @@ func TestDelayedExecution_ClearedWhenNoChangeNeeded(t *testing.T) {
 	roomStatusMap := map[string]*netatmo.RoomStatus{
 		"test-room-1": {
 			ID:                       "test-room-1",
-			Name:                     "Bathroom",
 			Reachable:                true,
 			ThermSetpointMode:        "schedule",
 			ThermSetpointTemperature: 24.0,
