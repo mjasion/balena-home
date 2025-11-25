@@ -290,10 +290,15 @@ func (c *Controller) restorePreviousOverrides(ctx context.Context, previousOverr
 
 		// Calculate remaining duration
 		remainingDuration := time.Until(override.EndTime)
-		if remainingDuration <= 0 {
-			c.logger.Debug("override already expired, not restoring",
+
+		// If override expired or expires very soon (< 2 minutes), skip restore
+		// This prevents "Endtime in the past" API errors during schedule sync delays
+		// The control loop will re-evaluate and create a new override if still needed
+		if remainingDuration < 2*time.Minute {
+			c.logger.Info("override expired or expires soon, skipping restore (will re-evaluate)",
 				zap.String("room_id", roomID),
 				zap.Time("end_time", override.EndTime),
+				zap.Duration("remaining_duration", remainingDuration),
 			)
 			continue
 		}
