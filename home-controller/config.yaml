@@ -353,12 +353,7 @@ thermostatControl:
          endTime: "05:00"
          targetTemperature: 23.0
          days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-   - roomName: "Sypialnia"
-     schedule:
-       - startTime: "22:30"
-         endTime: "00:00"
-         targetTemperature: 23.0
-         days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
    - roomName: "Sypialnia"
      schedule:
        - startTime: "06:00"
