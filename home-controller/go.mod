@@ -4,7 +4,7 @@ go 1.25
 
 require (
 	github.com/go-co-op/gocron-ui v0.2.0
-	github.com/go-co-op/gocron/v2 v2.18.1
+	github.com/go-co-op/gocron/v2 v2.18.2
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/snappy v1.0.0
 	github.com/grafana/pyroscope-go v1.2.7
