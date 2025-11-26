@@ -343,8 +343,8 @@ thermostatControl:
          days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
    - roomName: "Sypialnia"
      schedule:
-       - startTime: "06:10"
-         endTime: "07:30"
+       - startTime: "06:00"
+         endTime: "15:30"
          targetTemperature: 23.0
          days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
    - roomName: "Sypialnia"
@@ -353,6 +353,18 @@ thermostatControl:
          endTime: "05:00"
          targetTemperature: 23.0
          days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+   - roomName: "Sypialnia"
+     schedule:
+       - startTime: "22:30"
+         endTime: "00:00"
+         targetTemperature: 23.0
+         days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+   - roomName: "Sypialnia"
+     schedule:
+       - startTime: "06:00"
+         endTime: "07:30"
+         targetTemperature: 23.0
+         days: [ "Sat", "Sun" ]
 
 # Job Scheduler Configuration
 scheduler:
