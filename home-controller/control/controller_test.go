@@ -170,7 +170,7 @@ func TestWeightedAverageTemperature(t *testing.T) {
 			}
 
 			// Calculate weighted average
-			result, err := c.getWeightedAverageTemperature(nil, sensorMAC)
+			result, err := c.getWeightedAverageTemperature(context.Background(), sensorMAC)
 
 			if tt.expectError {
 				if err == nil {
@@ -230,7 +230,7 @@ func TestWeightedAverageWithVaryingFrequencies(t *testing.T) {
 	}
 
 	// Calculate weighted average
-	result, err := c.getWeightedAverageTemperature(nil, sensorMAC)
+	result, err := c.getWeightedAverageTemperature(context.Background(), sensorMAC)
 	if err != nil {
 		t.Fatalf("getWeightedAverageTemperature() error = %v", err)
 	}
@@ -609,7 +609,7 @@ func TestBufferIsolation(t *testing.T) {
 	}
 
 	// Verify we can still get weighted average
-	result, err := c.getWeightedAverageTemperature(nil, sensorMAC)
+	result, err := c.getWeightedAverageTemperature(context.Background(), sensorMAC)
 	if err != nil {
 		t.Fatalf("getWeightedAverageTemperature() error = %v", err)
 	}

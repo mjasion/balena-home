@@ -94,6 +94,16 @@ func (c *Controller) switchRoomsToScheduleMode(ctx context.Context, homeStatus *
 	previousOverrides := make(map[string]*PreviousOverride)
 
 	for _, mapping := range c.config.Mappings {
+		// Skip rooms with active hard overrides
+		// Hard overrides have precedence over schedule sync
+		if c.isHardOverrideActive(mapping.RoomName) {
+			c.logger.Debug("skipping schedule sync for room with active hard override",
+				zap.String("room_name", mapping.RoomName),
+			)
+			*skipCount++
+			continue
+		}
+
 		// Skip externally modified rooms
 		c.stateMu.RLock()
 		state, exists := c.stateByRoom[mapping.RoomID]
@@ -288,21 +298,6 @@ func (c *Controller) restorePreviousOverrides(ctx context.Context, previousOverr
 			continue
 		}
 
-		// Calculate remaining duration
-		remainingDuration := time.Until(override.EndTime)
-
-		// If override expired or expires very soon (< 2 minutes), skip restore
-		// This prevents "Endtime in the past" API errors during schedule sync delays
-		// The control loop will re-evaluate and create a new override if still needed
-		if remainingDuration < 2*time.Minute {
-			c.logger.Info("override expired or expires soon, skipping restore (will re-evaluate)",
-				zap.String("room_id", roomID),
-				zap.Time("end_time", override.EndTime),
-				zap.Duration("remaining_duration", remainingDuration),
-			)
-			continue
-		}
-
 		// Get room name for logging
 		var roomName string
 		c.stateMu.RLock()
@@ -311,9 +306,15 @@ func (c *Controller) restorePreviousOverrides(ctx context.Context, previousOverr
 		}
 		c.stateMu.RUnlock()
 
+		// Use FULL override duration for restoration (not remaining duration)
+		// This ensures the override stays active across multiple syncs
+		// Schedule didn't change, so we want to maintain the same setpoint with fresh duration
+		fullDuration := time.Duration(c.config.OverrideDurationMinutes) * time.Minute
+		newEndTime := time.Now().Add(fullDuration)
+
 		if !c.config.DryRun {
-			// Restore manual override with remaining duration
-			durationMinutes := int64(remainingDuration.Minutes())
+			// Restore manual override with FULL NEW duration
+			durationMinutes := int64(c.config.OverrideDurationMinutes)
 			err := c.netatmoClient.SetRoomThermpoint(ctx, c.homeID, roomID, "manual", override.Setpoint, durationMinutes)
 			if err != nil {
 				c.logger.Error("failed to restore previous override",
@@ -327,15 +328,26 @@ func (c *Controller) restorePreviousOverrides(ctx context.Context, previousOverr
 					zap.String("room_name", roomName),
 					zap.String("room_id", roomID),
 					zap.Float64("setpoint", override.Setpoint),
-					zap.Duration("remaining_duration", remainingDuration),
+					zap.Duration("full_duration", fullDuration),
+					zap.Time("new_end_time", newEndTime),
 				)
+
+				// Update state with new end time
+				c.stateMu.Lock()
+				if state, exists := c.stateByRoom[roomID]; exists {
+					state.OverrideEndTime = newEndTime
+					state.LastSetpointTime = time.Now()
+					state.LastSetpoint = override.Setpoint
+				}
+				c.stateMu.Unlock()
 			}
 		} else {
 			c.logger.Info("[DRY-RUN] WOULD restore previous override",
 				zap.String("room_name", roomName),
 				zap.String("room_id", roomID),
 				zap.Float64("setpoint", override.Setpoint),
-				zap.Duration("remaining_duration", remainingDuration),
+				zap.Duration("full_duration", fullDuration),
+				zap.Time("new_end_time", newEndTime),
 			)
 		}
 	}
