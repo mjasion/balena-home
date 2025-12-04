@@ -72,8 +72,12 @@ github.com/prometheus/client_model v0.6.2 h1:oBsgwpGs7iVziMvrGhE53c/GrLUsZdHnqNw
 github.com/prometheus/client_model v0.6.2/go.mod h1:y3m2F6Gdpfy6Ut/GBsUqTWZqCUvMVzSfMLjcu6wAwpE=
 github.com/prometheus/common v0.67.2 h1:PcBAckGFTIHt2+L3I33uNRTlKTplNzFctXcWhPyAEN8=
 github.com/prometheus/common v0.67.2/go.mod h1:63W3KZb1JOKgcjlIr64WW/LvFGAqKPj0atm+knVGEko=
+github.com/prometheus/common v0.67.4 h1:yR3NqWO1/UyO1w2PhUvXlGQs/PtFmoveVO0KZ4+Lvsc=
+github.com/prometheus/common v0.67.4/go.mod h1:gP0fq6YjjNCLssJCQp0yk4M8W6ikLURwkdd/YKtTbyI=
 github.com/prometheus/prometheus v0.307.3 h1:zGIN3EpiKacbMatcUL2i6wC26eRWXdoXfNPjoBc2l34=
 github.com/prometheus/prometheus v0.307.3/go.mod h1:sPbNW+KTS7WmzFIafC3Inzb6oZVaGLnSvwqTdz2jxRQ=
+github.com/prometheus/prometheus v0.308.0 h1:kVh/5m1n6m4cSK9HYTDEbMxzuzCWyEdPdKSxFRxXj04=
+github.com/prometheus/prometheus v0.308.0/go.mod h1:xXYKzScyqyFHihpS0UsXpC2F3RA/CygOs7wb4mpdusE=
 github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=
 github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzGIFLtro=
 github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
