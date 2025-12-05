@@ -322,32 +322,19 @@ func (c *Config) Validate() error {
 		}
 
 		// Validate cron expressions
-		if c.ThermostatControl.HomeStatusFetchCron == "" {
-			return fmt.Errorf("thermostat control home status fetch cron expression is required when thermostat control is enabled")
+		if c.ThermostatControl.MetricJobCron == "" {
+			return fmt.Errorf("thermostat control metric job cron expression is required when thermostat control is enabled")
 		}
-		if c.ThermostatControl.ControlLoopCron == "" {
-			return fmt.Errorf("thermostat control loop cron expression is required when thermostat control is enabled")
+		if c.ThermostatControl.ControlJobCron == "" {
+			return fmt.Errorf("thermostat control job cron expression is required when thermostat control is enabled")
+		}
+		if c.ThermostatControl.HardOverrideJobCron == "" {
+			return fmt.Errorf("thermostat control hard override job cron expression is required when thermostat control is enabled")
 		}
 
 		// Validate override duration
 		if c.ThermostatControl.OverrideDurationMinutes < 1 {
 			return fmt.Errorf("thermostat override duration must be at least 1 minute")
-		}
-
-		// Validate extension threshold
-		if c.ThermostatControl.ExtensionThresholdMinutes < 1 {
-			return fmt.Errorf("thermostat extension threshold must be at least 1 minute")
-		}
-
-		// Validate that extension threshold is less than override duration
-		if c.ThermostatControl.ExtensionThresholdMinutes >= c.ThermostatControl.OverrideDurationMinutes {
-			return fmt.Errorf("thermostat extension threshold (%d minutes) must be less than override duration (%d minutes)",
-				c.ThermostatControl.ExtensionThresholdMinutes, c.ThermostatControl.OverrideDurationMinutes)
-		}
-
-		// Validate external modification reset minutes
-		if c.ThermostatControl.ExternalModificationResetMinutes < 1 {
-			return fmt.Errorf("thermostat external modification reset minutes must be at least 1 minute")
 		}
 
 		// Validate mappings
@@ -456,24 +443,6 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("netatmo refresh token is required when thermostat control is enabled")
 		}
 
-		// Validate schedule sync configuration (optional)
-		if c.ThermostatControl.ScheduleSyncIntervalMinutes > 0 {
-			// Validate sync interval
-			if c.ThermostatControl.ScheduleSyncIntervalMinutes < 1 {
-				return fmt.Errorf("schedule sync interval must be at least 1 minute")
-			}
-
-			// Validate poll interval
-			if c.ThermostatControl.ScheduleSyncPollIntervalSeconds < 1 {
-				return fmt.Errorf("schedule sync poll interval must be at least 1 second")
-			}
-
-			// Validate poll timeout
-			if c.ThermostatControl.ScheduleSyncPollTimeoutSeconds < c.ThermostatControl.ScheduleSyncPollIntervalSeconds {
-				return fmt.Errorf("schedule sync poll timeout (%d seconds) must be greater than poll interval (%d seconds)",
-					c.ThermostatControl.ScheduleSyncPollTimeoutSeconds, c.ThermostatControl.ScheduleSyncPollIntervalSeconds)
-			}
-		}
 	}
 
 	return nil
