@@ -21,6 +21,13 @@ func (c *Controller) executeDecision(ctx context.Context, decision ControlDecisi
 	)
 	defer span.End()
 
+	c.logger.Debug("executing decision",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.String("room_name", decision.RoomName),
+		zap.String("action", decision.Action),
+		zap.String("reason", decision.Reason),
+	)
+
 	if decision.Action == "skip" || decision.Action == "no_adjustment_needed" {
 		c.logDecision(span, decision)
 		return
@@ -54,14 +61,37 @@ func (c *Controller) logDecision(span trace.Span, decision ControlDecision) {
 
 // executeManualOverride executes a manual override decision
 func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span, decision ControlDecision) {
+	c.logger.Debug("executing manual override - applying safety limits",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.String("room_name", decision.RoomName),
+		zap.Float64("calculated_setpoint", decision.CalculatedSetpoint),
+	)
+
 	// Apply safety limits
 	safeSetpoint, clamped := c.applyConfigSafetyLimits(decision.CalculatedSetpoint, decision.RoomName)
 
 	overrideEndTime := time.Unix(decision.OverrideEndTime, 0)
+	overrideDuration := time.Until(overrideEndTime)
+
+	span.SetAttributes(
+		attribute.Float64("calculated_setpoint", decision.CalculatedSetpoint),
+		attribute.Float64("safe_setpoint", safeSetpoint),
+		attribute.Bool("clamped", clamped),
+		attribute.Int64("override_duration_minutes", int64(overrideDuration.Minutes())),
+	)
+
+	if clamped {
+		c.logger.Warn("executing manual override - setpoint clamped by safety limits",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("room_name", decision.RoomName),
+			zap.Float64("original", decision.CalculatedSetpoint),
+			zap.Float64("clamped_to", safeSetpoint),
+		)
+	}
 
 	// Dry-run mode: log what would be sent but don't call API
 	if c.config.DryRun {
-		c.logger.Info("[DRY-RUN] WOULD set temperature (not actually sent)",
+		c.logger.Info("[DRY-RUN] executing manual override - WOULD set temperature (not sent to API)",
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
 			zap.String("room_name", decision.RoomName),
 			zap.String("room_id", decision.RoomID),
@@ -75,7 +105,12 @@ func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span,
 			zap.Float64("setpoint_temp", decision.SetpointTemperature),
 			zap.String("thermostat_mode", decision.ThermostatMode),
 			zap.Time("override_end_time", overrideEndTime.In(c.warsawLocation())),
-			zap.Duration("override_duration", time.Until(overrideEndTime)),
+			zap.Duration("override_duration", overrideDuration),
+		)
+
+		span.SetAttributes(
+			attribute.Bool("dry_run", true),
+			attribute.Bool("api_call_made", false),
 		)
 
 		// Update state even in dry-run mode (for testing override extension)
@@ -83,7 +118,7 @@ func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span,
 		return
 	}
 
-	c.logger.Info("setting thermostat override",
+	c.logger.Info("executing manual override - preparing to call Netatmo API",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.String("room_name", decision.RoomName),
 		zap.Float64("new_setpoint", safeSetpoint),
@@ -93,8 +128,10 @@ func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span,
 		zap.Float64("scheduled_temp", decision.ScheduledTemp),
 		zap.Float64("thermostat_measured", decision.ThermostatMeasured),
 		zap.String("reason", decision.Reason),
-		zap.Float64("setpoint_temp", decision.SetpointTemperature),
+		zap.Float64("current_setpoint", decision.SetpointTemperature),
 		zap.String("thermostat_mode", decision.ThermostatMode),
+		zap.Time("override_end_time", overrideEndTime.In(c.warsawLocation())),
+		zap.Duration("override_duration", overrideDuration),
 	)
 
 	// Call Netatmo API
@@ -102,7 +139,9 @@ func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span,
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to set thermostat setpoint")
-		c.logger.Error("failed to set thermostat setpoint",
+		span.SetAttributes(attribute.Bool("api_call_success", false))
+
+		c.logger.Error("executing manual override - Netatmo API call failed",
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
 			zap.String("room_name", decision.RoomName),
 			zap.Error(err),
@@ -110,15 +149,21 @@ func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span,
 		return
 	}
 
+	span.SetAttributes(
+		attribute.Bool("api_call_success", true),
+		attribute.Bool("dry_run", false),
+		attribute.Bool("api_call_made", true),
+	)
+
 	// Update state
 	c.updateRoomState(decision.RoomID, safeSetpoint, overrideEndTime)
 
-	c.logger.Info("thermostat override set successfully",
+	c.logger.Info("executing manual override - Netatmo API call successful, override applied",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.String("room_name", decision.RoomName),
 		zap.Float64("setpoint", safeSetpoint),
 		zap.Time("override_end_time", overrideEndTime.In(c.warsawLocation())),
-		zap.Duration("override_duration", time.Until(overrideEndTime)),
+		zap.Duration("override_duration", overrideDuration),
 	)
 }
 
@@ -150,22 +195,52 @@ func (c *Controller) applyConfigSafetyLimits(setpoint float64, roomName string) 
 
 // setNetatmoThermostat calls Netatmo API to set thermostat setpoint
 func (c *Controller) setNetatmoThermostat(ctx context.Context, roomID, roomName string, setpoint float64, endTime int64) error {
+	durationMinutes := int64((time.Unix(endTime, 0).Sub(time.Now())).Minutes())
+	if durationMinutes <= 0 {
+		durationMinutes = 1 // Minimum 1 minute
+	}
+
 	ctx, span := c.tracer.Start(ctx, "set_netatmo_thermostat_"+roomName,
 		trace.WithAttributes(
 			attribute.String("home_id", c.homeID),
 			attribute.String("room_id", roomID),
 			attribute.Float64("setpoint", setpoint),
 			attribute.String("mode", "manual"),
+			attribute.Int64("duration_minutes", durationMinutes),
 		),
 	)
 	defer span.End()
 
-	err := c.netatmoClient.SetRoomThermpoint(ctx, c.homeID, roomID, "manual", setpoint, endTime)
+	c.logger.Debug("calling Netatmo API SetRoomThermpoint",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.String("room_name", roomName),
+		zap.String("home_id", c.homeID),
+		zap.String("room_id", roomID),
+		zap.Float64("setpoint", setpoint),
+		zap.String("mode", "manual"),
+		zap.Int64("duration_minutes", durationMinutes),
+	)
+
+	err := c.netatmoClient.SetRoomThermpoint(ctx, c.homeID, roomID, "manual", setpoint, durationMinutes)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to set thermostat setpoint")
+		span.SetAttributes(attribute.Bool("api_success", false))
+
+		c.logger.Error("Netatmo API SetRoomThermpoint failed",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("room_name", roomName),
+			zap.Error(err),
+		)
 		return err
 	}
+
+	span.SetAttributes(attribute.Bool("api_success", true))
+
+	c.logger.Debug("Netatmo API SetRoomThermpoint successful",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.String("room_name", roomName),
+	)
 
 	return nil
 }

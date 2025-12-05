@@ -33,51 +33,71 @@ func (m *MetricJob) Run(ctx context.Context) {
 	ctx, span := m.tracer.Start(ctx, "metric_job_fetch_home_status",
 		trace.WithAttributes(
 			attribute.String("home_id", m.controller.homeID),
+			attribute.String("job", "metric_job"),
 		),
 	)
 	defer span.End()
 
 	fetchStart := time.Now()
 
-	m.logger.Debug("fetching home status for metrics",
+	m.logger.Info("metric job started - fetching home status from Netatmo API",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.String("span_id", span.SpanContext().SpanID().String()),
+		zap.String("home_id", m.controller.homeID),
 	)
 
 	// Fetch home status from Netatmo
 	homeStatus, err := m.controller.netatmoClient.GetHomeStatus(ctx, m.controller.homeID)
 
 	if err != nil {
-		m.logger.Error("failed to fetch home status",
+		m.logger.Error("metric job failed - could not fetch home status from Netatmo API",
 			zap.Error(err),
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("home_id", m.controller.homeID),
 		)
 		span.RecordError(err)
+		span.SetAttributes(attribute.Bool("fetch_success", false))
 		return
 	}
 
+	fetchDuration := time.Since(fetchStart)
+
 	span.SetAttributes(
 		attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+		attribute.Bool("fetch_success", true),
+		attribute.Int64("fetch_duration_ms", fetchDuration.Milliseconds()),
 	)
 
-	m.logger.Debug("home status fetched successfully",
+	m.logger.Info("metric job - home status fetched successfully from Netatmo API",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
-		zap.Duration("fetch_duration", time.Since(fetchStart)),
+		zap.Duration("fetch_duration", fetchDuration),
 	)
 
-	// Add Netatmo data to metrics buffer
+	// Add Netatmo data to metrics buffer for Prometheus push
+	m.logger.Debug("metric job - adding Netatmo data to metrics buffer",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+	)
 	m.controller.addToMetricsBuffer(ctx, homeStatus)
 
 	// Send status to Control Job via channel (buffered channel, won't block)
 	select {
 	case m.homeStatusChan <- homeStatus:
-		m.logger.Debug("sent home status to control job",
+		totalDuration := time.Since(fetchStart)
+		span.SetAttributes(
+			attribute.Bool("sent_to_control_job", true),
+			attribute.Int64("total_duration_ms", totalDuration.Milliseconds()),
+		)
+		m.logger.Info("metric job completed - home status sent to control job via channel",
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
-			zap.Duration("total_duration", time.Since(fetchStart)),
+			zap.Duration("total_duration", totalDuration),
 		)
 	case <-ctx.Done():
-		m.logger.Warn("context cancelled before sending home status")
+		span.SetAttributes(attribute.Bool("sent_to_control_job", false))
+		m.logger.Warn("metric job - context cancelled before sending home status to control job",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+		)
 	}
 }
 

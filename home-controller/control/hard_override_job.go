@@ -33,32 +33,50 @@ func NewHardOverrideJob(controller *Controller, logger *zap.Logger, tracer trace
 func (h *HardOverrideJob) Run(ctx context.Context) {
 	ctx, span := h.tracer.Start(ctx, "hard_override_job",
 		trace.WithAttributes(
+			attribute.String("job", "hard_override_job"),
 			attribute.Int("override_count", len(h.controller.config.HardOverrides)),
 		),
 	)
 	defer span.End()
 
-	h.logger.Debug("hard override job started",
-		zap.Int("override_count", len(h.controller.config.HardOverrides)),
+	h.logger.Info("hard override job started - checking for active time-based overrides",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("configured_overrides", len(h.controller.config.HardOverrides)),
 	)
 
 	// If no hard overrides configured, nothing to do
 	if len(h.controller.config.HardOverrides) == 0 {
+		h.logger.Debug("hard override job - no overrides configured, skipping")
+		span.SetAttributes(attribute.Bool("has_overrides", false))
 		return
 	}
 
+	span.SetAttributes(attribute.Bool("has_overrides", true))
+
 	// Fetch current home status
+	h.logger.Debug("hard override job - fetching home status from Netatmo API",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+	)
+
 	homeStatus, err := h.controller.netatmoClient.GetHomeStatus(ctx, h.controller.homeID)
 	if err != nil {
-		h.logger.Error("failed to fetch home status for hard override job",
+		h.logger.Error("hard override job failed - could not fetch home status",
 			zap.Error(err),
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
 		)
 		span.RecordError(err)
+		span.SetAttributes(attribute.Bool("fetch_success", false))
 		return
 	}
 
 	span.SetAttributes(
 		attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+		attribute.Bool("fetch_success", true),
+	)
+
+	h.logger.Debug("hard override job - home status fetched successfully",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 	)
 
 	// Build room status map for quick lookup
@@ -69,15 +87,25 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 	}
 
 	// Check each hard override
+	activeOverrideCount := 0
+	appliedOverrideCount := 0
+	skippedOverrideCount := 0
+
 	for _, override := range h.controller.config.HardOverrides {
 		// Check if this override is currently active
 		targetTemp, isActive := h.controller.getHardOverrideTemp(override)
 		if !isActive {
 			// Override not active at current time
+			h.logger.Debug("hard override job - override not active at current time",
+				zap.String("room_name", override.RoomName),
+			)
 			continue
 		}
 
-		h.logger.Debug("hard override is active",
+		activeOverrideCount++
+
+		h.logger.Info("hard override job - active override detected",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
 			zap.String("room_name", override.RoomName),
 			zap.Float64("target_temperature", targetTemp),
 		)
@@ -92,42 +120,48 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 		}
 
 		if roomID == "" {
-			h.logger.Warn("no mapping found for hard override room",
+			h.logger.Warn("hard override job - no mapping found for override room",
 				zap.String("room_name", override.RoomName),
 			)
+			skippedOverrideCount++
 			continue
 		}
 
 		// Get room status
 		roomStatus, roomExists := roomStatusMap[roomID]
 		if !roomExists {
-			h.logger.Warn("room not found in home status",
+			h.logger.Warn("hard override job - room not found in home status",
 				zap.String("room_name", override.RoomName),
 				zap.String("room_id", roomID),
 			)
+			skippedOverrideCount++
 			continue
 		}
 
 		if !roomStatus.Reachable {
-			h.logger.Debug("room not reachable",
+			h.logger.Info("hard override job - room not reachable, skipping",
 				zap.String("room_name", override.RoomName),
 			)
+			skippedOverrideCount++
 			continue
 		}
 
 		// Check if there's a human override (>= 60 minutes) - skip if so
 		if h.controller.isHumanOverride(roomStatus) {
-			h.logger.Debug("skipping hard override due to active human override",
+			h.logger.Info("hard override job - skipping due to active human override (duration >= 60 min)",
 				zap.String("room_name", override.RoomName),
+				zap.String("mode", roomStatus.ThermSetpointMode),
 			)
+			skippedOverrideCount++
 			continue
 		}
 
 		// Check if override duration exceeds 15 minutes (not our override)
 		if h.isNonAlgorithmicOverride(roomStatus) {
-			h.logger.Debug("skipping hard override due to non-algorithmic override",
+			h.logger.Info("hard override job - skipping due to non-algorithmic override (duration > 15 min)",
 				zap.String("room_name", override.RoomName),
 			)
+			skippedOverrideCount++
 			continue
 		}
 
@@ -136,10 +170,12 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 
 		// Check if setpoint already matches current (no change needed)
 		if math.Abs(calculatedSetpoint-roomStatus.ThermSetpointTemperature) < 0.1 {
-			h.logger.Debug("hard override: setpoint already at target",
+			h.logger.Info("hard override job - setpoint already at target, no change needed",
 				zap.String("room_name", override.RoomName),
 				zap.Float64("target_setpoint", calculatedSetpoint),
+				zap.Float64("current_setpoint", roomStatus.ThermSetpointTemperature),
 			)
+			skippedOverrideCount++
 			continue
 		}
 
@@ -152,6 +188,13 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 				durationMinutes = 1 // Minimum 1 minute
 			}
 
+			h.logger.Info("hard override job - applying override via Netatmo API",
+				zap.String("room_name", override.RoomName),
+				zap.Float64("calculated_setpoint", calculatedSetpoint),
+				zap.Float64("target_temperature", targetTemp),
+				zap.Duration("override_duration", time.Duration(durationMinutes)*time.Minute),
+			)
+
 			err := h.controller.netatmoClient.SetRoomThermpoint(
 				ctx,
 				h.controller.homeID,
@@ -162,28 +205,43 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 			)
 
 			if err != nil {
-				h.logger.Error("failed to set hard override",
+				h.logger.Error("hard override job - failed to apply override",
+					zap.String("trace_id", span.SpanContext().TraceID().String()),
 					zap.String("room_name", override.RoomName),
 					zap.Error(err),
 				)
 			} else {
-				h.logger.Info("hard override applied",
+				h.logger.Info("hard override job - override applied successfully",
+					zap.String("trace_id", span.SpanContext().TraceID().String()),
 					zap.String("room_name", override.RoomName),
 					zap.Float64("calculated_setpoint", calculatedSetpoint),
 					zap.Float64("target_temperature", targetTemp),
 					zap.Duration("override_duration", time.Duration(durationMinutes)*time.Minute),
 				)
+				appliedOverrideCount++
 			}
 		} else {
-			h.logger.Info("[DRY-RUN] WOULD apply hard override",
+			h.logger.Info("[DRY-RUN] hard override job - WOULD apply override (not sent to API)",
 				zap.String("room_name", override.RoomName),
 				zap.Float64("calculated_setpoint", calculatedSetpoint),
 				zap.Float64("target_temperature", targetTemp),
 			)
+			appliedOverrideCount++ // Count as applied for dry-run tracking
 		}
 	}
 
-	h.logger.Debug("hard override job completed")
+	span.SetAttributes(
+		attribute.Int("active_overrides", activeOverrideCount),
+		attribute.Int("applied_overrides", appliedOverrideCount),
+		attribute.Int("skipped_overrides", skippedOverrideCount),
+	)
+
+	h.logger.Info("hard override job completed",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("active_overrides", activeOverrideCount),
+		zap.Int("applied_overrides", appliedOverrideCount),
+		zap.Int("skipped_overrides", skippedOverrideCount),
+	)
 }
 
 // calculateSetpointForHardOverride calculates the setpoint using the three-zone algorithm with hard override target

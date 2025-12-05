@@ -246,18 +246,19 @@ func (c *Controller) addToMetricsBuffer(ctx context.Context, homeStatus *netatmo
 }
 
 // runControlLoop executes one iteration of the control loop
-// Uses cached home status from the same minute
+// Uses home status received from Metric Job via channel
 func (c *Controller) runControlLoop(ctx context.Context) {
 	// Start a new trace span for this control loop iteration
-	ctx, span := c.tracer.Start(ctx, "control_loop_iteration",
+	ctx, span := c.tracer.Start(ctx, "control_job_iteration",
 		trace.WithAttributes(
+			attribute.String("job", "control_job"),
 			attribute.Int("mapping_count", len(c.config.Mappings)),
 			attribute.Bool("dry_run", c.config.DryRun),
 		),
 	)
 	defer span.End()
 
-	c.logger.Debug("control loop iteration started",
+	c.logger.Info("control job started - waiting for home status from metric job",
 		zap.Int("mapping_count", len(c.config.Mappings)),
 		zap.Bool("dry_run", c.config.DryRun),
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
@@ -266,14 +267,21 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 
 	// Check if mappings configured
 	if len(c.config.Mappings) == 0 {
-		c.logger.Warn("no thermostat mappings configured, skipping control loop")
+		c.logger.Warn("control job - no thermostat mappings configured, skipping")
+		span.SetAttributes(attribute.String("skip_reason", "no_mappings"))
 		return
 	}
 
 	// Wait for home status from Metric Job
+	c.logger.Debug("control job - waiting to receive home status from metric job via channel",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+	)
+
 	homeStatus := c.ReceiveHomeStatus(ctx)
 	if homeStatus == nil {
-		c.logger.Warn("no home status received from Metric Job, skipping control loop")
+		c.logger.Warn("control job - no home status received from metric job, skipping iteration",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+		)
 		span.SetAttributes(attribute.String("skip_reason", "no_home_status"))
 		return
 	}
@@ -281,9 +289,10 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 	span.SetAttributes(
 		attribute.String("home_id", c.homeID),
 		attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+		attribute.Bool("home_status_received", true),
 	)
 
-	c.logger.Debug("received home status from Metric Job",
+	c.logger.Info("control job - received home status from metric job",
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 	)
@@ -294,6 +303,11 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		room := &homeStatus.Body.Home.Rooms[i]
 		roomStatusMap[room.ID] = room
 	}
+
+	c.logger.Info("control job - processing rooms concurrently with per-room waiting logic",
+		zap.Int("rooms_to_evaluate", len(c.config.Mappings)),
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+	)
 
 	// Process rooms concurrently with per-room waiting for manual mode expiration
 	skipCount, adjustCount, noAdjustCount := c.processRoomsConcurrently(ctx, roomStatusMap)
@@ -306,7 +320,7 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		attribute.Int("no_adjustment", noAdjustCount),
 	)
 
-	c.logger.Info("control loop iteration completed",
+	c.logger.Info("control job completed - all rooms processed",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.Int("rooms_evaluated", len(c.config.Mappings)),
 		zap.Int("skipped", skipCount),
@@ -317,8 +331,20 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 
 // processRoomsConcurrently processes all rooms concurrently with per-room waiting for manual mode expiration
 func (c *Controller) processRoomsConcurrently(ctx context.Context, initialRoomStatusMap map[string]*netatmo.RoomStatus) (skipCount, adjustCount, noAdjustCount int) {
+	ctx, span := c.tracer.Start(ctx, "process_rooms_concurrently",
+		trace.WithAttributes(
+			attribute.Int("total_rooms", len(c.config.Mappings)),
+		),
+	)
+	defer span.End()
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+
+	c.logger.Debug("spawning concurrent goroutines for room processing",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("goroutine_count", len(c.config.Mappings)),
+	)
 
 	for _, mapping := range c.config.Mappings {
 		wg.Add(1)
@@ -329,7 +355,7 @@ func (c *Controller) processRoomsConcurrently(ctx context.Context, initialRoomSt
 			// Get room status from initial fetch
 			roomStatus, roomExists := initialRoomStatusMap[m.RoomID]
 			if !roomExists {
-				c.logger.Warn("room not found in home status",
+				c.logger.Warn("room processing - room not found in home status",
 					zap.String("room_name", m.RoomName),
 					zap.String("room_id", m.RoomID),
 				)
@@ -339,25 +365,35 @@ func (c *Controller) processRoomsConcurrently(ctx context.Context, initialRoomSt
 				return
 			}
 
+			c.logger.Debug("room processing started",
+				zap.String("room_name", m.RoomName),
+				zap.String("mode", roomStatus.ThermSetpointMode),
+				zap.Float64("current_setpoint", roomStatus.ThermSetpointTemperature),
+				zap.Float64("measured_temp", roomStatus.ThermMeasuredTemperature),
+			)
+
 			// Check if room is in manual mode with algorithm-set override expiring within window
 			if roomStatus.ThermSetpointMode == "manual" && c.shouldWaitForOverrideExpiration(roomStatus) {
-				c.logger.Debug("waiting for override expiration",
+				expirationTime := time.Unix(roomStatus.ThermSetpointEndTime, 0)
+				waitDuration := time.Until(expirationTime.Add(1 * time.Second))
+
+				c.logger.Info("room processing - waiting for algorithm-set override to expire",
 					zap.String("room_name", m.RoomName),
-					zap.Int64("override_end_time", roomStatus.ThermSetpointEndTime),
+					zap.Time("override_end_time", expirationTime),
+					zap.Duration("wait_duration", waitDuration),
 				)
 
 				// Wait for override to expire
-				waitDuration := time.Until(time.Unix(roomStatus.ThermSetpointEndTime, 0).Add(1 * time.Second))
 				if waitDuration > 0 {
 					select {
 					case <-time.After(waitDuration):
 						// Override expired, fetch fresh status
-						c.logger.Debug("override expired, fetching fresh home status",
+						c.logger.Info("room processing - override expired, fetching fresh home status",
 							zap.String("room_name", m.RoomName),
 						)
 						freshStatus, err := c.netatmoClient.GetHomeStatus(ctx, c.homeID)
 						if err != nil {
-							c.logger.Error("failed to fetch fresh home status",
+							c.logger.Error("room processing - failed to fetch fresh home status after override expiration",
 								zap.String("room_name", m.RoomName),
 								zap.Error(err),
 							)
@@ -371,11 +407,16 @@ func (c *Controller) processRoomsConcurrently(ctx context.Context, initialRoomSt
 						for i := range freshStatus.Body.Home.Rooms {
 							if freshStatus.Body.Home.Rooms[i].ID == m.RoomID {
 								roomStatus = &freshStatus.Body.Home.Rooms[i]
+								c.logger.Debug("room processing - updated to fresh room status",
+									zap.String("room_name", m.RoomName),
+									zap.String("new_mode", roomStatus.ThermSetpointMode),
+									zap.Float64("new_setpoint", roomStatus.ThermSetpointTemperature),
+								)
 								break
 							}
 						}
 					case <-ctx.Done():
-						c.logger.Warn("context cancelled while waiting for override expiration",
+						c.logger.Warn("room processing - context cancelled while waiting for override expiration",
 							zap.String("room_name", m.RoomName),
 						)
 						mu.Lock()
@@ -388,6 +429,12 @@ func (c *Controller) processRoomsConcurrently(ctx context.Context, initialRoomSt
 
 			// Evaluate room with current or fresh status
 			decision := c.evaluateRoom(ctx, m, map[string]*netatmo.RoomStatus{m.RoomID: roomStatus})
+
+			c.logger.Debug("room processing - evaluation completed",
+				zap.String("room_name", m.RoomName),
+				zap.String("action", decision.Action),
+				zap.String("reason", decision.Reason),
+			)
 
 			// Track decision type
 			mu.Lock()
@@ -405,10 +452,33 @@ func (c *Controller) processRoomsConcurrently(ctx context.Context, initialRoomSt
 			hardOverrideActive := c.isHardOverrideActive(m.RoomName)
 			c.pushControlMetrics(decision, hardOverrideActive, false)
 			c.executeDecision(ctx, decision)
+
+			c.logger.Debug("room processing completed",
+				zap.String("room_name", m.RoomName),
+				zap.String("final_action", decision.Action),
+			)
 		}(mapping)
 	}
 
+	c.logger.Debug("waiting for all room processing goroutines to complete",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+	)
+
 	wg.Wait()
+
+	span.SetAttributes(
+		attribute.Int("total_skipped", skipCount),
+		attribute.Int("total_adjusted", adjustCount),
+		attribute.Int("total_no_adjustment", noAdjustCount),
+	)
+
+	c.logger.Debug("all room processing goroutines completed",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("skipped", skipCount),
+		zap.Int("adjusted", adjustCount),
+		zap.Int("no_adjustment", noAdjustCount),
+	)
+
 	return skipCount, adjustCount, noAdjustCount
 }
 
