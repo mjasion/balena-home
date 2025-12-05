@@ -9,95 +9,95 @@ import (
 	"go.uber.org/zap"
 )
 
-// HomeStatusFetcher handles fetching home status and adding to metrics buffer
-type HomeStatusFetcher struct {
+// MetricJob handles fetching home status and storing to shared state
+type MetricJob struct {
 	controller *Controller
 	logger     *zap.Logger
 	tracer     trace.Tracer
 }
 
-// NewHomeStatusFetcher creates a new home status fetcher
-func NewHomeStatusFetcher(controller *Controller, logger *zap.Logger, tracer trace.Tracer) *HomeStatusFetcher {
-	return &HomeStatusFetcher{
+// NewMetricJob creates a new metric job
+func NewMetricJob(controller *Controller, logger *zap.Logger, tracer trace.Tracer) *MetricJob {
+	return &MetricJob{
 		controller: controller,
 		logger:     logger,
 		tracer:     tracer,
 	}
 }
 
-// Run executes the home status fetch (called by scheduler every minute at :00)
-func (f *HomeStatusFetcher) Run(ctx context.Context) {
-	ctx, span := f.tracer.Start(ctx, "home_status_fetch",
+// Run executes the metric job (called by scheduler every minute)
+func (m *MetricJob) Run(ctx context.Context) {
+	// Create a new root trace span for this job execution
+	ctx, span := m.tracer.Start(ctx, "metric_job",
+		trace.WithSpanKind(trace.SpanKindServer),
 		trace.WithAttributes(
-			attribute.String("home_id", f.controller.homeID),
+			attribute.String("home_id", m.controller.homeID),
+			attribute.String("job", "metric_job"),
+			attribute.String("operation", "fetch_home_status"),
 		),
 	)
 	defer span.End()
 
 	fetchStart := time.Now()
 
-	f.logger.Debug("fetching home status",
+	m.logger.Info("metric job started - fetching home status from Netatmo API",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.String("span_id", span.SpanContext().SpanID().String()),
+		zap.String("home_id", m.controller.homeID),
 	)
 
-	// Step 1: Fetch home status from Netatmo
-	homeStatus, err := f.controller.netatmoClient.GetHomeStatus(ctx, f.controller.homeID)
-
-	// Step 2: Store in cached status (even if error occurred)
-	f.controller.cachedStatusMu.Lock()
-	f.controller.cachedStatus = &CachedHomeStatus{
-		HomeStatus: homeStatus,
-		FetchTime:  fetchStart,
-		FetchError: err,
-	}
-	f.controller.cachedStatusMu.Unlock()
+	// Fetch home status from Netatmo
+	homeStatus, err := m.controller.netatmoClient.GetHomeStatus(ctx, m.controller.homeID)
 
 	if err != nil {
-		f.logger.Error("failed to fetch home status",
+		m.logger.Error("metric job failed - could not fetch home status from Netatmo API",
 			zap.Error(err),
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("home_id", m.controller.homeID),
 		)
 		span.RecordError(err)
+		span.SetAttributes(attribute.Bool("fetch_success", false))
 		return
 	}
 
+	fetchDuration := time.Since(fetchStart)
+
 	span.SetAttributes(
 		attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+		attribute.Bool("fetch_success", true),
+		attribute.Int64("fetch_duration_ms", fetchDuration.Milliseconds()),
 	)
 
-	f.logger.Info("home status fetched successfully",
+	m.logger.Info("metric job - home status fetched successfully from Netatmo API",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
-		zap.Duration("fetch_duration", time.Since(fetchStart)),
+		zap.Duration("fetch_duration", fetchDuration),
 	)
 
-	// Step 3: Add Netatmo data to metrics buffer
-	f.controller.addToMetricsBuffer(ctx, homeStatus)
-
-	f.logger.Debug("home status fetch completed",
+	// Add Netatmo data to metrics buffer for Prometheus push
+	m.logger.Debug("metric job - adding Netatmo data to metrics buffer",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
-		zap.Duration("total_duration", time.Since(fetchStart)),
+		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+	)
+	m.controller.addToMetricsBuffer(ctx, homeStatus)
+
+	// Store home status in shared state for Control Job
+	// Includes trace ID for correlation between Metric Job and Control Job
+	traceID := span.SpanContext().TraceID().String()
+	m.controller.sharedHomeStatus.Set(homeStatus, traceID)
+
+	totalDuration := time.Since(fetchStart)
+	span.SetAttributes(
+		attribute.Bool("stored_to_shared_state", true),
+		attribute.Int64("total_duration_ms", totalDuration.Milliseconds()),
+	)
+
+	m.logger.Info("metric job completed - home status stored in shared state",
+		zap.String("trace_id", traceID),
+		zap.Duration("total_duration", totalDuration),
+		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 	)
 }
 
-// GetCachedHomeStatus returns the cached home status (thread-safe)
-// Returns nil if no status has been fetched yet or if the status is too old
-func (c *Controller) GetCachedHomeStatus() *CachedHomeStatus {
-	c.cachedStatusMu.RLock()
-	defer c.cachedStatusMu.RUnlock()
-
-	if c.cachedStatus == nil {
-		return nil
-	}
-
-	// Return cached status if it's from the same minute
-	now := time.Now()
-	if c.cachedStatus.FetchTime.Minute() == now.Minute() &&
-		c.cachedStatus.FetchTime.Hour() == now.Hour() &&
-		c.cachedStatus.FetchTime.Day() == now.Day() {
-		return c.cachedStatus
-	}
-
-	return nil
-}
+// Deprecated: HomeStatusFetcher - Use MetricJob instead
+type HomeStatusFetcher = MetricJob

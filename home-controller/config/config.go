@@ -100,21 +100,17 @@ type LoggingConfig struct {
 
 // ThermostatControlConfig contains thermostat control configuration
 type ThermostatControlConfig struct {
-	Enabled                          bool                `yaml:"enabled" env:"THERMOSTAT_CONTROL_ENABLED" env-default:"false"`
-	DryRun                           bool                `yaml:"dryRun" env:"THERMOSTAT_CONTROL_DRY_RUN" env-default:"false"`
-	TemperatureThreshold             float64             `yaml:"temperatureThreshold" env:"TEMPERATURE_THRESHOLD" env-default:"0.5"`
-	OverrideDurationMinutes          int                 `yaml:"overrideDurationMinutes" env:"OVERRIDE_DURATION_MINUTES" env-default:"10"`
-	ExtensionThresholdMinutes        int                 `yaml:"extensionThresholdMinutes" env:"EXTENSION_THRESHOLD_MINUTES" env-default:"2"`
-	ExternalModificationResetMinutes int                 `yaml:"externalModificationResetMinutes" env:"EXTERNAL_MODIFICATION_RESET_MINUTES" env-default:"5"`
-	MinSetpointCelsius               float64             `yaml:"minSetpointCelsius" env:"MIN_SETPOINT_CELSIUS" env-default:"10.0"`
-	MaxSetpointCelsius               float64             `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
-	Mappings                         []ThermostatMapping `yaml:"mappings"`
-	HardOverrides                    []HardOverride      `yaml:"hardOverrides"`
-	HomeStatusFetchCron              string              `yaml:"homeStatusFetchCron" env:"HOME_STATUS_FETCH_CRON" env-default:"0 * * * * *"`        // Cron expression for home status fetch job (runs at :00)
-	ControlLoopCron                  string              `yaml:"controlLoopCron" env:"CONTROL_LOOP_CRON" env-default:"30 * * * * *"`                // Cron expression for control loop job (runs at :30)
-	ScheduleSyncIntervalMinutes      int                 `yaml:"scheduleSyncIntervalMinutes" env:"SCHEDULE_SYNC_INTERVAL_MINUTES" env-default:"15"` // How often to sync schedule (0 = disabled)
-	ScheduleSyncPollIntervalSeconds  int                 `yaml:"scheduleSyncPollIntervalSeconds" env:"SCHEDULE_SYNC_POLL_INTERVAL" env-default:"2"` // How often to poll after setting schedule mode
-	ScheduleSyncPollTimeoutSeconds   int                 `yaml:"scheduleSyncPollTimeoutSeconds" env:"SCHEDULE_SYNC_POLL_TIMEOUT" env-default:"30"`  // Max time to wait for schedule mode confirmation
+	Enabled                 bool                `yaml:"enabled" env:"THERMOSTAT_CONTROL_ENABLED" env-default:"false"`
+	DryRun                  bool                `yaml:"dryRun" env:"THERMOSTAT_CONTROL_DRY_RUN" env-default:"false"`
+	TemperatureThreshold    float64             `yaml:"temperatureThreshold" env:"TEMPERATURE_THRESHOLD" env-default:"0.2"`
+	OverrideDurationMinutes int                 `yaml:"overrideDurationMinutes" env:"OVERRIDE_DURATION_MINUTES" env-default:"10"`
+	MinSetpointCelsius      float64             `yaml:"minSetpointCelsius" env:"MIN_SETPOINT_CELSIUS" env-default:"10.0"`
+	MaxSetpointCelsius      float64             `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
+	Mappings                []ThermostatMapping `yaml:"mappings"`
+	HardOverrides           []HardOverride      `yaml:"hardOverrides"`
+	MetricJobCron           string              `yaml:"metricJobCron" env:"METRIC_JOB_CRON" env-default:"0 * * * * *"`              // Cron expression for metric job (runs every minute at :00)
+	ControlJobCron          string              `yaml:"controlJobCron" env:"CONTROL_JOB_CRON" env-default:"5 0,15,30,45 * * * *"`   // Cron expression for control job (runs every 15 min at :05/:20/:35/:50, 5 seconds after metric job)
+	HardOverrideJobCron     string              `yaml:"hardOverrideJobCron" env:"HARD_OVERRIDE_JOB_CRON" env-default:"0 * * * * *"` // Cron expression for hard override job (runs every minute at :00)
 }
 
 // ThermostatMapping maps a Netatmo room to a Xiaomi sensor
@@ -326,32 +322,19 @@ func (c *Config) Validate() error {
 		}
 
 		// Validate cron expressions
-		if c.ThermostatControl.HomeStatusFetchCron == "" {
-			return fmt.Errorf("thermostat control home status fetch cron expression is required when thermostat control is enabled")
+		if c.ThermostatControl.MetricJobCron == "" {
+			return fmt.Errorf("thermostat control metric job cron expression is required when thermostat control is enabled")
 		}
-		if c.ThermostatControl.ControlLoopCron == "" {
-			return fmt.Errorf("thermostat control loop cron expression is required when thermostat control is enabled")
+		if c.ThermostatControl.ControlJobCron == "" {
+			return fmt.Errorf("thermostat control job cron expression is required when thermostat control is enabled")
+		}
+		if c.ThermostatControl.HardOverrideJobCron == "" {
+			return fmt.Errorf("thermostat control hard override job cron expression is required when thermostat control is enabled")
 		}
 
 		// Validate override duration
 		if c.ThermostatControl.OverrideDurationMinutes < 1 {
 			return fmt.Errorf("thermostat override duration must be at least 1 minute")
-		}
-
-		// Validate extension threshold
-		if c.ThermostatControl.ExtensionThresholdMinutes < 1 {
-			return fmt.Errorf("thermostat extension threshold must be at least 1 minute")
-		}
-
-		// Validate that extension threshold is less than override duration
-		if c.ThermostatControl.ExtensionThresholdMinutes >= c.ThermostatControl.OverrideDurationMinutes {
-			return fmt.Errorf("thermostat extension threshold (%d minutes) must be less than override duration (%d minutes)",
-				c.ThermostatControl.ExtensionThresholdMinutes, c.ThermostatControl.OverrideDurationMinutes)
-		}
-
-		// Validate external modification reset minutes
-		if c.ThermostatControl.ExternalModificationResetMinutes < 1 {
-			return fmt.Errorf("thermostat external modification reset minutes must be at least 1 minute")
 		}
 
 		// Validate mappings
@@ -460,24 +443,6 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("netatmo refresh token is required when thermostat control is enabled")
 		}
 
-		// Validate schedule sync configuration (optional)
-		if c.ThermostatControl.ScheduleSyncIntervalMinutes > 0 {
-			// Validate sync interval
-			if c.ThermostatControl.ScheduleSyncIntervalMinutes < 1 {
-				return fmt.Errorf("schedule sync interval must be at least 1 minute")
-			}
-
-			// Validate poll interval
-			if c.ThermostatControl.ScheduleSyncPollIntervalSeconds < 1 {
-				return fmt.Errorf("schedule sync poll interval must be at least 1 second")
-			}
-
-			// Validate poll timeout
-			if c.ThermostatControl.ScheduleSyncPollTimeoutSeconds < c.ThermostatControl.ScheduleSyncPollIntervalSeconds {
-				return fmt.Errorf("schedule sync poll timeout (%d seconds) must be greater than poll interval (%d seconds)",
-					c.ThermostatControl.ScheduleSyncPollTimeoutSeconds, c.ThermostatControl.ScheduleSyncPollIntervalSeconds)
-			}
-		}
 	}
 
 	return nil
@@ -612,11 +577,10 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.String("aggregator_cron", c.Aggregator.Cron),
 		zap.Bool("thermostat_control_enabled", c.ThermostatControl.Enabled),
 		zap.Float64("thermostat_temperature_threshold", c.ThermostatControl.TemperatureThreshold),
-		zap.String("thermostat_home_status_fetch_cron", c.ThermostatControl.HomeStatusFetchCron),
-		zap.String("thermostat_control_loop_cron", c.ThermostatControl.ControlLoopCron),
+		zap.String("thermostat_metric_job_cron", c.ThermostatControl.MetricJobCron),
+		zap.String("thermostat_control_job_cron", c.ThermostatControl.ControlJobCron),
+		zap.String("thermostat_hard_override_job_cron", c.ThermostatControl.HardOverrideJobCron),
 		zap.Int("thermostat_override_duration_minutes", c.ThermostatControl.OverrideDurationMinutes),
-		zap.Int("thermostat_extension_threshold_minutes", c.ThermostatControl.ExtensionThresholdMinutes),
-		zap.Int("thermostat_external_mod_reset_minutes", c.ThermostatControl.ExternalModificationResetMinutes),
 		zap.Int("thermostat_mapping_count", len(c.ThermostatControl.Mappings)),
 		zap.Strings("thermostat_mappings", mappingInfo),
 		zap.Int("thermostat_hard_override_count", len(c.ThermostatControl.HardOverrides)),
