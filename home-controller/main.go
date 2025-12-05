@@ -203,8 +203,8 @@ func main() {
 	if cfg.ThermostatControl.Enabled {
 		logger.Info("thermostat control enabled, initializing and adding scheduler jobs")
 
-		// Create channel for Metric Job → Control Job communication
-		homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1)
+		// Create shared home status for Metric Job → Control Job communication
+		sharedHomeStatus := control.NewSharedHomeStatus()
 
 		// Create controller (uses shared Netatmo client)
 		controller := control.New(
@@ -213,7 +213,7 @@ func main() {
 			controlBuffer,
 			metricsBuffer,
 			logger,
-			homeStatusChan,
+			sharedHomeStatus,
 		)
 
 		// Initialize controller (fetch room IDs from Netatmo)
@@ -225,8 +225,8 @@ func main() {
 		// Get tracer for control jobs
 		tracer := otel.Tracer("home-controller/control")
 
-		// Create Metric Job (runs every minute, sends data via channel)
-		metricJob := control.NewMetricJob(controller, logger, tracer, homeStatusChan)
+		// Create Metric Job (runs every minute at :00, stores data in shared state)
+		metricJob := control.NewMetricJob(controller, logger, tracer)
 
 		// Add metric job
 		if err := jobScheduler.AddCronJobWithSeconds("Metric Job", cfg.ThermostatControl.MetricJobCron, metricJob.Run); err != nil {

@@ -35,8 +35,8 @@ type Controller struct {
 	// Mapping of sensor MAC to room IDs
 	sensorToRooms map[string][]string // Key: sensor MAC (uppercase), Value: list of room IDs
 
-	// Channel for receiving home status from Metric Job
-	homeStatusChan <-chan *netatmo.HomeStatusResponse
+	// Shared home status for Metric Job → Control Job communication
+	sharedHomeStatus *SharedHomeStatus
 }
 
 // New creates a new thermostat controller
@@ -46,7 +46,7 @@ func New(
 	controlBuffer *buffer.RingBuffer,
 	metricsBuffer *buffer.RingBuffer,
 	logger *zap.Logger,
-	homeStatusChan <-chan *netatmo.HomeStatusResponse,
+	sharedHomeStatus *SharedHomeStatus,
 ) *Controller {
 	// Build sensor-to-rooms mapping
 	sensorToRooms := make(map[string][]string)
@@ -64,15 +64,15 @@ func New(
 	tracer := otel.Tracer("home-controller/control")
 
 	return &Controller{
-		config:         cfg,
-		netatmoClient:  netatmoClient,
-		controlBuffer:  controlBuffer,
-		metricsBuffer:  metricsBuffer,
-		logger:         logger,
-		tracer:         tracer,
-		stateByRoom:    make(map[string]*ThermostatState),
-		sensorToRooms:  sensorToRooms,
-		homeStatusChan: homeStatusChan,
+		config:           cfg,
+		netatmoClient:    netatmoClient,
+		controlBuffer:    controlBuffer,
+		metricsBuffer:    metricsBuffer,
+		logger:           logger,
+		tracer:           tracer,
+		stateByRoom:      make(map[string]*ThermostatState),
+		sensorToRooms:    sensorToRooms,
+		sharedHomeStatus: sharedHomeStatus,
 	}
 }
 
@@ -97,17 +97,6 @@ func (c *Controller) Initialize(ctx context.Context) error {
 // Run executes a single control loop iteration (called by scheduler)
 func (c *Controller) Run(ctx context.Context) {
 	c.runControlLoop(ctx)
-}
-
-// ReceiveHomeStatus waits for and returns the latest home status from Metric Job
-func (c *Controller) ReceiveHomeStatus(ctx context.Context) *netatmo.HomeStatusResponse {
-	select {
-	case status := <-c.homeStatusChan:
-		return status
-	case <-ctx.Done():
-		c.logger.Warn("context cancelled while waiting for home status")
-		return nil
-	}
 }
 
 // initializeRoomIDs fetches Netatmo home data to populate room IDs for mappings
@@ -274,51 +263,75 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		return
 	}
 
-	// Wait for home status from Metric Job
-	c.logger.Debug("control job - waiting to receive home status from metric job via channel",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
-	)
+	// Get home status from shared state (set by Metric Job)
+	const maxDataAge = 30 * time.Second // If data older than 30s, fetch fresh
+	var homeStatus *netatmo.HomeStatusResponse
+	var metricJobTraceID string
 
-	homeStatus := c.ReceiveHomeStatus(ctx)
-	if homeStatus == nil {
-		c.logger.Warn("control job - no home status received from metric job, skipping iteration",
+	// Try to get data from shared state first
+	sharedStatus, age, traceID, hasData := c.sharedHomeStatus.Get()
+
+	if hasData && age <= maxDataAge {
+		// Data is fresh, use it
+		homeStatus = sharedStatus
+		metricJobTraceID = traceID
+
+		c.logger.Info("control job - using fresh data from metric job",
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("metric_job_trace_id", metricJobTraceID),
+			zap.Duration("data_age", age),
+			zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 		)
-		span.SetAttributes(attribute.String("skip_reason", "no_home_status"))
-		return
-	}
 
-	// Verify data freshness - Netatmo TimeServer is Unix timestamp of when data was fetched
-	// Control Job runs every 15 minutes, so we expect data from the current or previous minute
-	dataAge := time.Since(time.Unix(homeStatus.TimeServer, 0))
-	const maxDataAge = 2 * time.Minute // Allow up to 2 minutes old (tolerates small delays)
-
-	if dataAge > maxDataAge {
-		c.logger.Error("control job - received stale home status data, skipping iteration",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
-			zap.Duration("data_age", dataAge),
-			zap.Duration("max_allowed_age", maxDataAge),
-			zap.Time("data_timestamp", time.Unix(homeStatus.TimeServer, 0)),
-		)
 		span.SetAttributes(
-			attribute.String("skip_reason", "stale_data"),
-			attribute.Int64("data_age_seconds", int64(dataAge.Seconds())),
+			attribute.String("data_source", "metric_job"),
+			attribute.String("metric_job_trace_id", metricJobTraceID),
+			attribute.Int64("data_age_ms", age.Milliseconds()),
 		)
-		return
+	} else {
+		// Data is stale or missing, fetch fresh data ourselves
+		if hasData {
+			c.logger.Warn("control job - shared data is stale, fetching fresh data from Netatmo API",
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				zap.Duration("data_age", age),
+				zap.Duration("max_age", maxDataAge),
+			)
+		} else {
+			c.logger.Warn("control job - no shared data available, fetching fresh data from Netatmo API",
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
+			)
+		}
+
+		fetchStart := time.Now()
+		fetchedStatus, err := c.netatmoClient.GetHomeStatus(ctx, c.homeID)
+		if err != nil {
+			c.logger.Error("control job - failed to fetch home status from Netatmo API",
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				zap.Error(err),
+			)
+			span.RecordError(err)
+			span.SetAttributes(attribute.String("skip_reason", "fetch_failed"))
+			return
+		}
+
+		homeStatus = fetchedStatus
+		fetchDuration := time.Since(fetchStart)
+
+		c.logger.Info("control job - fetched fresh data from Netatmo API",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.Duration("fetch_duration", fetchDuration),
+			zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+		)
+
+		span.SetAttributes(
+			attribute.String("data_source", "control_job_fetch"),
+			attribute.Int64("fetch_duration_ms", fetchDuration.Milliseconds()),
+		)
 	}
 
 	span.SetAttributes(
 		attribute.String("home_id", c.homeID),
 		attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
-		attribute.Bool("home_status_received", true),
-		attribute.Int64("data_age_seconds", int64(dataAge.Seconds())),
-	)
-
-	c.logger.Info("control job - received fresh home status from metric job",
-		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
-		zap.Duration("data_age", dataAge),
-		zap.Time("data_timestamp", time.Unix(homeStatus.TimeServer, 0)),
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
 	)
 
 	// Build room status map for quick lookup

@@ -4,27 +4,24 @@ import (
 	"context"
 	"time"
 
-	"github.com/mjasion/balena-home/thermostats/netatmo"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
-// MetricJob handles fetching home status and sending to Control Job via channel
+// MetricJob handles fetching home status and storing to shared state
 type MetricJob struct {
-	controller     *Controller
-	logger         *zap.Logger
-	tracer         trace.Tracer
-	homeStatusChan chan<- *netatmo.HomeStatusResponse
+	controller *Controller
+	logger     *zap.Logger
+	tracer     trace.Tracer
 }
 
 // NewMetricJob creates a new metric job
-func NewMetricJob(controller *Controller, logger *zap.Logger, tracer trace.Tracer, homeStatusChan chan<- *netatmo.HomeStatusResponse) *MetricJob {
+func NewMetricJob(controller *Controller, logger *zap.Logger, tracer trace.Tracer) *MetricJob {
 	return &MetricJob{
-		controller:     controller,
-		logger:         logger,
-		tracer:         tracer,
-		homeStatusChan: homeStatusChan,
+		controller: controller,
+		logger:     logger,
+		tracer:     tracer,
 	}
 }
 
@@ -84,34 +81,22 @@ func (m *MetricJob) Run(ctx context.Context) {
 	)
 	m.controller.addToMetricsBuffer(ctx, homeStatus)
 
-	// Send status to Control Job via channel
-	// Note: Channel has buffer size 1 to allow Metric Job to never block
-	// Control Job must check timestamp to ensure data freshness
-	select {
-	case m.homeStatusChan <- homeStatus:
-		totalDuration := time.Since(fetchStart)
-		span.SetAttributes(
-			attribute.Bool("sent_to_control_job", true),
-			attribute.Int64("total_duration_ms", totalDuration.Milliseconds()),
-		)
-		m.logger.Info("metric job completed - home status sent to control job via channel",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
-			zap.Duration("total_duration", totalDuration),
-		)
-	default:
-		// Channel is full - this means Control Job hasn't consumed previous data yet
-		// This is expected if Control Job runs less frequently than Metric Job
-		totalDuration := time.Since(fetchStart)
-		span.SetAttributes(
-			attribute.Bool("sent_to_control_job", false),
-			attribute.String("skip_reason", "channel_full"),
-			attribute.Int64("total_duration_ms", totalDuration.Milliseconds()),
-		)
-		m.logger.Warn("metric job - channel full, control job hasn't consumed previous data yet (this is expected between control job runs)",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
-			zap.Duration("total_duration", totalDuration),
-		)
-	}
+	// Store home status in shared state for Control Job
+	// Includes trace ID for correlation between Metric Job and Control Job
+	traceID := span.SpanContext().TraceID().String()
+	m.controller.sharedHomeStatus.Set(homeStatus, traceID)
+
+	totalDuration := time.Since(fetchStart)
+	span.SetAttributes(
+		attribute.Bool("stored_to_shared_state", true),
+		attribute.Int64("total_duration_ms", totalDuration.Milliseconds()),
+	)
+
+	m.logger.Info("metric job completed - home status stored in shared state",
+		zap.String("trace_id", traceID),
+		zap.Duration("total_duration", totalDuration),
+		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+	)
 }
 
 // Deprecated: HomeStatusFetcher - Use MetricJob instead

@@ -34,9 +34,9 @@ func TestControllerConstructor(t *testing.T) {
 	client := netatmo.NewClient("test-client-id", "test-secret", "test-refresh-token")
 
 	// Create channel for home status
-	homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1)
+	sharedHomeStatus := NewSharedHomeStatus()
 
-	c := New(cfg, client, controlBuffer, metricsBuffer, logger, homeStatusChan)
+	c := New(cfg, client, controlBuffer, metricsBuffer, logger, sharedHomeStatus)
 
 	if c == nil {
 		t.Fatal("Expected non-nil controller")
@@ -92,8 +92,8 @@ func TestWeightedAverageTemperature(t *testing.T) {
 		OverrideDurationMinutes: 10,
 	}
 
-	homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1)
-	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, homeStatusChan)
+	sharedHomeStatus := NewSharedHomeStatus()
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, sharedHomeStatus)
 
 	now := time.Now()
 	sensorMAC := "AA:BB:CC:DD:EE:FF"
@@ -202,8 +202,8 @@ func TestWeightedAverageWithVaryingFrequencies(t *testing.T) {
 		Enabled: true,
 	}
 
-	homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1)
-	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, homeStatusChan)
+	sharedHomeStatus := NewSharedHomeStatus()
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, sharedHomeStatus)
 
 	now := time.Now()
 	sensorMAC := "AA:BB:CC:DD:EE:FF"
@@ -276,8 +276,8 @@ func TestHardOverrideDetection(t *testing.T) {
 		},
 	}
 
-	homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1)
-	c := New(cfg, nil, nil, nil, logger, homeStatusChan)
+	sharedHomeStatus := NewSharedHomeStatus()
+	c := New(cfg, nil, nil, nil, logger, sharedHomeStatus)
 
 	// Test 1: Living Room should have active override (current time is within window)
 	t.Run("Living Room with current time override", func(t *testing.T) {
@@ -345,8 +345,8 @@ func TestControllerWithNilBuffers(t *testing.T) {
 	}
 
 	// Create controller with nil buffers (should not crash during construction)
-	homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1)
-	c := New(cfg, nil, nil, nil, logger, homeStatusChan)
+	sharedHomeStatus := NewSharedHomeStatus()
+	c := New(cfg, nil, nil, nil, logger, sharedHomeStatus)
 
 	if c == nil {
 		t.Fatal("Expected non-nil controller even with nil buffers")
@@ -373,8 +373,8 @@ func TestStartWithCancelledContext(t *testing.T) {
 	}
 
 	client := netatmo.NewClient("test-client-id", "test-secret", "test-refresh-token")
-	homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1)
-	c := New(cfg, client, controlBuffer, metricsBuffer, logger, homeStatusChan)
+	sharedHomeStatus := NewSharedHomeStatus()
+	c := New(cfg, client, controlBuffer, metricsBuffer, logger, sharedHomeStatus)
 
 	// Create cancelled context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -406,8 +406,8 @@ func TestBufferIsolation(t *testing.T) {
 		Enabled: true,
 	}
 
-	homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1)
-	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, homeStatusChan)
+	sharedHomeStatus := NewSharedHomeStatus()
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, sharedHomeStatus)
 
 	now := time.Now()
 	sensorMAC := "AA:BB:CC:DD:EE:FF"
@@ -465,8 +465,8 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 		},
 	}
 
-	homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1)
-	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, homeStatusChan)
+	sharedHomeStatus := NewSharedHomeStatus()
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, sharedHomeStatus)
 
 	// Initialize state (evaluation will proceed normally)
 	c.stateMu.Lock()

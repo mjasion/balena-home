@@ -1,7 +1,10 @@
 package control
 
 import (
+	"sync"
 	"time"
+
+	"github.com/mjasion/balena-home/thermostats/netatmo"
 )
 
 // ThermostatState tracks the minimal state needed for controlled thermostat
@@ -11,6 +14,43 @@ type ThermostatState struct {
 	LastHomeMode             string    // Last known home mode (away, hg, schedule, manual)
 	ExternallyModified       bool      // Flag indicating human override detected
 	ExternalModificationTime time.Time // When external modification was detected
+}
+
+// SharedHomeStatus holds the latest home status data with thread-safe access
+// Used for communication between Metric Job and Control Job
+type SharedHomeStatus struct {
+	mu               sync.RWMutex
+	homeStatus       *netatmo.HomeStatusResponse
+	fetchedAt        time.Time // When the data was fetched (local system time)
+	metricJobTraceID string    // Trace ID from Metric Job for correlation
+}
+
+// NewSharedHomeStatus creates a new shared home status container
+func NewSharedHomeStatus() *SharedHomeStatus {
+	return &SharedHomeStatus{}
+}
+
+// Set stores new home status data (called by Metric Job)
+func (s *SharedHomeStatus) Set(homeStatus *netatmo.HomeStatusResponse, traceID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.homeStatus = homeStatus
+	s.fetchedAt = time.Now()
+	s.metricJobTraceID = traceID
+}
+
+// Get retrieves the current home status data with its age
+// Returns: homeStatus, age, metricJobTraceID, hasData
+func (s *SharedHomeStatus) Get() (*netatmo.HomeStatusResponse, time.Duration, string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.homeStatus == nil {
+		return nil, 0, "", false
+	}
+
+	age := time.Since(s.fetchedAt)
+	return s.homeStatus, age, s.metricJobTraceID, true
 }
 
 // Copy creates a defensive copy of the state

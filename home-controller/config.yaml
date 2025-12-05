@@ -217,14 +217,14 @@ thermostatControl:
   temperatureThreshold: 0.2
 
   # Job Cron Schedules (6-field cron with seconds: second minute hour day month weekday)
-  # Metric Job: Fetches home status from Netatmo API every minute
-  # Runs at: :00 seconds of every minute
+  # Metric Job: Fetches home status from Netatmo API every minute at :00 seconds
+  # Stores data in mutex-protected shared state
   metricJobCron: "0 * * * * *"  # or use METRIC_JOB_CRON env var
 
-  # Control Job: Evaluates rooms and applies control decisions every 15 minutes
-  # Runs at: :00, :15, :30, :45 seconds of every hour
-  # Waits for data from Metric Job via channel
-  controlJobCron: "0 0,15,30,45 * * * *"  # or use CONTROL_JOB_CRON env var
+  # Control Job: Evaluates rooms and applies control decisions every 15 minutes at :05 seconds
+  # Runs 5 seconds after Metric Job to ensure fresh data is available
+  # Uses data from shared state (if < 30s old) or fetches fresh data itself
+  controlJobCron: "5 0,15,30,45 * * * *"  # or use CONTROL_JOB_CRON env var
 
   # Hard Override Job: Applies time-based temperature overrides every minute
   # Runs at: :00 seconds of every minute
