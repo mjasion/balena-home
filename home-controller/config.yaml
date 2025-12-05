@@ -199,10 +199,10 @@ aggregator:
   #   "0 */5 * * * *"    - Every 5 minutes at second 0
   cron: "0 * * * * *"  # Every minute at second 0 (or use AGGREGATOR_CRON env var)
 
-# Intelligent Thermostat Control (NEW)
-# IMPORTANT: This feature is DISABLED by default. Enable only after reviewing all settings.
+# Intelligent Thermostat Control
+# Three-job architecture: Metric Job, Control Job, Hard Override Job
 thermostatControl:
-  # Enable thermostat control (default: false - feature disabled)
+  # Enable thermostat control (default: false)
   # IMPORTANT: Requires Netatmo OAuth2 token with read_thermostat and write_thermostat scopes
   enabled: true
 
@@ -211,75 +211,25 @@ thermostatControl:
   # When true: Control loop runs, decisions are logged, but no API calls are made
   dryRun: true
 
-  # Temperature difference threshold (°C) to trigger adjustment (default: 0.5)
+  # Temperature difference threshold (°C) to trigger adjustment (default: 0.2)
   # Minimum difference between Xiaomi sensor and scheduled temperature to trigger action
   # Range: 0.1 to 5.0°C (lower = more aggressive, higher = more relaxed)
   temperatureThreshold: 0.2
 
-  # Cron syntax for scheduling (REQUIRED)
-  # 6-field cron with seconds: second minute hour day month weekday
-  # Examples:
-  #   "0 * * * * *"      - Every minute at second 0
-  #   "0 */2 * * * *"    - Every 2 minutes at second 0
-  #   "0 */3 * * * *"    - Every 3 minutes at second 0
-  #   "0 */5 * * * *"    - Every 5 minutes at second 0
-  #   "0 */15 * * * *"   - Every 15 minutes at second 0
-  #   "0 0 6-22 * * *"   - Every hour from 6 AM to 10 PM
+  # Job Cron Schedules (6-field cron with seconds: second minute hour day month weekday)
+  # Metric Job: Fetches home status from Netatmo API every minute
+  # Runs at: :00 seconds of every minute
+  metricJobCron: "0 * * * * *"  # or use METRIC_JOB_CRON env var
 
-  # Home status fetch cron (fetches Netatmo API data and caches it)
-  # Runs shortly before control loop to ensure fresh data
-  homeStatusFetchCron: "0 * * * * *"  # Every at second 0 (or use HOME_STATUS_FETCH_CRON env var)
+  # Control Job: Evaluates rooms and applies control decisions every 15 minutes
+  # Runs at: :00, :15, :30, :45 seconds of every hour
+  # Waits for data from Metric Job via channel
+  controlJobCron: "0 0,15,30,45 * * * *"  # or use CONTROL_JOB_CRON env var
 
-  # Control loop cron (evaluates control decisions using cached data)
-  # Runs 30 seconds after home status fetch to use fresh data
-  controlLoopCron: "30 */3 * * * *"  # Every 3 minutes at second 30 (or use CONTROL_LOOP_CRON env var)
-
-  # Schedule sync interval in minutes (default: 15, set to 0 to disable)
-  # Syncs actual schedule temperature by temporarily switching to schedule mode
-  # This solves the problem where Netatmo API doesn't expose schedule when in manual mode
-  # How it works (HYBRID APPROACH):
-  #   1. Switch thermostat to schedule mode
-  #   2. Read current setpoint (reflects actual schedule)
-  #   3. Compare with previous synced temperature:
-  #      - If UNCHANGED: Restore previous override immediately (no re-evaluation)
-  #      - If CHANGED: Skip restore, bypass delayed execution, re-evaluate immediately
-  #   4. Continue normal control loop
-  # Benefits:
-  #   - Minimal interruption when schedule unchanged (< 2 seconds)
-  #   - Immediate response when schedule changes (bypasses delayed execution)
-  #   - No extra API calls for unchanged schedules
-  # IMPORTANT: Runs BEFORE control decisions to ensure fresh schedule data
-  scheduleSyncIntervalMinutes: 15  # Recommended: 15 minutes for responsive schedule tracking
-
-  # Poll interval after switching to schedule mode (default: 2 seconds)
-  # How long to wait between API calls when checking if mode has switched
-  scheduleSyncPollIntervalSeconds: 2  # or use SCHEDULE_SYNC_POLL_INTERVAL env var
-
-  # Poll timeout for schedule mode confirmation (default: 30 seconds)
-  # Maximum time to wait for thermostat to confirm it's in schedule mode
-  # If timeout occurs, schedule sync fails and control loop uses fallback logic
-  scheduleSyncPollTimeoutSeconds: 30  # or use SCHEDULE_SYNC_POLL_TIMEOUT env var
-
-  # Override duration in minutes (default: 10)
-  # SAFETY: All setpoint changes auto-expire after this duration (fail-safe)
-  # After expiration, thermostat reverts to schedule mode
-  # System will automatically extend the override if temperature still requires control
-  # IMPORTANT: Should be longer than scheduleSyncIntervalMinutes + polling overhead
-  # Formula: overrideDurationMinutes > scheduleSyncIntervalMinutes + 3
-  # Example: scheduleSyncIntervalMinutes=15 → overrideDurationMinutes should be ≥18
-  overrideDurationMinutes: 20
-
-  # Extension threshold in minutes (default: 2)
-  # When override has less than this time remaining, extend it automatically
-  # This prevents the thermostat from briefly switching back to schedule mode
-  # Must be less than overrideDurationMinutes
-  extensionThresholdMinutes: 4  # Restored to original value
-
-  # External modification behavior:
-  # If thermostat is manually changed, automation pauses INDEFINITELY
-  # Automation resumes ONLY when thermostat is switched back to "schedule" mode
-  # This respects your manual temperature adjustments without time limits
-  # externalModificationResetMinutes: 5  # (Currently unused - kept for potential future timeout feature)
+  # Hard Override Job: Applies time-based temperature overrides every minute
+  # Runs at: :00 seconds of every minute
+  # Checks hardOverrides schedule and applies when active
+  hardOverrideJobCron: "0 * * * * *"  # or use HARD_OVERRIDE_JOB_CRON env var
 
   # Safety limits for calculated setpoints
   # SAFETY: Setpoints are clamped to these limits to prevent extreme temperatures
@@ -384,29 +334,47 @@ scheduler:
 #    - Verify room names match Netatmo exactly
 #    - Verify sensor MACs exist in ble.sensors
 #
-# 2. CONTROL ALGORITHM:
-#    - Reads Xiaomi BLE sensor (weighted average of last 60 seconds)
-#    - Compares with scheduled temperature (from Netatmo or hard override)
-#    - If |xiaomiTemp - scheduledTemp| > threshold:
-#      - Calculates: newSetpoint = thermostatMeasured + (xiaomiTemp - scheduledTemp)
-#      - Clamps to safety limits (10-30°C)
-#      - Sends temporary override to Netatmo (default: 30 minutes)
-#    - Automatically extends override before it expires (prevents mode switching)
-#    - Evaluates every controlIntervalSeconds (default: 60s)
+# 2. THREE-JOB ARCHITECTURE:
+#    - Metric Job (every minute): Fetches Netatmo API data, sends to Control Job via channel
+#    - Control Job (every 15 min): Receives data, evaluates rooms concurrently, applies control
+#    - Hard Override Job (every minute): Applies time-based temperature overrides independently
 #
-# 3. PRECEDENCE HIERARCHY:
-#    1. External modification detected → Pause control for 24h or until schedule mode
+# 3. CONTROL ALGORITHM (Three-Zone):
+#    - Reads Xiaomi BLE sensor (weighted average of last 60 seconds)
+#    - Compares with target temperature (hard override OR Netatmo schedule)
+#    - Three zones based on temperature difference:
+#      ZONE 1 (too cold):   diff <= -threshold  → Add 0.5°C to trigger heating
+#      ZONE 2 (within range): -threshold < diff < threshold → Maintain measured temp
+#      ZONE 3 (too warm):   diff >= threshold   → Subtract 0.5°C to stop heating
+#    - Rounds to 0.5°C increments (Netatmo requirement)
+#    - Clamps to safety limits (10-30°C)
+#    - Sets boundary-aligned override expiration (:14:59, :29:59, :44:59, :59:59)
+#
+# 4. HUMAN OVERRIDE DETECTION:
+#    - Duration-based: Manual mode with duration >= 60 minutes = human override
+#    - Algorithm-set overrides: Manual mode with duration < 15 minutes
+#    - Human overrides are respected (automation skips the room)
+#    - Algorithm can override its own previous overrides
+#
+# 5. CONCURRENT PER-ROOM PROCESSING:
+#    - Each room processed in separate goroutine (non-blocking)
+#    - Rooms with algorithm-set overrides expiring within window: wait for expiration, then fetch fresh status
+#    - Rooms in schedule mode: process immediately with shared data
+#    - Human overrides (>= 60 min): skip
+#
+# 6. PRECEDENCE HIERARCHY:
+#    1. Human override detected (>= 60 min) → Skip room
 #    2. Hard override active → Use hard override temperature as target
 #    3. Normal control → Use Netatmo schedule temperature as target
 #
-# 4. MONITORING:
+# 7. MONITORING:
 #    - Check Grafana metrics: thermostat_control_*
+#    - Check Grafana traces: metric_job, control_job, hard_override_job (separate root spans)
 #    - Alert if thermostat_control_temperature_difference_celsius > 1.0°C
-#    - Alert if thermostat_control_action == 0 (skip) for > 1 hour
 #    - Dashboard: Xiaomi temp vs Netatmo measured (should converge)
 #
-# 5. TROUBLESHOOTING:
+# 8. TROUBLESHOOTING:
 #    - "sensor data unavailable" → Check BLE sensor broadcasting
 #    - "room not found" → Verify room name matches Netatmo
-#    - "externally modified" → Switch thermostat to schedule mode to resume automation
-#    - "(extending, Xm left)" in logs → Normal behavior, extending existing override
+#    - "human override detected" → User manually set temperature (>= 60 min duration)
+#    - Logs show trace_id for distributed tracing in Grafana Cloud
