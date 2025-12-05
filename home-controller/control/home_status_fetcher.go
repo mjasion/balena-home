@@ -4,57 +4,51 @@ import (
 	"context"
 	"time"
 
+	"github.com/mjasion/balena-home/thermostats/netatmo"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
-// HomeStatusFetcher handles fetching home status and adding to metrics buffer
-type HomeStatusFetcher struct {
-	controller *Controller
-	logger     *zap.Logger
-	tracer     trace.Tracer
+// MetricJob handles fetching home status and sending to Control Job via channel
+type MetricJob struct {
+	controller       *Controller
+	logger           *zap.Logger
+	tracer           trace.Tracer
+	homeStatusChan   chan<- *netatmo.HomeStatusResponse
 }
 
-// NewHomeStatusFetcher creates a new home status fetcher
-func NewHomeStatusFetcher(controller *Controller, logger *zap.Logger, tracer trace.Tracer) *HomeStatusFetcher {
-	return &HomeStatusFetcher{
-		controller: controller,
-		logger:     logger,
-		tracer:     tracer,
+// NewMetricJob creates a new metric job
+func NewMetricJob(controller *Controller, logger *zap.Logger, tracer trace.Tracer, homeStatusChan chan<- *netatmo.HomeStatusResponse) *MetricJob {
+	return &MetricJob{
+		controller:     controller,
+		logger:         logger,
+		tracer:         tracer,
+		homeStatusChan: homeStatusChan,
 	}
 }
 
-// Run executes the home status fetch (called by scheduler every minute at :00)
-func (f *HomeStatusFetcher) Run(ctx context.Context) {
-	ctx, span := f.tracer.Start(ctx, "home_status_fetch",
+// Run executes the metric job (called by scheduler every minute)
+func (m *MetricJob) Run(ctx context.Context) {
+	ctx, span := m.tracer.Start(ctx, "metric_job_fetch_home_status",
 		trace.WithAttributes(
-			attribute.String("home_id", f.controller.homeID),
+			attribute.String("home_id", m.controller.homeID),
 		),
 	)
 	defer span.End()
 
 	fetchStart := time.Now()
 
-	f.logger.Debug("fetching home status",
+	m.logger.Debug("fetching home status for metrics",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.String("span_id", span.SpanContext().SpanID().String()),
 	)
 
-	// Step 1: Fetch home status from Netatmo
-	homeStatus, err := f.controller.netatmoClient.GetHomeStatus(ctx, f.controller.homeID)
-
-	// Step 2: Store in cached status (even if error occurred)
-	f.controller.cachedStatusMu.Lock()
-	f.controller.cachedStatus = &CachedHomeStatus{
-		HomeStatus: homeStatus,
-		FetchTime:  fetchStart,
-		FetchError: err,
-	}
-	f.controller.cachedStatusMu.Unlock()
+	// Fetch home status from Netatmo
+	homeStatus, err := m.controller.netatmoClient.GetHomeStatus(ctx, m.controller.homeID)
 
 	if err != nil {
-		f.logger.Error("failed to fetch home status",
+		m.logger.Error("failed to fetch home status",
 			zap.Error(err),
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
 		)
@@ -66,38 +60,35 @@ func (f *HomeStatusFetcher) Run(ctx context.Context) {
 		attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 	)
 
-	f.logger.Info("home status fetched successfully",
+	m.logger.Debug("home status fetched successfully",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 		zap.Duration("fetch_duration", time.Since(fetchStart)),
 	)
 
-	// Step 3: Add Netatmo data to metrics buffer
-	f.controller.addToMetricsBuffer(ctx, homeStatus)
+	// Add Netatmo data to metrics buffer
+	m.controller.addToMetricsBuffer(ctx, homeStatus)
 
-	f.logger.Debug("home status fetch completed",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
-		zap.Duration("total_duration", time.Since(fetchStart)),
-	)
+	// Send status to Control Job via channel (non-blocking with buffered channel)
+	select {
+	case m.homeStatusChan <- homeStatus:
+		m.logger.Debug("sent home status to control job",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.Duration("total_duration", time.Since(fetchStart)),
+		)
+	case <-ctx.Done():
+		m.logger.Warn("context cancelled before sending home status")
+	default:
+		// Channel is full, this shouldn't happen with buffered channel but log it
+		m.logger.Warn("home status channel is full, dropping oldest data")
+		select {
+		case <-m.homeStatusChan:
+		default:
+		}
+		m.homeStatusChan <- homeStatus
+	}
 }
 
-// GetCachedHomeStatus returns the cached home status (thread-safe)
-// Returns nil if no status has been fetched yet or if the status is too old
-func (c *Controller) GetCachedHomeStatus() *CachedHomeStatus {
-	c.cachedStatusMu.RLock()
-	defer c.cachedStatusMu.RUnlock()
+// Deprecated: HomeStatusFetcher - Use MetricJob instead
+type HomeStatusFetcher = MetricJob
 
-	if c.cachedStatus == nil {
-		return nil
-	}
-
-	// Return cached status if it's from the same minute
-	now := time.Now()
-	if c.cachedStatus.FetchTime.Minute() == now.Minute() &&
-		c.cachedStatus.FetchTime.Hour() == now.Hour() &&
-		c.cachedStatus.FetchTime.Day() == now.Day() {
-		return c.cachedStatus
-	}
-
-	return nil
-}
