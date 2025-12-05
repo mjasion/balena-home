@@ -147,7 +147,7 @@ func TestSetpointCompensation_RealWorldScenario(t *testing.T) {
 	currentSetpoint := 24.5
 
 	// Calculate what the system should do
-	sensorOffset := netatmoMeasured - xiaomiTemp // 23.5 - 24.49 = -0.99°C
+	sensorOffset := netatmoMeasured - xiaomiTemp       // 23.5 - 24.49 = -0.99°C
 	calculatedSetpoint := scheduledTemp + sensorOffset // 24.5 + (-0.99) = 23.51°C
 
 	t.Logf("User's scenario analysis:")
@@ -215,44 +215,44 @@ func TestRoundToHalfDegree(t *testing.T) {
 // TestSetpointCompensation_WithRounding tests that setpoint compensation includes rounding
 func TestSetpointCompensation_WithRounding(t *testing.T) {
 	tests := []struct {
-		name             string
-		xiaomiTemp       float64
-		netatmoMeasured  float64
-		scheduledTemp    float64
-		expectedRaw      float64
-		expectedRounded  float64
+		name            string
+		xiaomiTemp      float64
+		netatmoMeasured float64
+		scheduledTemp   float64
+		expectedRaw     float64
+		expectedRounded float64
 	}{
 		{
 			name:            "User's exact scenario: offset 0.3 should round to 0.5",
 			xiaomiTemp:      24.2,
 			netatmoMeasured: 24.5,
 			scheduledTemp:   27.5,
-			expectedRaw:     27.8,  // 27.5 + (24.5 - 24.2)
-			expectedRounded: 28.0,  // Rounded to nearest 0.5
+			expectedRaw:     27.8, // 27.5 + (24.5 - 24.2)
+			expectedRounded: 28.0, // Rounded to nearest 0.5
 		},
 		{
 			name:            "Offset 0.2 should round down",
 			xiaomiTemp:      24.0,
 			netatmoMeasured: 24.2,
 			scheduledTemp:   22.0,
-			expectedRaw:     22.2,  // 22.0 + 0.2
-			expectedRounded: 22.0,  // Rounded down
+			expectedRaw:     22.2, // 22.0 + 0.2
+			expectedRounded: 22.0, // Rounded down
 		},
 		{
 			name:            "Offset 0.4 should round up",
 			xiaomiTemp:      24.0,
 			netatmoMeasured: 24.4,
 			scheduledTemp:   22.0,
-			expectedRaw:     22.4,  // 22.0 + 0.4
-			expectedRounded: 22.5,  // Rounded up
+			expectedRaw:     22.4, // 22.0 + 0.4
+			expectedRounded: 22.5, // Rounded up
 		},
 		{
 			name:            "Negative offset -0.3 should round to -0.5",
 			xiaomiTemp:      24.5,
 			netatmoMeasured: 24.2,
 			scheduledTemp:   22.0,
-			expectedRaw:     21.7,  // 22.0 + (24.2 - 24.5)
-			expectedRounded: 21.5,  // Rounded to nearest 0.5
+			expectedRaw:     21.7, // 22.0 + (24.2 - 24.5)
+			expectedRounded: 21.5, // Rounded to nearest 0.5
 		},
 	}
 

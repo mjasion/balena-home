@@ -12,10 +12,10 @@ import (
 
 // MetricJob handles fetching home status and sending to Control Job via channel
 type MetricJob struct {
-	controller       *Controller
-	logger           *zap.Logger
-	tracer           trace.Tracer
-	homeStatusChan   chan<- *netatmo.HomeStatusResponse
+	controller     *Controller
+	logger         *zap.Logger
+	tracer         trace.Tracer
+	homeStatusChan chan<- *netatmo.HomeStatusResponse
 }
 
 // NewMetricJob creates a new metric job
@@ -83,4 +83,3 @@ func (m *MetricJob) Run(ctx context.Context) {
 
 // Deprecated: HomeStatusFetcher - Use MetricJob instead
 type HomeStatusFetcher = MetricJob
-

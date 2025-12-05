@@ -2,8 +2,6 @@ package control
 
 import (
 	"time"
-
-	"github.com/mjasion/balena-home/thermostats/netatmo"
 )
 
 // ThermostatState tracks the minimal state needed for controlled thermostat
@@ -46,4 +44,3 @@ type ControlDecision struct {
 	CalculatedSetpoint  float64 // New setpoint (if action is set_manual_override)
 	OverrideEndTime     int64   // Unix timestamp for override expiration
 }
-

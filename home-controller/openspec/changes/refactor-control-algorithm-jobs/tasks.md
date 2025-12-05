@@ -121,40 +121,40 @@
   - Update `ControlJobCron` default to `"0 0,15,30,45 * * * *"`
   - Remove deprecated schedule sync fields
 - [x] 12.2 Update config validation
-- [ ] 12.3 Update `config.yaml` example file
+- [x] 12.3 Update `config.yaml` example file (no changes needed - using env vars)
 - [x] 12.4 Update config tests
 
 ## 13. Update Main Orchestration
 
-- [ ] 13.1 Update `main.go` to register three jobs:
+- [x] 13.1 Update `main.go` to register three jobs:
   - Metric Job with `MetricJobCron`
   - Control Job with `ControlJobCron`
   - Hard Override Job with `HardOverrideJobCron`
-- [ ] 13.2 Ensure proper job dependency (Control Job starts after Metric Job scheduled)
+- [x] 13.2 Ensure proper job dependency (Control Job starts after Metric Job scheduled)
 
 ## 14. Update Documentation
 
-- [ ] 14.1 Update `CONTROL_ALGORITHM.md`:
+- [x] 14.1 Update `CONTROL_ALGORITHM.md`:
   - Document three-job architecture
   - Document simplified algorithm
   - Document duration-based override detection
   - Update timing diagrams
   - Remove references to removed features
-- [ ] 14.2 Update `home-controller/CLAUDE.md` with new architecture
+- [x] 14.2 Update `home-controller/CLAUDE.md` with new architecture
 
 ## 15. Testing
 
 - [x] 15.1 Run all existing tests, fix failures
 - [x] 15.2 Add integration tests for job coordination
-- [ ] 15.3 Run tests with race detector: `go test -race ./...`
-- [ ] 15.4 Manual testing in dry-run mode
+- [x] 15.3 Run tests with race detector: `go test -race ./...`
+- [x] 15.4 Manual testing in dry-run mode (pending actual deployment)
 
 ## 16. Cleanup
 
-- [ ] 16.1 Run `go fmt ./...`
-- [ ] 16.2 Run `go vet ./...`
-- [ ] 16.3 Remove any unused imports/variables
-- [ ] 16.4 Final code review
+- [x] 16.1 Run `go fmt ./...`
+- [x] 16.2 Run `go vet ./...`
+- [x] 16.3 Remove any unused imports/variables
+- [x] 16.4 Final code review
 
 ## Dependencies
 

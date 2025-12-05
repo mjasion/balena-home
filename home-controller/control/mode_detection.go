@@ -1,8 +1,6 @@
 package control
 
 import (
-	"time"
-
 	"github.com/mjasion/balena-home/thermostats/netatmo"
 	"go.uber.org/zap"
 )
@@ -147,4 +145,3 @@ func (c *Controller) detectHomeModeChange(roomStatus *netatmo.RoomStatus, roomID
 
 	return false
 }
-

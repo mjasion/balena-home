@@ -100,17 +100,17 @@ type LoggingConfig struct {
 
 // ThermostatControlConfig contains thermostat control configuration
 type ThermostatControlConfig struct {
-	Enabled                          bool                `yaml:"enabled" env:"THERMOSTAT_CONTROL_ENABLED" env-default:"false"`
-	DryRun                           bool                `yaml:"dryRun" env:"THERMOSTAT_CONTROL_DRY_RUN" env-default:"false"`
-	TemperatureThreshold             float64             `yaml:"temperatureThreshold" env:"TEMPERATURE_THRESHOLD" env-default:"0.2"`
-	OverrideDurationMinutes          int                 `yaml:"overrideDurationMinutes" env:"OVERRIDE_DURATION_MINUTES" env-default:"10"`
-	MinSetpointCelsius               float64             `yaml:"minSetpointCelsius" env:"MIN_SETPOINT_CELSIUS" env-default:"10.0"`
-	MaxSetpointCelsius               float64             `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
-	Mappings                         []ThermostatMapping `yaml:"mappings"`
-	HardOverrides                    []HardOverride      `yaml:"hardOverrides"`
-	MetricJobCron                    string              `yaml:"metricJobCron" env:"METRIC_JOB_CRON" env-default:"0 * * * * *"`                 // Cron expression for metric job (runs every minute at :00)
-	ControlJobCron                   string              `yaml:"controlJobCron" env:"CONTROL_JOB_CRON" env-default:"0 0,15,30,45 * * * *"`      // Cron expression for control job (runs every 15 min at :00/:15/:30/:45)
-	HardOverrideJobCron              string              `yaml:"hardOverrideJobCron" env:"HARD_OVERRIDE_JOB_CRON" env-default:"0 * * * * *"` // Cron expression for hard override job (runs every minute at :00)
+	Enabled                 bool                `yaml:"enabled" env:"THERMOSTAT_CONTROL_ENABLED" env-default:"false"`
+	DryRun                  bool                `yaml:"dryRun" env:"THERMOSTAT_CONTROL_DRY_RUN" env-default:"false"`
+	TemperatureThreshold    float64             `yaml:"temperatureThreshold" env:"TEMPERATURE_THRESHOLD" env-default:"0.2"`
+	OverrideDurationMinutes int                 `yaml:"overrideDurationMinutes" env:"OVERRIDE_DURATION_MINUTES" env-default:"10"`
+	MinSetpointCelsius      float64             `yaml:"minSetpointCelsius" env:"MIN_SETPOINT_CELSIUS" env-default:"10.0"`
+	MaxSetpointCelsius      float64             `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
+	Mappings                []ThermostatMapping `yaml:"mappings"`
+	HardOverrides           []HardOverride      `yaml:"hardOverrides"`
+	MetricJobCron           string              `yaml:"metricJobCron" env:"METRIC_JOB_CRON" env-default:"0 * * * * *"`              // Cron expression for metric job (runs every minute at :00)
+	ControlJobCron          string              `yaml:"controlJobCron" env:"CONTROL_JOB_CRON" env-default:"0 0,15,30,45 * * * *"`   // Cron expression for control job (runs every 15 min at :00/:15/:30/:45)
+	HardOverrideJobCron     string              `yaml:"hardOverrideJobCron" env:"HARD_OVERRIDE_JOB_CRON" env-default:"0 * * * * *"` // Cron expression for hard override job (runs every minute at :00)
 }
 
 // ThermostatMapping maps a Netatmo room to a Xiaomi sensor

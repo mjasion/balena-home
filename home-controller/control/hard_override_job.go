@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"strings"
 	"time"

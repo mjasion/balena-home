@@ -64,14 +64,14 @@ func New(
 	tracer := otel.Tracer("home-controller/control")
 
 	return &Controller{
-		config:        cfg,
-		netatmoClient: netatmoClient,
-		controlBuffer: controlBuffer,
-		metricsBuffer: metricsBuffer,
-		logger:        logger,
-		tracer:        tracer,
-		stateByRoom:   make(map[string]*ThermostatState),
-		sensorToRooms: sensorToRooms,
+		config:         cfg,
+		netatmoClient:  netatmoClient,
+		controlBuffer:  controlBuffer,
+		metricsBuffer:  metricsBuffer,
+		logger:         logger,
+		tracer:         tracer,
+		stateByRoom:    make(map[string]*ThermostatState),
+		sensorToRooms:  sensorToRooms,
 		homeStatusChan: homeStatusChan,
 	}
 }
