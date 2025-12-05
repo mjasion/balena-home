@@ -30,10 +30,13 @@ func NewMetricJob(controller *Controller, logger *zap.Logger, tracer trace.Trace
 
 // Run executes the metric job (called by scheduler every minute)
 func (m *MetricJob) Run(ctx context.Context) {
-	ctx, span := m.tracer.Start(ctx, "metric_job_fetch_home_status",
+	// Create a new root trace span for this job execution
+	ctx, span := m.tracer.Start(ctx, "metric_job",
+		trace.WithSpanKind(trace.SpanKindServer),
 		trace.WithAttributes(
 			attribute.String("home_id", m.controller.homeID),
 			attribute.String("job", "metric_job"),
+			attribute.String("operation", "fetch_home_status"),
 		),
 	)
 	defer span.End()

@@ -248,10 +248,12 @@ func (c *Controller) addToMetricsBuffer(ctx context.Context, homeStatus *netatmo
 // runControlLoop executes one iteration of the control loop
 // Uses home status received from Metric Job via channel
 func (c *Controller) runControlLoop(ctx context.Context) {
-	// Start a new trace span for this control loop iteration
-	ctx, span := c.tracer.Start(ctx, "control_job_iteration",
+	// Create a new root trace span for this job execution
+	ctx, span := c.tracer.Start(ctx, "control_job",
+		trace.WithSpanKind(trace.SpanKindServer),
 		trace.WithAttributes(
 			attribute.String("job", "control_job"),
+			attribute.String("operation", "evaluate_and_control_rooms"),
 			attribute.Int("mapping_count", len(c.config.Mappings)),
 			attribute.Bool("dry_run", c.config.DryRun),
 		),

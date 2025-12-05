@@ -31,9 +31,12 @@ func NewHardOverrideJob(controller *Controller, logger *zap.Logger, tracer trace
 
 // Run executes the hard override job (called by scheduler every minute)
 func (h *HardOverrideJob) Run(ctx context.Context) {
+	// Create a new root trace span for this job execution
 	ctx, span := h.tracer.Start(ctx, "hard_override_job",
+		trace.WithSpanKind(trace.SpanKindServer),
 		trace.WithAttributes(
 			attribute.String("job", "hard_override_job"),
+			attribute.String("operation", "apply_time_based_overrides"),
 			attribute.Int("override_count", len(h.controller.config.HardOverrides)),
 		),
 	)
