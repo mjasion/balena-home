@@ -84,7 +84,9 @@ func (m *MetricJob) Run(ctx context.Context) {
 	)
 	m.controller.addToMetricsBuffer(ctx, homeStatus)
 
-	// Send status to Control Job via channel (buffered channel, won't block)
+	// Send status to Control Job via channel
+	// Note: Channel has buffer size 1 to allow Metric Job to never block
+	// Control Job must check timestamp to ensure data freshness
 	select {
 	case m.homeStatusChan <- homeStatus:
 		totalDuration := time.Since(fetchStart)
@@ -96,10 +98,18 @@ func (m *MetricJob) Run(ctx context.Context) {
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
 			zap.Duration("total_duration", totalDuration),
 		)
-	case <-ctx.Done():
-		span.SetAttributes(attribute.Bool("sent_to_control_job", false))
-		m.logger.Warn("metric job - context cancelled before sending home status to control job",
+	default:
+		// Channel is full - this means Control Job hasn't consumed previous data yet
+		// This is expected if Control Job runs less frequently than Metric Job
+		totalDuration := time.Since(fetchStart)
+		span.SetAttributes(
+			attribute.Bool("sent_to_control_job", false),
+			attribute.String("skip_reason", "channel_full"),
+			attribute.Int64("total_duration_ms", totalDuration.Milliseconds()),
+		)
+		m.logger.Warn("metric job - channel full, control job hasn't consumed previous data yet (this is expected between control job runs)",
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.Duration("total_duration", totalDuration),
 		)
 	}
 }

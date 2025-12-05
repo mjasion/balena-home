@@ -288,14 +288,36 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		return
 	}
 
+	// Verify data freshness - Netatmo TimeServer is Unix timestamp of when data was fetched
+	// Control Job runs every 15 minutes, so we expect data from the current or previous minute
+	dataAge := time.Since(time.Unix(homeStatus.TimeServer, 0))
+	const maxDataAge = 2 * time.Minute // Allow up to 2 minutes old (tolerates small delays)
+
+	if dataAge > maxDataAge {
+		c.logger.Error("control job - received stale home status data, skipping iteration",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.Duration("data_age", dataAge),
+			zap.Duration("max_allowed_age", maxDataAge),
+			zap.Time("data_timestamp", time.Unix(homeStatus.TimeServer, 0)),
+		)
+		span.SetAttributes(
+			attribute.String("skip_reason", "stale_data"),
+			attribute.Int64("data_age_seconds", int64(dataAge.Seconds())),
+		)
+		return
+	}
+
 	span.SetAttributes(
 		attribute.String("home_id", c.homeID),
 		attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 		attribute.Bool("home_status_received", true),
+		attribute.Int64("data_age_seconds", int64(dataAge.Seconds())),
 	)
 
-	c.logger.Info("control job - received home status from metric job",
+	c.logger.Info("control job - received fresh home status from metric job",
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+		zap.Duration("data_age", dataAge),
+		zap.Time("data_timestamp", time.Unix(homeStatus.TimeServer, 0)),
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 	)
 
