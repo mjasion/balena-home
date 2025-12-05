@@ -217,8 +217,8 @@ func (h *HardOverrideJob) calculateSetpointForHardOverride(
 	}
 
 	// Get target temperature from hard override
-	_, targetTemp := h.controller.getHardOverrideTemp(override)
-	if !targetTemp {
+	targetTemp, isActive := h.controller.getHardOverrideTemp(override)
+	if !isActive {
 		// This shouldn't happen since we already checked, but safety
 		return roomStatus.ThermSetpointTemperature
 	}

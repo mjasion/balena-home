@@ -241,8 +241,59 @@ func (c *Controller) calculateBoundaryAlignedEndTime() time.Time {
 	}
 
 	// Same hour
-	endMinute := nextBoundary - 1
-	endSecond := 59
 	endTime := now.Truncate(time.Hour).Add(time.Duration(nextBoundary) * time.Minute).Add(-1 * time.Second)
 	return endTime
+}
+
+// isHardOverrideActive checks if a hard override is currently active for a room
+func (c *Controller) isHardOverrideActive(roomName string) bool {
+	for _, override := range c.config.HardOverrides {
+		if override.RoomName == roomName {
+			_, active := c.getHardOverrideTemp(override)
+			return active
+		}
+	}
+	return false
+}
+
+// getHardOverrideTemp checks if a hard override is currently active and returns the target temperature
+func (c *Controller) getHardOverrideTemp(override config.HardOverride) (float64, bool) {
+	now := time.Now().In(c.warsawLocation())
+	currentTime := now.Format("15:04")
+	currentDay := now.Weekday().String()[:3] // "Mon", "Tue", etc.
+
+	for _, window := range override.Schedule {
+		// Check if time matches
+		if currentTime >= window.StartTime && currentTime <= window.EndTime {
+			// If days are specified, check if current day matches
+			if len(window.Days) > 0 {
+				dayMatches := false
+				for _, day := range window.Days {
+					normalizedDay := day
+					if len(day) > 3 {
+						normalizedDay = day[:3]
+					}
+					if normalizedDay == currentDay {
+						dayMatches = true
+						break
+					}
+				}
+				if !dayMatches {
+					continue
+				}
+			}
+			return window.TargetTemperature, true
+		}
+	}
+	return 0, false
+}
+
+// warsawLocation returns the Warsaw timezone (Poland, where the system is deployed)
+func (c *Controller) warsawLocation() *time.Location {
+	loc, err := time.LoadLocation("Europe/Warsaw")
+	if err != nil {
+		// Fallback to UTC if timezone not available
+		return time.UTC
+	}
+	return loc
 }
