@@ -19,13 +19,11 @@ func TestControllerConstructor(t *testing.T) {
 	metricsBuffer := buffer.New(100, logger)
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled:                          true,
-		TemperatureThreshold:             0.5,
-		HomeStatusFetchCron:              "0 * * * * *",
-		ControlLoopCron:                  "30 * * * * *",
-		ExtensionThresholdMinutes:        2,
-		OverrideDurationMinutes:          30,
-		ExternalModificationResetMinutes: 5,
+		Enabled:                 true,
+		TemperatureThreshold:    0.2,
+		MetricJobCron:           "0 * * * * *",
+		ControlJobCron:          "0 0,15,30,45 * * * *",
+		OverrideDurationMinutes: 30,
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
 			{RoomName: "Bedroom", SensorMAC: "11:22:33:44:55:66", RoomID: "room2"},
@@ -35,7 +33,10 @@ func TestControllerConstructor(t *testing.T) {
 	// Create mock Netatmo client
 	client := netatmo.NewClient("test-client-id", "test-secret", "test-refresh-token")
 
-	c := New(cfg, client, controlBuffer, metricsBuffer, logger)
+	// Create channel for home status
+	homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1)
+
+	c := New(cfg, client, controlBuffer, metricsBuffer, logger, homeStatusChan)
 
 	if c == nil {
 		t.Fatal("Expected non-nil controller")
@@ -85,13 +86,14 @@ func TestWeightedAverageTemperature(t *testing.T) {
 
 	cfg := &config.ThermostatControlConfig{
 		Enabled:                 true,
-		TemperatureThreshold:    0.5,
-		HomeStatusFetchCron:     "0 * * * * *",
-		ControlLoopCron:         "30 * * * * *",
+		TemperatureThreshold:    0.2,
+		MetricJobCron:           "0 * * * * *",
+		ControlJobCron:          "0 0,15,30,45 * * * *",
 		OverrideDurationMinutes: 10,
 	}
 
-	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+	homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1)
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, homeStatusChan)
 
 	now := time.Now()
 	sensorMAC := "AA:BB:CC:DD:EE:FF"
@@ -200,7 +202,7 @@ func TestWeightedAverageWithVaryingFrequencies(t *testing.T) {
 		Enabled: true,
 	}
 
-	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+	c := homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1); New(cfg, nil, controlBuffer, metricsBuffer, logger, homeStatusChan)
 
 	now := time.Now()
 	sensorMAC := "AA:BB:CC:DD:EE:FF"
@@ -273,7 +275,7 @@ func TestHardOverrideDetection(t *testing.T) {
 		},
 	}
 
-	c := New(cfg, nil, nil, nil, logger)
+	c := homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1); New(cfg, nil, nil, nil, logger, homeStatusChan)
 
 	// Test 1: Living Room should have active override (current time is within window)
 	t.Run("Living Room with current time override", func(t *testing.T) {
@@ -340,7 +342,7 @@ func TestConcurrentStateAccess(t *testing.T) {
 		Enabled: true,
 	}
 
-	c := New(cfg, nil, nil, nil, logger)
+	c := homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1); New(cfg, nil, nil, nil, logger, homeStatusChan)
 
 	// Launch multiple goroutines that read and write state
 	done := make(chan bool)
@@ -397,7 +399,7 @@ func TestStateIsolation(t *testing.T) {
 		Enabled: true,
 	}
 
-	c := New(cfg, nil, nil, nil, logger)
+	c := homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1); New(cfg, nil, nil, nil, logger, homeStatusChan)
 
 	// Create states for two rooms
 	room1ID := "room1"
@@ -442,7 +444,7 @@ func TestControllerWithNilBuffers(t *testing.T) {
 	}
 
 	// Create controller with nil buffers (should not crash during construction)
-	c := New(cfg, nil, nil, nil, logger)
+	c := homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1); New(cfg, nil, nil, nil, logger, homeStatusChan)
 
 	if c == nil {
 		t.Fatal("Expected non-nil controller even with nil buffers")
@@ -498,7 +500,7 @@ func TestMarkExternallyModified(t *testing.T) {
 		Enabled: true,
 	}
 
-	c := New(cfg, nil, nil, nil, logger)
+	c := homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1); New(cfg, nil, nil, nil, logger, homeStatusChan)
 
 	roomID := "room123"
 
@@ -537,7 +539,7 @@ func TestClearExternalModification(t *testing.T) {
 		Enabled: true,
 	}
 
-	c := New(cfg, nil, nil, nil, logger)
+	c := homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1); New(cfg, nil, nil, nil, logger, homeStatusChan)
 
 	roomID := "room123"
 
@@ -580,7 +582,7 @@ func TestBufferIsolation(t *testing.T) {
 		Enabled: true,
 	}
 
-	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+	c := homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1); New(cfg, nil, controlBuffer, metricsBuffer, logger, homeStatusChan)
 
 	now := time.Now()
 	sensorMAC := "AA:BB:CC:DD:EE:FF"
@@ -667,7 +669,7 @@ func TestTemperatureFieldsPopulatedDuringSkip(t *testing.T) {
 		},
 	}
 
-	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+	c := homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1); New(cfg, nil, controlBuffer, metricsBuffer, logger, homeStatusChan)
 
 	// Initialize state with externally modified flag (will trigger skip)
 	c.stateMu.Lock()
@@ -761,7 +763,7 @@ func TestOverrideExtension(t *testing.T) {
 		},
 	}
 
-	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+	c := homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1); New(cfg, nil, controlBuffer, metricsBuffer, logger, homeStatusChan)
 
 	// Initialize state with an override that's about to expire (1 minute left)
 	c.stateMu.Lock()
@@ -843,7 +845,7 @@ func TestOverrideNotExtendedWhenNotNeeded(t *testing.T) {
 		},
 	}
 
-	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+	c := homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1); New(cfg, nil, controlBuffer, metricsBuffer, logger, homeStatusChan)
 
 	// Initialize state with an override that has plenty of time left (25 minutes)
 	c.stateMu.Lock()
@@ -920,7 +922,7 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 		},
 	}
 
-	c := New(cfg, nil, controlBuffer, metricsBuffer, logger)
+	c := homeStatusChan := make(chan *netatmo.HomeStatusResponse, 1); New(cfg, nil, controlBuffer, metricsBuffer, logger, homeStatusChan)
 
 	// Initialize state (evaluation will proceed normally)
 	c.stateMu.Lock()
