@@ -80,8 +80,9 @@ func New(
 func (c *Controller) Initialize(ctx context.Context) error {
 	c.logger.Info("initializing thermostat controller",
 		zap.Int("mapping_count", len(c.config.Mappings)),
-		zap.String("home_status_fetch_cron", c.config.HomeStatusFetchCron),
-		zap.String("control_loop_cron", c.config.ControlLoopCron),
+		zap.String("metric_job_cron", c.config.MetricJobCron),
+		zap.String("control_job_cron", c.config.ControlJobCron),
+		zap.String("hard_override_job_cron", c.config.HardOverrideJobCron),
 	)
 
 	// Initialize state from Netatmo API (get room IDs)

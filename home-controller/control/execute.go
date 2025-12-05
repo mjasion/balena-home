@@ -171,16 +171,14 @@ func (c *Controller) setNetatmoThermostat(ctx context.Context, roomID, roomName 
 }
 
 // updateRoomState updates the room state after setting override
+// With the new simplified architecture, we don't need to track setpoint history
+// State is derived fresh from API responses each cycle
 func (c *Controller) updateRoomState(roomID string, setpoint float64, endTime time.Time) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 
-	if state, exists := c.stateByRoom[roomID]; exists {
-		state.LastSetpoint = setpoint
-		state.LastSetpointTime = time.Now()
-		state.OverrideEndTime = endTime
-		// Track the manual setpoint and endtime for external change detection
-		state.LastManualSetpoint = setpoint
-		state.LastManualEndTime = endTime.Unix()
+	if _, exists := c.stateByRoom[roomID]; exists {
+		// State is now minimal - we don't track history
+		// All information is re-derived from API responses
 	}
 }

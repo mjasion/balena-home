@@ -69,7 +69,7 @@ func (m *MetricJob) Run(ctx context.Context) {
 	// Add Netatmo data to metrics buffer
 	m.controller.addToMetricsBuffer(ctx, homeStatus)
 
-	// Send status to Control Job via channel (non-blocking with buffered channel)
+	// Send status to Control Job via channel (buffered channel, won't block)
 	select {
 	case m.homeStatusChan <- homeStatus:
 		m.logger.Debug("sent home status to control job",
@@ -78,14 +78,6 @@ func (m *MetricJob) Run(ctx context.Context) {
 		)
 	case <-ctx.Done():
 		m.logger.Warn("context cancelled before sending home status")
-	default:
-		// Channel is full, this shouldn't happen with buffered channel but log it
-		m.logger.Warn("home status channel is full, dropping oldest data")
-		select {
-		case <-m.homeStatusChan:
-		default:
-		}
-		m.homeStatusChan <- homeStatus
 	}
 }
 

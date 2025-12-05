@@ -148,22 +148,3 @@ func (c *Controller) detectHomeModeChange(roomStatus *netatmo.RoomStatus, roomID
 	return false
 }
 
-// clearExternalModification clears the external modification flag for a room
-func (c *Controller) clearExternalModification(roomID string) {
-	c.stateMu.Lock()
-	if state, exists := c.stateByRoom[roomID]; exists {
-		state.ExternallyModified = false
-		state.ExternalModificationTime = time.Time{}
-	}
-	c.stateMu.Unlock()
-}
-
-// markExternallyModified marks a room as externally modified
-func (c *Controller) markExternallyModified(roomID string) {
-	c.stateMu.Lock()
-	if state, exists := c.stateByRoom[roomID]; exists {
-		state.ExternallyModified = true
-		state.ExternalModificationTime = time.Now()
-	}
-	c.stateMu.Unlock()
-}

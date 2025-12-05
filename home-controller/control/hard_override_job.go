@@ -69,10 +69,6 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 		roomStatusMap[room.ID] = room
 	}
 
-	// Get Xiaomi readings for all rooms (we need this for algorithm)
-	// For hard overrides, we still need to calculate based on current room temperature
-	xiaomiReadingsByRoom := make(map[string]float64)
-
 	// Check each hard override
 	for _, override := range h.controller.config.HardOverrides {
 		// Check if this override is currently active
