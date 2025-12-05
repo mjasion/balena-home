@@ -8,15 +8,21 @@ import (
 
 // ThermostatState tracks the minimal state needed for controlled thermostat
 type ThermostatState struct {
-	RoomID   string // Room ID from Netatmo
-	RoomName string // Room name for logging
+	RoomID                   string    // Room ID from Netatmo
+	RoomName                 string    // Room name for logging
+	LastHomeMode             string    // Last known home mode (away, hg, schedule, manual)
+	ExternallyModified       bool      // Flag indicating human override detected
+	ExternalModificationTime time.Time // When external modification was detected
 }
 
 // Copy creates a defensive copy of the state
 func (s *ThermostatState) Copy() ThermostatState {
 	return ThermostatState{
-		RoomID:   s.RoomID,
-		RoomName: s.RoomName,
+		RoomID:                   s.RoomID,
+		RoomName:                 s.RoomName,
+		LastHomeMode:             s.LastHomeMode,
+		ExternallyModified:       s.ExternallyModified,
+		ExternalModificationTime: s.ExternalModificationTime,
 	}
 }
 
