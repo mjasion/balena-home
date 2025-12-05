@@ -35,12 +35,8 @@ type Controller struct {
 	// Mapping of sensor MAC to room IDs
 	sensorToRooms map[string][]string // Key: sensor MAC (uppercase), Value: list of room IDs
 
-	// Schedule sync tracking
-	lastSyncTime time.Time
-
-	// Cached home status (thread-safe with mutex)
-	cachedStatusMu sync.RWMutex
-	cachedStatus   *CachedHomeStatus
+	// Channel for receiving home status from Metric Job
+	homeStatusChan <-chan *netatmo.HomeStatusResponse
 }
 
 // New creates a new thermostat controller
@@ -50,6 +46,7 @@ func New(
 	controlBuffer *buffer.RingBuffer,
 	metricsBuffer *buffer.RingBuffer,
 	logger *zap.Logger,
+	homeStatusChan <-chan *netatmo.HomeStatusResponse,
 ) *Controller {
 	// Build sensor-to-rooms mapping
 	sensorToRooms := make(map[string][]string)
@@ -75,6 +72,7 @@ func New(
 		tracer:        tracer,
 		stateByRoom:   make(map[string]*ThermostatState),
 		sensorToRooms: sensorToRooms,
+		homeStatusChan: homeStatusChan,
 	}
 }
 
@@ -98,6 +96,17 @@ func (c *Controller) Initialize(ctx context.Context) error {
 // Run executes a single control loop iteration (called by scheduler)
 func (c *Controller) Run(ctx context.Context) {
 	c.runControlLoop(ctx)
+}
+
+// ReceiveHomeStatus waits for and returns the latest home status from Metric Job
+func (c *Controller) ReceiveHomeStatus(ctx context.Context) *netatmo.HomeStatusResponse {
+	select {
+	case status := <-c.homeStatusChan:
+		return status
+	case <-ctx.Done():
+		c.logger.Warn("context cancelled while waiting for home status")
+		return nil
+	}
 }
 
 // initializeRoomIDs fetches Netatmo home data to populate room IDs for mappings
