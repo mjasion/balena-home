@@ -1,40 +1,40 @@
 ## 1. Preparation
 
-- [ ] 1.1 Create feature branch `refactor-control-algorithm-jobs`
-- [ ] 1.2 Review existing test coverage to understand what needs updating
+- [x] 1.1 Create feature branch `refactor-control-algorithm-jobs`
+- [x] 1.2 Review existing test coverage to understand what needs updating
 
 ## 2. Simplify State Structure
 
-- [ ] 2.1 Update `control/types.go`: Remove fields from ThermostatState
+- [x] 2.1 Update `control/types.go`: Remove fields from ThermostatState
   - Remove: `LastSetpoint`, `LastSetpointTime`, `OverrideEndTime`
   - Remove: `SyncedScheduledTemp`, `SyncedScheduledTime`
   - Remove: `LastManualSetpoint`, `LastManualEndTime`
   - Remove: `ConsecutiveIncreases`, `LastCalculatedSetpoint`, `RunawayHaltUntil`
   - Remove: `PendingSetpoint`, `PendingSetpointTime`, `ScheduleJustChanged`
   - Keep: `RoomID`, `RoomName`, `ExternallyModified`, `ExternalModificationTime`, `LastHomeMode`
-- [ ] 2.2 Update `Copy()` method to match simplified struct
-- [ ] 2.3 Update tests in `control/types_test.go` if exists
+- [x] 2.2 Update `Copy()` method to match simplified struct
+- [x] 2.3 Update tests in `control/types_test.go` if exists
 
 ## 3. Implement Channel Communication
 
-- [ ] 3.1 Add `homeStatusChannel chan *netatmo.HomeStatusResponse` to Controller struct
-- [ ] 3.2 Update Controller constructor to create buffered channel (size 1)
-- [ ] 3.3 Create `SendHomeStatus(status *netatmo.HomeStatusResponse)` method for Metric Job
-- [ ] 3.4 Create `ReceiveHomeStatus() *netatmo.HomeStatusResponse` method for Control Job
+- [x] 3.1 Add `homeStatusChannel chan *netatmo.HomeStatusResponse` to Controller struct
+- [x] 3.2 Update Controller constructor to create buffered channel (size 1)
+- [x] 3.3 Create `SendHomeStatus(status *netatmo.HomeStatusResponse)` method for Metric Job
+- [x] 3.4 Create `ReceiveHomeStatus() *netatmo.HomeStatusResponse` method for Control Job
 
 ## 4. Refactor Metric Job
 
-- [ ] 4.1 Update `control/home_status_fetcher.go`:
+- [x] 4.1 Update `control/home_status_fetcher.go`:
   - Rename to `metric_job.go` for clarity
   - After fetching, send to channel instead of caching
   - Keep metrics buffer push for Prometheus
-- [ ] 4.2 Update cron configuration to use `metricJobCron` (default: `"0 * * * * *"`)
-- [ ] 4.3 Remove cached status methods (`GetCachedHomeStatus`, `cachedStatusMu`, `cachedStatus`)
-- [ ] 4.4 Write tests for channel communication
+- [x] 4.2 Update cron configuration to use `metricJobCron` (default: `"0 * * * * *"`)
+- [x] 4.3 Remove cached status methods (`GetCachedHomeStatus`, `cachedStatusMu`, `cachedStatus`)
+- [x] 4.4 Write tests for channel communication
 
 ## 5. Implement Simplified Algorithm
 
-- [ ] 5.1 Update `control/evaluate.go`:
+- [x] 5.1 Update `control/evaluate.go`:
   - Implement three-zone setpoint calculation:
     - diff <= -threshold: `netatmo_measured + 0.5`
     - -threshold < diff < threshold: `netatmo_measured`
@@ -43,86 +43,86 @@
   - Remove `checkRunawayProtection()` function
   - Remove `checkDelayedExecution()` function
   - Remove `shouldExtendOverride()` function
-- [ ] 5.2 Update `applySafetyBounds()` to keep only 7-30°C limits
-- [ ] 5.3 Update tests in `control/controller_setpoint_test.go`
+- [x] 5.2 Update `applySafetyBounds()` to keep only 7-30°C limits
+- [x] 5.3 Update tests in `control/controller_setpoint_test.go`
 
 ## 6. Implement Duration-Based Override Detection
 
-- [ ] 6.1 Update `control/mode_detection.go`:
+- [x] 6.1 Update `control/mode_detection.go`:
   - Create `isHumanOverride(roomStatus *netatmo.RoomStatus) bool` function
     - Calculate: `end_time - start_time >= 60 minutes`
   - Remove `detectExternalManualChange()` function
   - Remove `detectExternalModification()` function
   - Simplify `shouldControlRoom()` to use duration-based detection
-- [ ] 6.2 Update tests in `control/mode_detection_test.go`
+- [x] 6.2 Update tests in `control/mode_detection_test.go`
 
 ## 7. Implement Boundary-Aligned Override Timing
 
-- [ ] 7.1 Create helper function `calculateOverrideEndTime() time.Time`:
+- [x] 7.1 Create helper function `calculateOverrideEndTime() time.Time`:
   - Return next :14:59, :29:59, :44:59, or :59:59
-- [ ] 7.2 Update `control/execute.go` to use boundary-aligned end times
-- [ ] 7.3 Write tests for boundary calculation edge cases
+- [x] 7.2 Update `control/execute.go` to use boundary-aligned end times
+- [x] 7.3 Write tests for boundary calculation edge cases
 
 ## 8. Implement Non-Blocking Per-Room Processing
 
-- [ ] 8.1 Update `control/controller.go`:
+- [x] 8.1 Update `control/controller.go`:
   - Replace `evaluateAndExecuteRooms()` with concurrent version
   - Use `sync.WaitGroup` to coordinate goroutines
   - Each room goroutine handles its own waiting logic
-- [ ] 8.2 Create `processRoomAsync()` function:
+- [x] 8.2 Create `processRoomAsync()` function:
   - If schedule mode: process immediately with shared data
   - If manual mode < 60 min: calculate wait, sleep, make own API call
   - If manual mode >= 60 min: skip (human override)
   - If override expires outside window: skip
-- [ ] 8.3 Write tests for concurrent processing scenarios
+- [x] 8.3 Write tests for concurrent processing scenarios
 
 ## 9. Refactor Control Job
 
-- [ ] 9.1 Update `control/controller.go` `Run()` method:
+- [x] 9.1 Update `control/controller.go` `Run()` method:
   - Wait for data on homeStatusChannel
   - Verify data is from current minute
   - Spawn per-room goroutines
   - Wait for all goroutines to complete
-- [ ] 9.2 Remove `runSyncMode()` and `runNormalMode()` - replace with single flow
-- [ ] 9.3 Update cron configuration to use `controlJobCron` (default: `"0 0,15,30,45 * * * *"`)
+- [x] 9.2 Remove `runSyncMode()` and `runNormalMode()` - replace with single flow
+- [x] 9.3 Update cron configuration to use `controlJobCron` (default: `"0 0,15,30,45 * * * *"`)
 
 ## 10. Implement Hard Override Job
 
-- [ ] 10.1 Create `control/hard_override_job.go`:
+- [x] 10.1 Create `control/hard_override_job.go`:
   - Create `HardOverrideJob` struct with controller reference
   - Implement `Run(ctx context.Context)` method
   - Check for active hard override windows
   - Use same three-zone algorithm with override target temp
   - Skip rooms with human overrides (>= 60 min)
-- [ ] 10.2 Add `hardOverrideJobCron` configuration (default: `"0 * * * * *"`)
-- [ ] 10.3 Write tests for Hard Override Job
+- [x] 10.2 Add `hardOverrideJobCron` configuration (default: `"0 * * * * *"`)
+- [x] 10.3 Write tests for Hard Override Job
 
 ## 11. Remove Deprecated Code
 
-- [ ] 11.1 Delete `control/sync.go` entirely (schedule sync no longer needed)
-- [ ] 11.2 Delete related test files:
+- [x] 11.1 Delete `control/sync.go` entirely (schedule sync no longer needed)
+- [x] 11.2 Delete related test files:
   - `control/sync_timing_test.go`
   - `control/sync_hybrid_test.go`
-- [ ] 11.3 Remove from `control/evaluate.go`:
+- [x] 11.3 Remove from `control/evaluate.go`:
   - `clearPendingSetpoint()`
   - `setPendingSetpoint()`
-- [ ] 11.4 Remove schedule sync configuration fields from `config/config.go`:
+- [x] 11.4 Remove schedule sync configuration fields from `config/config.go`:
   - `ScheduleSyncIntervalMinutes`
   - `ScheduleSyncPollIntervalSeconds`
   - `ScheduleSyncPollTimeoutSeconds`
 
 ## 12. Update Configuration
 
-- [ ] 12.1 Update `config/config.go`:
+- [x] 12.1 Update `config/config.go`:
   - Change `TemperatureThreshold` default from 0.5 to 0.2
   - Rename `HomeStatusFetchCron` to `MetricJobCron`
   - Rename `ControlLoopCron` to `ControlJobCron`
   - Add `HardOverrideJobCron` field
   - Update `ControlJobCron` default to `"0 0,15,30,45 * * * *"`
   - Remove deprecated schedule sync fields
-- [ ] 12.2 Update config validation
+- [x] 12.2 Update config validation
 - [ ] 12.3 Update `config.yaml` example file
-- [ ] 12.4 Update config tests
+- [x] 12.4 Update config tests
 
 ## 13. Update Main Orchestration
 
@@ -144,8 +144,8 @@
 
 ## 15. Testing
 
-- [ ] 15.1 Run all existing tests, fix failures
-- [ ] 15.2 Add integration tests for job coordination
+- [x] 15.1 Run all existing tests, fix failures
+- [x] 15.2 Add integration tests for job coordination
 - [ ] 15.3 Run tests with race detector: `go test -race ./...`
 - [ ] 15.4 Manual testing in dry-run mode
 
