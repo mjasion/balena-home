@@ -102,19 +102,15 @@ type LoggingConfig struct {
 type ThermostatControlConfig struct {
 	Enabled                          bool                `yaml:"enabled" env:"THERMOSTAT_CONTROL_ENABLED" env-default:"false"`
 	DryRun                           bool                `yaml:"dryRun" env:"THERMOSTAT_CONTROL_DRY_RUN" env-default:"false"`
-	TemperatureThreshold             float64             `yaml:"temperatureThreshold" env:"TEMPERATURE_THRESHOLD" env-default:"0.5"`
+	TemperatureThreshold             float64             `yaml:"temperatureThreshold" env:"TEMPERATURE_THRESHOLD" env-default:"0.2"`
 	OverrideDurationMinutes          int                 `yaml:"overrideDurationMinutes" env:"OVERRIDE_DURATION_MINUTES" env-default:"10"`
-	ExtensionThresholdMinutes        int                 `yaml:"extensionThresholdMinutes" env:"EXTENSION_THRESHOLD_MINUTES" env-default:"2"`
-	ExternalModificationResetMinutes int                 `yaml:"externalModificationResetMinutes" env:"EXTERNAL_MODIFICATION_RESET_MINUTES" env-default:"5"`
 	MinSetpointCelsius               float64             `yaml:"minSetpointCelsius" env:"MIN_SETPOINT_CELSIUS" env-default:"10.0"`
 	MaxSetpointCelsius               float64             `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
 	Mappings                         []ThermostatMapping `yaml:"mappings"`
 	HardOverrides                    []HardOverride      `yaml:"hardOverrides"`
-	HomeStatusFetchCron              string              `yaml:"homeStatusFetchCron" env:"HOME_STATUS_FETCH_CRON" env-default:"0 * * * * *"`        // Cron expression for home status fetch job (runs at :00)
-	ControlLoopCron                  string              `yaml:"controlLoopCron" env:"CONTROL_LOOP_CRON" env-default:"30 * * * * *"`                // Cron expression for control loop job (runs at :30)
-	ScheduleSyncIntervalMinutes      int                 `yaml:"scheduleSyncIntervalMinutes" env:"SCHEDULE_SYNC_INTERVAL_MINUTES" env-default:"15"` // How often to sync schedule (0 = disabled)
-	ScheduleSyncPollIntervalSeconds  int                 `yaml:"scheduleSyncPollIntervalSeconds" env:"SCHEDULE_SYNC_POLL_INTERVAL" env-default:"2"` // How often to poll after setting schedule mode
-	ScheduleSyncPollTimeoutSeconds   int                 `yaml:"scheduleSyncPollTimeoutSeconds" env:"SCHEDULE_SYNC_POLL_TIMEOUT" env-default:"30"`  // Max time to wait for schedule mode confirmation
+	MetricJobCron                    string              `yaml:"metricJobCron" env:"METRIC_JOB_CRON" env-default:"0 * * * * *"`                 // Cron expression for metric job (runs every minute at :00)
+	ControlJobCron                   string              `yaml:"controlJobCron" env:"CONTROL_JOB_CRON" env-default:"0 0,15,30,45 * * * *"`      // Cron expression for control job (runs every 15 min at :00/:15/:30/:45)
+	HardOverrideJobCron              string              `yaml:"hardOverrideJobCron" env:"HARD_OVERRIDE_JOB_CRON" env-default:"0 * * * * *"` // Cron expression for hard override job (runs every minute at :00)
 }
 
 // ThermostatMapping maps a Netatmo room to a Xiaomi sensor
