@@ -109,8 +109,11 @@ type ThermostatControlConfig struct {
 	Mappings                []ThermostatMapping `yaml:"mappings"`
 	HardOverrides           []HardOverride      `yaml:"hardOverrides"`
 	MetricJobCron           string              `yaml:"metricJobCron" env:"METRIC_JOB_CRON" env-default:"0 * * * * *"`              // Cron expression for metric job (runs every minute at :00)
+	MetricJobEnabled        bool                `yaml:"metricJobEnabled" env:"METRIC_JOB_ENABLED" env-default:"true"`                // Enable/disable metric job cron
 	ControlJobCron          string              `yaml:"controlJobCron" env:"CONTROL_JOB_CRON" env-default:"5 0,15,30,45 * * * *"`   // Cron expression for control job (runs every 15 min at :05/:20/:35/:50, 5 seconds after metric job)
+	ControlJobEnabled       bool                `yaml:"controlJobEnabled" env:"CONTROL_JOB_ENABLED" env-default:"true"`              // Enable/disable control job cron
 	HardOverrideJobCron     string              `yaml:"hardOverrideJobCron" env:"HARD_OVERRIDE_JOB_CRON" env-default:"0 * * * * *"` // Cron expression for hard override job (runs every minute at :00)
+	HardOverrideJobEnabled  bool                `yaml:"hardOverrideJobEnabled" env:"HARD_OVERRIDE_JOB_ENABLED" env-default:"true"`   // Enable/disable hard override job cron
 }
 
 // ThermostatMapping maps a Netatmo room to a Xiaomi sensor
@@ -321,15 +324,15 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("thermostat control temperature threshold must be between 0.1 and 5.0°C, got: %.2f", c.ThermostatControl.TemperatureThreshold)
 		}
 
-		// Validate cron expressions
-		if c.ThermostatControl.MetricJobCron == "" {
-			return fmt.Errorf("thermostat control metric job cron expression is required when thermostat control is enabled")
+		// Validate cron expressions (only if corresponding job is enabled)
+		if c.ThermostatControl.MetricJobEnabled && c.ThermostatControl.MetricJobCron == "" {
+			return fmt.Errorf("thermostat control metric job cron expression is required when metric job is enabled")
 		}
-		if c.ThermostatControl.ControlJobCron == "" {
-			return fmt.Errorf("thermostat control job cron expression is required when thermostat control is enabled")
+		if c.ThermostatControl.ControlJobEnabled && c.ThermostatControl.ControlJobCron == "" {
+			return fmt.Errorf("thermostat control job cron expression is required when control job is enabled")
 		}
-		if c.ThermostatControl.HardOverrideJobCron == "" {
-			return fmt.Errorf("thermostat control hard override job cron expression is required when thermostat control is enabled")
+		if c.ThermostatControl.HardOverrideJobEnabled && c.ThermostatControl.HardOverrideJobCron == "" {
+			return fmt.Errorf("thermostat control hard override job cron expression is required when hard override job is enabled")
 		}
 
 		// Validate override duration
@@ -578,8 +581,11 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.Bool("thermostat_control_enabled", c.ThermostatControl.Enabled),
 		zap.Float64("thermostat_temperature_threshold", c.ThermostatControl.TemperatureThreshold),
 		zap.String("thermostat_metric_job_cron", c.ThermostatControl.MetricJobCron),
+		zap.Bool("thermostat_metric_job_enabled", c.ThermostatControl.MetricJobEnabled),
 		zap.String("thermostat_control_job_cron", c.ThermostatControl.ControlJobCron),
+		zap.Bool("thermostat_control_job_enabled", c.ThermostatControl.ControlJobEnabled),
 		zap.String("thermostat_hard_override_job_cron", c.ThermostatControl.HardOverrideJobCron),
+		zap.Bool("thermostat_hard_override_job_enabled", c.ThermostatControl.HardOverrideJobEnabled),
 		zap.Int("thermostat_override_duration_minutes", c.ThermostatControl.OverrideDurationMinutes),
 		zap.Int("thermostat_mapping_count", len(c.ThermostatControl.Mappings)),
 		zap.Strings("thermostat_mappings", mappingInfo),

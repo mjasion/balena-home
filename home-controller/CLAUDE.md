@@ -186,6 +186,9 @@ The system detects and respects manual thermostat changes to avoid fighting with
 - `mappings`: List of room-to-sensor mappings (RoomName, SensorMAC, RoomID)
 - `hardOverrides`: Time-based temperature overrides (schedule, days, targetTemperature)
 - `dryRun`: Test mode without actually sending API commands
+- `metricJobEnabled`: Enable/disable metric job cron (default: true)
+- `controlJobEnabled`: Enable/disable control job cron (default: true)
+- `hardOverrideJobEnabled`: Enable/disable hard override job cron (default: true)
 
 ### Metrics and Observability
 
@@ -229,6 +232,13 @@ Critical secrets should be set via environment variables:
 - `PYROSCOPE_SERVER_URL`: Pyroscope server URL (e.g., https://profiles-prod-XXX.grafana.net)
 - `PYROSCOPE_BASIC_AUTH_USER`: Pyroscope basic auth username (Grafana Cloud instance ID)
 - `PYROSCOPE_BASIC_AUTH_PASSWORD`: Pyroscope basic auth password (Grafana Cloud API key)
+
+**Thermostat Control Kill Switches** (emergency disable):
+- `METRIC_JOB_ENABLED`: Enable/disable metric job cron (default: true)
+- `CONTROL_JOB_ENABLED`: Enable/disable control job cron (default: true)
+- `HARD_OVERRIDE_JOB_ENABLED`: Enable/disable hard override job cron (default: true)
+
+These kill switches allow you to quickly disable individual thermostat control cron jobs without modifying the config file or redeploying. Useful for emergencies, debugging, or testing. All jobs are enabled by default to maintain backward compatibility.
 
 ## Building and Running
 

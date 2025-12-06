@@ -226,37 +226,48 @@ func main() {
 		tracer := otel.Tracer("home-controller/control")
 
 		// Create Metric Job (runs every minute at :00, stores data in shared state)
-		metricJob := control.NewMetricJob(controller, logger, tracer)
+		if cfg.ThermostatControl.MetricJobEnabled {
+			metricJob := control.NewMetricJob(controller, logger, tracer)
 
-		// Add metric job
-		if err := jobScheduler.AddCronJobWithSeconds("Metric Job", cfg.ThermostatControl.MetricJobCron, metricJob.Run); err != nil {
-			logger.Error("failed to add metric job cron job", zap.Error(err))
-			os.Exit(1)
+			// Add metric job
+			if err := jobScheduler.AddCronJobWithSeconds("Metric Job", cfg.ThermostatControl.MetricJobCron, metricJob.Run); err != nil {
+				logger.Error("failed to add metric job cron job", zap.Error(err))
+				os.Exit(1)
+			}
+			logger.Info("metric job enabled", zap.String("metric_cron", cfg.ThermostatControl.MetricJobCron))
+		} else {
+			logger.Info("metric job disabled")
 		}
 
 		// Create Control Job (runs every 15 minutes, waits for data from Metric Job)
-		controlJob := controller
+		if cfg.ThermostatControl.ControlJobEnabled {
+			controlJob := controller
 
-		// Add control job
-		if err := jobScheduler.AddCronJobWithSeconds("Thermostat Control Job", cfg.ThermostatControl.ControlJobCron, controlJob.Run); err != nil {
-			logger.Error("failed to add thermostat control job cron job", zap.Error(err))
-			os.Exit(1)
+			// Add control job
+			if err := jobScheduler.AddCronJobWithSeconds("Thermostat Control Job", cfg.ThermostatControl.ControlJobCron, controlJob.Run); err != nil {
+				logger.Error("failed to add thermostat control job cron job", zap.Error(err))
+				os.Exit(1)
+			}
+			logger.Info("control job enabled", zap.String("control_cron", cfg.ThermostatControl.ControlJobCron))
+		} else {
+			logger.Info("control job disabled")
 		}
 
 		// Create Hard Override Job (runs every minute)
-		hardOverrideJob := control.NewHardOverrideJob(controller, logger, tracer)
+		if cfg.ThermostatControl.HardOverrideJobEnabled {
+			hardOverrideJob := control.NewHardOverrideJob(controller, logger, tracer)
 
-		// Add hard override job
-		if err := jobScheduler.AddCronJobWithSeconds("Hard Override Job", cfg.ThermostatControl.HardOverrideJobCron, hardOverrideJob.Run); err != nil {
-			logger.Error("failed to add hard override job cron job", zap.Error(err))
-			os.Exit(1)
+			// Add hard override job
+			if err := jobScheduler.AddCronJobWithSeconds("Hard Override Job", cfg.ThermostatControl.HardOverrideJobCron, hardOverrideJob.Run); err != nil {
+				logger.Error("failed to add hard override job cron job", zap.Error(err))
+				os.Exit(1)
+			}
+			logger.Info("hard override job enabled", zap.String("hard_override_cron", cfg.ThermostatControl.HardOverrideJobCron))
+		} else {
+			logger.Info("hard override job disabled")
 		}
 
-		logger.Info("thermostat control jobs configured",
-			zap.String("metric_cron", cfg.ThermostatControl.MetricJobCron),
-			zap.String("control_cron", cfg.ThermostatControl.ControlJobCron),
-			zap.String("hard_override_cron", cfg.ThermostatControl.HardOverrideJobCron),
-		)
+		logger.Info("thermostat control jobs configured")
 	} else {
 		logger.Info("thermostat control disabled")
 	}
