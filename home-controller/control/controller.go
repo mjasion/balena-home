@@ -35,8 +35,12 @@ type Controller struct {
 	// Mapping of sensor MAC to room IDs
 	sensorToRooms map[string][]string // Key: sensor MAC (uppercase), Value: list of room IDs
 
-	// Shared home status for Metric Job → Control Job communication
-	sharedHomeStatus *SharedHomeStatus
+	// Schedule sync tracking
+	lastSyncTime time.Time
+
+	// Cached home status (thread-safe with mutex)
+	cachedStatusMu sync.RWMutex
+	cachedStatus   *CachedHomeStatus
 }
 
 // New creates a new thermostat controller
@@ -46,7 +50,6 @@ func New(
 	controlBuffer *buffer.RingBuffer,
 	metricsBuffer *buffer.RingBuffer,
 	logger *zap.Logger,
-	sharedHomeStatus *SharedHomeStatus,
 ) *Controller {
 	// Build sensor-to-rooms mapping
 	sensorToRooms := make(map[string][]string)
@@ -64,15 +67,14 @@ func New(
 	tracer := otel.Tracer("home-controller/control")
 
 	return &Controller{
-		config:           cfg,
-		netatmoClient:    netatmoClient,
-		controlBuffer:    controlBuffer,
-		metricsBuffer:    metricsBuffer,
-		logger:           logger,
-		tracer:           tracer,
-		stateByRoom:      make(map[string]*ThermostatState),
-		sensorToRooms:    sensorToRooms,
-		sharedHomeStatus: sharedHomeStatus,
+		config:        cfg,
+		netatmoClient: netatmoClient,
+		controlBuffer: controlBuffer,
+		metricsBuffer: metricsBuffer,
+		logger:        logger,
+		tracer:        tracer,
+		stateByRoom:   make(map[string]*ThermostatState),
+		sensorToRooms: sensorToRooms,
 	}
 }
 
@@ -80,9 +82,8 @@ func New(
 func (c *Controller) Initialize(ctx context.Context) error {
 	c.logger.Info("initializing thermostat controller",
 		zap.Int("mapping_count", len(c.config.Mappings)),
-		zap.String("metric_job_cron", c.config.MetricJobCron),
-		zap.String("control_job_cron", c.config.ControlJobCron),
-		zap.String("hard_override_job_cron", c.config.HardOverrideJobCron),
+		zap.String("home_status_fetch_cron", c.config.HomeStatusFetchCron),
+		zap.String("control_loop_cron", c.config.ControlLoopCron),
 	)
 
 	// Initialize state from Netatmo API (get room IDs)
@@ -235,21 +236,18 @@ func (c *Controller) addToMetricsBuffer(ctx context.Context, homeStatus *netatmo
 }
 
 // runControlLoop executes one iteration of the control loop
-// Uses home status received from Metric Job via channel
+// Uses cached home status from the same minute
 func (c *Controller) runControlLoop(ctx context.Context) {
-	// Create a new root trace span for this job execution
-	ctx, span := c.tracer.Start(ctx, "control_job",
-		trace.WithSpanKind(trace.SpanKindServer),
+	// Start a new trace span for this control loop iteration
+	ctx, span := c.tracer.Start(ctx, "control_loop_iteration",
 		trace.WithAttributes(
-			attribute.String("job", "control_job"),
-			attribute.String("operation", "evaluate_and_control_rooms"),
 			attribute.Int("mapping_count", len(c.config.Mappings)),
 			attribute.Bool("dry_run", c.config.DryRun),
 		),
 	)
 	defer span.End()
 
-	c.logger.Info("control job started - waiting for home status from metric job",
+	c.logger.Debug("control loop iteration started",
 		zap.Int("mapping_count", len(c.config.Mappings)),
 		zap.Bool("dry_run", c.config.DryRun),
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
@@ -258,96 +256,56 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 
 	// Check if mappings configured
 	if len(c.config.Mappings) == 0 {
-		c.logger.Warn("control job - no thermostat mappings configured, skipping")
-		span.SetAttributes(attribute.String("skip_reason", "no_mappings"))
+		c.logger.Warn("no thermostat mappings configured, skipping control loop")
 		return
 	}
 
-	// Get home status from shared state (set by Metric Job)
-	const maxDataAge = 30 * time.Second // If data older than 30s, fetch fresh
-	var homeStatus *netatmo.HomeStatusResponse
-	var metricJobTraceID string
-
-	// Try to get data from shared state first
-	sharedStatus, age, traceID, hasData := c.sharedHomeStatus.Get()
-
-	if hasData && age <= maxDataAge {
-		// Data is fresh, use it
-		homeStatus = sharedStatus
-		metricJobTraceID = traceID
-
-		c.logger.Info("control job - using fresh data from metric job",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
-			zap.String("metric_job_trace_id", metricJobTraceID),
-			zap.Duration("data_age", age),
-			zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
-		)
-
-		span.SetAttributes(
-			attribute.String("data_source", "metric_job"),
-			attribute.String("metric_job_trace_id", metricJobTraceID),
-			attribute.Int64("data_age_ms", age.Milliseconds()),
-		)
-	} else {
-		// Data is stale or missing, fetch fresh data ourselves
-		if hasData {
-			c.logger.Warn("control job - shared data is stale, fetching fresh data from Netatmo API",
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
-				zap.Duration("data_age", age),
-				zap.Duration("max_age", maxDataAge),
-			)
-		} else {
-			c.logger.Warn("control job - no shared data available, fetching fresh data from Netatmo API",
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
-			)
-		}
-
-		fetchStart := time.Now()
-		fetchedStatus, err := c.netatmoClient.GetHomeStatus(ctx, c.homeID)
-		if err != nil {
-			c.logger.Error("control job - failed to fetch home status from Netatmo API",
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
-				zap.Error(err),
-			)
-			span.RecordError(err)
-			span.SetAttributes(attribute.String("skip_reason", "fetch_failed"))
-			return
-		}
-
-		homeStatus = fetchedStatus
-		fetchDuration := time.Since(fetchStart)
-
-		c.logger.Info("control job - fetched fresh data from Netatmo API",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
-			zap.Duration("fetch_duration", fetchDuration),
-			zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
-		)
-
-		span.SetAttributes(
-			attribute.String("data_source", "control_job_fetch"),
-			attribute.Int64("fetch_duration_ms", fetchDuration.Milliseconds()),
-		)
+	// Get cached home status from the same minute
+	cachedStatus := c.GetCachedHomeStatus()
+	if cachedStatus == nil {
+		c.logger.Warn("no cached home status available, skipping control loop (waiting for next fetch)")
+		span.SetAttributes(attribute.String("skip_reason", "no_cached_status"))
+		return
 	}
+
+	// Check if there was an error during fetch
+	if cachedStatus.FetchError != nil {
+		c.logger.Warn("cached home status has error, skipping control loop",
+			zap.Error(cachedStatus.FetchError),
+			zap.Time("fetch_time", cachedStatus.FetchTime),
+		)
+		span.SetAttributes(attribute.String("skip_reason", "fetch_error"))
+		span.RecordError(cachedStatus.FetchError)
+		return
+	}
+
+	homeStatus := cachedStatus.HomeStatus
 
 	span.SetAttributes(
 		attribute.String("home_id", c.homeID),
 		attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+		attribute.String("cached_status_fetch_time", cachedStatus.FetchTime.Format(time.RFC3339)),
+		attribute.String("status_age", time.Since(cachedStatus.FetchTime).String()),
 	)
 
-	// Build room status map for quick lookup
-	roomStatusMap := make(map[string]*netatmo.RoomStatus)
-	for i := range homeStatus.Body.Home.Rooms {
-		room := &homeStatus.Body.Home.Rooms[i]
-		roomStatusMap[room.ID] = room
+	c.logger.Debug("using cached home status",
+		zap.Time("fetch_time", cachedStatus.FetchTime),
+		zap.Duration("status_age", time.Since(cachedStatus.FetchTime)),
+		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+	)
+
+	// Determine if schedule sync is needed
+	needsSync := c.shouldSyncSchedule()
+
+	span.SetAttributes(attribute.Bool("needs_sync", needsSync))
+
+	// Execute appropriate mode (sync or normal)
+	var skipCount, adjustCount, noAdjustCount int
+	if needsSync {
+		skipCount, adjustCount, noAdjustCount = c.runSyncMode(ctx, homeStatus)
+	} else {
+		skipCount, adjustCount, noAdjustCount = c.runNormalMode(ctx, homeStatus)
 	}
-
-	c.logger.Info("control job - processing rooms concurrently with per-room waiting logic",
-		zap.Int("rooms_to_evaluate", len(c.config.Mappings)),
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
-	)
-
-	// Process rooms concurrently with per-room waiting for manual mode expiration
-	skipCount, adjustCount, noAdjustCount := c.processRoomsConcurrently(ctx, roomStatusMap)
 
 	// Record summary attributes on span
 	span.SetAttributes(
@@ -357,186 +315,11 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		attribute.Int("no_adjustment", noAdjustCount),
 	)
 
-	c.logger.Info("control job completed - all rooms processed",
+	c.logger.Info("control loop iteration completed",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.Int("rooms_evaluated", len(c.config.Mappings)),
 		zap.Int("skipped", skipCount),
 		zap.Int("adjusted", adjustCount),
 		zap.Int("no_adjustment", noAdjustCount),
 	)
-}
-
-// processRoomsConcurrently processes all rooms concurrently with per-room waiting for manual mode expiration
-func (c *Controller) processRoomsConcurrently(ctx context.Context, initialRoomStatusMap map[string]*netatmo.RoomStatus) (skipCount, adjustCount, noAdjustCount int) {
-	ctx, span := c.tracer.Start(ctx, "process_rooms_concurrently",
-		trace.WithAttributes(
-			attribute.Int("total_rooms", len(c.config.Mappings)),
-		),
-	)
-	defer span.End()
-
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-
-	c.logger.Debug("spawning concurrent goroutines for room processing",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
-		zap.Int("goroutine_count", len(c.config.Mappings)),
-	)
-
-	for _, mapping := range c.config.Mappings {
-		wg.Add(1)
-
-		go func(m config.ThermostatMapping) {
-			defer wg.Done()
-
-			// Get room status from initial fetch
-			roomStatus, roomExists := initialRoomStatusMap[m.RoomID]
-			if !roomExists {
-				c.logger.Warn("room processing - room not found in home status",
-					zap.String("room_name", m.RoomName),
-					zap.String("room_id", m.RoomID),
-				)
-				mu.Lock()
-				skipCount++
-				mu.Unlock()
-				return
-			}
-
-			c.logger.Debug("room processing started",
-				zap.String("room_name", m.RoomName),
-				zap.String("mode", roomStatus.ThermSetpointMode),
-				zap.Float64("current_setpoint", roomStatus.ThermSetpointTemperature),
-				zap.Float64("measured_temp", roomStatus.ThermMeasuredTemperature),
-			)
-
-			// Check if room is in manual mode with algorithm-set override expiring within window
-			if roomStatus.ThermSetpointMode == "manual" && c.shouldWaitForOverrideExpiration(roomStatus) {
-				expirationTime := time.Unix(roomStatus.ThermSetpointEndTime, 0)
-				waitDuration := time.Until(expirationTime.Add(1 * time.Second))
-
-				c.logger.Info("room processing - waiting for algorithm-set override to expire",
-					zap.String("room_name", m.RoomName),
-					zap.Time("override_end_time", expirationTime),
-					zap.Duration("wait_duration", waitDuration),
-				)
-
-				// Wait for override to expire
-				if waitDuration > 0 {
-					select {
-					case <-time.After(waitDuration):
-						// Override expired, fetch fresh status
-						c.logger.Info("room processing - override expired, fetching fresh home status",
-							zap.String("room_name", m.RoomName),
-						)
-						freshStatus, err := c.netatmoClient.GetHomeStatus(ctx, c.homeID)
-						if err != nil {
-							c.logger.Error("room processing - failed to fetch fresh home status after override expiration",
-								zap.String("room_name", m.RoomName),
-								zap.Error(err),
-							)
-							mu.Lock()
-							skipCount++
-							mu.Unlock()
-							return
-						}
-
-						// Find this room in fresh status
-						for i := range freshStatus.Body.Home.Rooms {
-							if freshStatus.Body.Home.Rooms[i].ID == m.RoomID {
-								roomStatus = &freshStatus.Body.Home.Rooms[i]
-								c.logger.Debug("room processing - updated to fresh room status",
-									zap.String("room_name", m.RoomName),
-									zap.String("new_mode", roomStatus.ThermSetpointMode),
-									zap.Float64("new_setpoint", roomStatus.ThermSetpointTemperature),
-								)
-								break
-							}
-						}
-					case <-ctx.Done():
-						c.logger.Warn("room processing - context cancelled while waiting for override expiration",
-							zap.String("room_name", m.RoomName),
-						)
-						mu.Lock()
-						skipCount++
-						mu.Unlock()
-						return
-					}
-				}
-			}
-
-			// Evaluate room with current or fresh status
-			decision := c.evaluateRoom(ctx, m, map[string]*netatmo.RoomStatus{m.RoomID: roomStatus})
-
-			c.logger.Debug("room processing - evaluation completed",
-				zap.String("room_name", m.RoomName),
-				zap.String("action", decision.Action),
-				zap.String("reason", decision.Reason),
-			)
-
-			// Track decision type
-			mu.Lock()
-			switch decision.Action {
-			case "skip":
-				skipCount++
-			case "set_manual_override":
-				adjustCount++
-			case "no_adjustment_needed":
-				noAdjustCount++
-			}
-			mu.Unlock()
-
-			// Push metrics and execute decision
-			hardOverrideActive := c.isHardOverrideActive(m.RoomName)
-			c.pushControlMetrics(decision, hardOverrideActive, false)
-			c.executeDecision(ctx, decision)
-
-			c.logger.Debug("room processing completed",
-				zap.String("room_name", m.RoomName),
-				zap.String("final_action", decision.Action),
-			)
-		}(mapping)
-	}
-
-	c.logger.Debug("waiting for all room processing goroutines to complete",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
-	)
-
-	wg.Wait()
-
-	span.SetAttributes(
-		attribute.Int("total_skipped", skipCount),
-		attribute.Int("total_adjusted", adjustCount),
-		attribute.Int("total_no_adjustment", noAdjustCount),
-	)
-
-	c.logger.Debug("all room processing goroutines completed",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
-		zap.Int("skipped", skipCount),
-		zap.Int("adjusted", adjustCount),
-		zap.Int("no_adjustment", noAdjustCount),
-	)
-
-	return skipCount, adjustCount, noAdjustCount
-}
-
-// shouldWaitForOverrideExpiration checks if we should wait for the override to expire
-// Returns true if override expires within the next 15 minutes (current window)
-func (c *Controller) shouldWaitForOverrideExpiration(roomStatus *netatmo.RoomStatus) bool {
-	if roomStatus.ThermSetpointEndTime == 0 {
-		return false
-	}
-
-	// Check if this is a human override (>= 60 minutes)
-	if c.isHumanOverride(roomStatus) {
-		return false
-	}
-
-	// Calculate when the override expires
-	expirationTime := time.Unix(roomStatus.ThermSetpointEndTime, 0)
-	now := time.Now()
-	timeUntilExpiration := expirationTime.Sub(now)
-
-	// Wait only if expiration is within next 15 minutes
-	// This ensures we're in the same 15-minute window as Control Job execution
-	return timeUntilExpiration > 0 && timeUntilExpiration <= 15*time.Minute
 }
