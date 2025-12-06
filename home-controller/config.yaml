@@ -104,18 +104,15 @@ opentelemetry:
   enabled: true
 
   # OTLP endpoint URL for traces
-  # For Grafana Cloud: https://otlp-gateway-prod-XX-YY.grafana.net/otlp
-  # For local: http://localhost:4318
-  endpoint: "https://otlp-gateway-prod-us-central-0.grafana.net/otlp"  # or use OTEL_EXPORTER_OTLP_ENDPOINT env var
+  # Sending to Grafana Alloy which forwards to both Datadog and Grafana Cloud
+  # Since home-controller uses host network mode, use localhost
+  endpoint: "http://localhost:4318"  # or use OTEL_EXPORTER_OTLP_ENDPOINT env var
 
   # OTLP protocol: "grpc", "http/protobuf", or "http/json"
-  # For Grafana Cloud: use "http/protobuf"
   protocol: "http/protobuf"  # or use OTEL_EXPORTER_OTLP_PROTOCOL env var
 
   # OTLP headers for authentication
-  # Format: "key1=value1,key2=value2"
-  # For Grafana Cloud with basic auth: "Authorization=Basic <base64_credentials>"
-  # IMPORTANT: Use OTEL_EXPORTER_OTLP_HEADERS environment variable for sensitive data
+  # Not needed when sending to local Alloy - Alloy handles auth to backends
   headers: ""  # or use OTEL_EXPORTER_OTLP_HEADERS env var
 
   # Service name for tracing

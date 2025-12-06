@@ -60,3 +60,51 @@ loki.write "default" {
     }
   }
 }
+
+// ============================================================================
+// OpenTelemetry Traces Configuration
+// ============================================================================
+
+// Receive OTLP traces from home-controller
+otelcol.receiver.otlp "default" {
+  // gRPC endpoint for OTLP traces
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+
+  // HTTP endpoint for OTLP traces
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+
+  output {
+    traces = [
+      otelcol.exporter.otlp.datadog.input,
+      otelcol.exporter.otlp.grafana_cloud.input,
+    ]
+  }
+}
+
+// Export traces to Datadog Agent
+otelcol.exporter.otlp "datadog" {
+  client {
+    endpoint = "datadog-agent:4317"
+    tls {
+      insecure = true
+    }
+  }
+}
+
+// Export traces to Grafana Cloud
+otelcol.exporter.otlp "grafana_cloud" {
+  client {
+    endpoint = sys.env("GRAFANA_CLOUD_OTLP_ENDPOINT")
+    auth = otelcol.auth.basic.grafana_cloud.handler
+  }
+}
+
+// Basic auth for Grafana Cloud OTLP
+otelcol.auth.basic "grafana_cloud" {
+  username = sys.env("GRAFANA_CLOUD_INSTANCE_ID")
+  password = sys.env("GRAFANA_CLOUD_API_KEY")
+}
