@@ -1,8 +1,13 @@
-# Environment variables
+# Environment variables and secrets
 .env
 .env.prod
 .env.local
 .env.*.local
+secrets.yaml
+secrets.*.yaml
+!secrets.example.yaml
+secrets.toml
+secrets.*.toml
 
 # Build artifacts
 hellpot/HellPot

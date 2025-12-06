@@ -1,112 +1,367 @@
 #!/bin/bash
-# Sync secrets from .env.prod to Balena device/fleet
-# Usage: ./sync-balena-secrets.sh <fleet-name-or-device-uuid> [.env.prod]
+# Sync secrets from YAML/TOML/ENV file to Balena device/fleet
+# Supports both shared secrets (all services) and service-specific secrets
+# Usage: ./sync-balena-secrets.sh <fleet-name-or-device-uuid> <config-file> [options]
 
 set -e
 
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
 # Check if balena CLI is installed
 if ! command -v balena &> /dev/null; then
-    echo "Error: Balena CLI is not installed"
+    echo -e "${RED}Error: Balena CLI is not installed${NC}"
     echo "Install with: npm install -g balena-cli"
     exit 1
 fi
 
-# Check arguments
-if [ -z "$1" ]; then
-    echo "Usage: $0 <fleet-name-or-device-uuid> [.env-file]"
-    echo ""
-    echo "Examples:"
-    echo "  $0 myfleet/myapp .env.prod"
-    echo "  $0 a1b2c3d4 .env.prod"
-    echo ""
-    echo "Target can be either:"
-    echo "  - Fleet name (e.g., myorg/myfleet) - applies to all devices in fleet"
-    echo "  - Device UUID - applies to specific device only"
+# Check if yq is installed (for YAML parsing)
+if ! command -v yq &> /dev/null; then
+    echo -e "${RED}Error: yq is not installed (required for YAML parsing)${NC}"
+    echo "Install with: brew install yq (macOS) or snap install yq (Linux)"
+    exit 1
+fi
+
+# Default values
+DRY_RUN=false
+SERVICE_FILTER=""
+ENVIRONMENT=""
+VERBOSE=false
+
+# Show usage
+show_usage() {
+    cat <<EOF
+Usage: $0 <fleet-or-device> <config-file> [options]
+
+Arguments:
+  fleet-or-device    Balena fleet name (org/fleet) or device UUID
+  config-file        Path to secrets file (.yaml, .yml, .toml, or .env)
+
+Options:
+  --dry-run          Preview changes without applying
+  --service NAME     Only sync specific service
+  --env NAME         Use environment-specific overrides (dev/prod)
+  --verbose          Show detailed output
+  -h, --help         Show this help message
+
+Examples:
+  # Sync all services from YAML
+  $0 myorg/home-automation secrets.yaml
+
+  # Sync with production overrides
+  $0 myorg/home-automation secrets.yaml --env production
+
+  # Sync only home-controller service
+  $0 myorg/home-automation secrets.yaml --service home-controller
+
+  # Dry run to preview changes
+  $0 myorg/home-automation secrets.yaml --dry-run
+
+  # Sync from .env file (legacy)
+  $0 myorg/home-automation .env.prod
+
+File Format:
+  YAML (.yaml, .yml):
+    shared:
+      VARIABLE: value
+    services:
+      service-name:
+        VARIABLE: value
+    environments:
+      production:
+        shared:
+          VARIABLE: override-value
+
+  ENV (.env):
+    VARIABLE=value
+
+EOF
+}
+
+# Parse arguments
+if [ $# -lt 2 ]; then
+    show_usage
     exit 1
 fi
 
 TARGET="$1"
-ENV_FILE="${2:-.env.prod}"
+CONFIG_FILE="$2"
+shift 2
 
-# Check if env file exists
-if [ ! -f "$ENV_FILE" ]; then
-    echo "Error: Environment file '$ENV_FILE' not found"
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --service)
+            SERVICE_FILTER="$2"
+            shift 2
+            ;;
+        --env)
+            ENVIRONMENT="$2"
+            shift 2
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -h|--help)
+            show_usage
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            show_usage
+            exit 1
+            ;;
+    esac
+done
+
+# Check if config file exists
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo -e "${RED}Error: Config file not found: $CONFIG_FILE${NC}"
     exit 1
 fi
 
-echo "==> Reading secrets from: $ENV_FILE"
-echo "==> Target: $TARGET"
+# Detect file type
+FILE_EXT="${CONFIG_FILE##*.}"
+if [[ "$FILE_EXT" =~ ^(yaml|yml)$ ]]; then
+    FILE_TYPE="yaml"
+elif [[ "$FILE_EXT" == "toml" ]]; then
+    FILE_TYPE="toml"
+elif [[ "$FILE_EXT" == "env" ]]; then
+    FILE_TYPE="env"
+else
+    echo -e "${RED}Error: Unsupported file type: $FILE_EXT${NC}"
+    echo "Supported: .yaml, .yml, .toml, .env"
+    exit 1
+fi
+
+echo -e "${BLUE}==> Balena Secret Sync${NC}"
+echo -e "${BLUE}==> Target: $TARGET${NC}"
+echo -e "${BLUE}==> Config: $CONFIG_FILE ($FILE_TYPE)${NC}"
+if [ "$DRY_RUN" = true ]; then
+    echo -e "${YELLOW}==> DRY RUN MODE (no changes will be applied)${NC}"
+fi
+if [ -n "$SERVICE_FILTER" ]; then
+    echo -e "${BLUE}==> Service filter: $SERVICE_FILTER${NC}"
+fi
+if [ -n "$ENVIRONMENT" ]; then
+    echo -e "${BLUE}==> Environment: $ENVIRONMENT${NC}"
+fi
 echo ""
 
 # Determine if target is a fleet or device
 if [[ "$TARGET" == *"/"* ]]; then
     TARGET_TYPE="fleet"
-    BALENA_CMD="balena env add"
 else
     TARGET_TYPE="device"
-    BALENA_CMD="balena env add"
 fi
 
-# Read .env file and set variables
-# Skip comments and empty lines
-# Handle both formats: KEY=value and export KEY=value
-success_count=0
-skip_count=0
-error_count=0
+# Counters
+total_set=0
+total_skip=0
+total_error=0
 
-while IFS= read -r line || [ -n "$line" ]; do
-    # Skip empty lines and comments
-    if [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*# ]]; then
-        continue
+# Function to set an environment variable in Balena
+set_balena_var() {
+    local var_name="$1"
+    local value="$2"
+    local source="$3"
+
+    # Skip empty or placeholder values
+    if [[ -z "$value" ]] || [[ "$value" == "REPLACE_"* ]] || [[ "$value" == "your-"* ]] || [[ "$value" == "example-"* ]]; then
+        if [ "$VERBOSE" = true ]; then
+            echo -e "${YELLOW}  ⏭️  Skipping $var_name (placeholder/empty)${NC}"
+        fi
+        ((total_skip++))
+        return 0
     fi
 
-    # Remove 'export ' prefix if present
-    line="${line#export }"
+    if [ "$DRY_RUN" = true ]; then
+        echo -e "${YELLOW}  [DRY RUN] $var_name${NC}"
+        if [ "$VERBOSE" = true ]; then
+            echo -e "${YELLOW}            = $value${NC}"
+        fi
+        ((total_set++))
+        return 0
+    fi
 
-    # Extract key and value
-    if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
-        key="${BASH_REMATCH[1]}"
-        value="${BASH_REMATCH[2]}"
+    # Check if variable already exists
+    local existing_id=$(balena env list --$TARGET_TYPE "$TARGET" --json 2>/dev/null | jq -r ".[] | select(.name == \"$var_name\") | .id" || echo "")
 
-        # Remove quotes if present
-        value="${value%\"}"
-        value="${value#\"}"
-        value="${value%\'}"
-        value="${value#\'}"
+    if [ -n "$existing_id" ]; then
+        # Update existing variable
+        if balena env rm "$existing_id" --yes &>/dev/null && \
+           balena env add "$var_name" "$value" --$TARGET_TYPE "$TARGET" &>/dev/null; then
+            echo -e "${GREEN}  ✅ Updated: $var_name${NC}"
+            ((total_set++))
+        else
+            echo -e "${RED}  ❌ Failed: $var_name${NC}"
+            ((total_error++))
+        fi
+    else
+        # Add new variable
+        if balena env add "$var_name" "$value" --$TARGET_TYPE "$TARGET" &>/dev/null; then
+            echo -e "${GREEN}  ✅ Added: $var_name${NC}"
+            ((total_set++))
+        else
+            echo -e "${RED}  ❌ Failed: $var_name${NC}"
+            ((total_error++))
+        fi
+    fi
+}
 
-        # Skip if value is empty or placeholder
-        if [[ -z "$value" ]] || [[ "$value" == "your-"* ]] || [[ "$value" == "glc_"* ]]; then
-            echo "⏭️  Skipping $key (empty or placeholder value)"
-            ((skip_count++))
+# Function to process YAML file
+process_yaml() {
+    local config="$1"
+
+    # Process shared secrets
+    echo -e "${BLUE}=== Shared Secrets ===${NC}"
+    local shared_vars=$(yq eval '.shared // {} | to_entries | .[] | .key + "=" + .value' "$config" 2>/dev/null || echo "")
+
+    if [ -n "$shared_vars" ]; then
+        while IFS='=' read -r key value; do
+            if [ -n "$key" ] && [ -n "$value" ]; then
+                set_balena_var "$key" "$value" "shared"
+            fi
+        done <<< "$shared_vars"
+    else
+        echo -e "${YELLOW}  No shared secrets found${NC}"
+    fi
+    echo ""
+
+    # Apply environment overrides to shared if specified
+    if [ -n "$ENVIRONMENT" ]; then
+        local env_shared=$(yq eval ".environments.${ENVIRONMENT}.shared // {} | to_entries | .[] | .key + \"=\" + .value" "$config" 2>/dev/null || echo "")
+        if [ -n "$env_shared" ]; then
+            echo -e "${BLUE}=== Shared Overrides ($ENVIRONMENT) ===${NC}"
+            while IFS='=' read -r key value; do
+                if [ -n "$key" ] && [ -n "$value" ]; then
+                    set_balena_var "$key" "$value" "shared-override"
+                fi
+            done <<< "$env_shared"
+            echo ""
+        fi
+    fi
+
+    # Process service-specific secrets
+    echo -e "${BLUE}=== Service-Specific Secrets ===${NC}"
+    local services=$(yq eval '.services // {} | keys | .[]' "$config" 2>/dev/null || echo "")
+
+    if [ -z "$services" ]; then
+        echo -e "${YELLOW}  No services found${NC}"
+        return
+    fi
+
+    while IFS= read -r service; do
+        # Skip if service filter is set and doesn't match
+        if [ -n "$SERVICE_FILTER" ] && [ "$SERVICE_FILTER" != "$service" ]; then
             continue
         fi
 
-        # Set the environment variable
-        echo "📝 Setting $key..."
-        if $BALENA_CMD "$key" "$value" --$TARGET_TYPE "$TARGET" 2>&1; then
-            ((success_count++))
-        else
-            echo "❌ Failed to set $key"
-            ((error_count++))
+        echo -e "${GREEN}[$service]${NC}"
+
+        # Get service variables
+        local service_vars=$(yq eval ".services.${service} // {} | to_entries | .[] | .key + \"=\" + .value" "$config" 2>/dev/null || echo "")
+
+        if [ -n "$service_vars" ]; then
+            while IFS='=' read -r key value; do
+                if [ -n "$key" ] && [ -n "$value" ] && [ "$key" != "pass" ]; then
+                    # Prefix variable name with service name
+                    set_balena_var "${service}_${key}" "$value" "$service"
+                fi
+            done <<< "$service_vars"
         fi
-    fi
-done < "$ENV_FILE"
 
-echo ""
-echo "==> Summary:"
-echo "    ✅ Successfully set: $success_count"
-echo "    ⏭️  Skipped: $skip_count"
-echo "    ❌ Errors: $error_count"
-echo ""
+        # Apply environment overrides if specified
+        if [ -n "$ENVIRONMENT" ]; then
+            local env_service_vars=$(yq eval ".environments.${ENVIRONMENT}.services.${service} // {} | to_entries | .[] | .key + \"=\" + .value" "$config" 2>/dev/null || echo "")
+            if [ -n "$env_service_vars" ]; then
+                while IFS='=' read -r key value; do
+                    if [ -n "$key" ] && [ -n "$value" ]; then
+                        set_balena_var "${service}_${key}" "$value" "$service-override"
+                    fi
+                done <<< "$env_service_vars"
+            fi
+        fi
 
-if [ $error_count -eq 0 ]; then
-    echo "✅ All secrets synced successfully!"
-    if [[ "$TARGET_TYPE" == "fleet" ]]; then
         echo ""
-        echo "Note: Fleet variables apply to all devices in the fleet."
-        echo "Devices will need to restart to pick up new values."
-    fi
+    done
+}
+
+# Function to process ENV file (legacy support)
+process_env() {
+    local env_file="$1"
+
+    echo -e "${BLUE}=== Processing .env file ===${NC}"
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip empty lines and comments
+        if [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*# ]]; then
+            continue
+        fi
+
+        # Remove 'export ' prefix if present
+        line="${line#export }"
+
+        # Extract key and value
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            key="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+
+            # Remove quotes if present
+            value="${value%\"}"
+            value="${value#\"}"
+            value="${value%\'}"
+            value="${value#\'}"
+
+            set_balena_var "$key" "$value" "env"
+        fi
+    done < "$env_file"
+    echo ""
+}
+
+# Process the config file based on type
+if [ "$FILE_TYPE" == "yaml" ]; then
+    process_yaml "$CONFIG_FILE"
+elif [ "$FILE_TYPE" == "env" ]; then
+    process_env "$CONFIG_FILE"
 else
-    echo "⚠️  Some secrets failed to sync. Check the errors above."
+    echo -e "${RED}Error: File type $FILE_TYPE not yet implemented${NC}"
+    exit 1
+fi
+
+# Summary
+echo -e "${BLUE}===================================${NC}"
+echo -e "${GREEN}✅ Set/Updated: $total_set${NC}"
+echo -e "${YELLOW}⏭️  Skipped: $total_skip${NC}"
+if [ $total_error -gt 0 ]; then
+    echo -e "${RED}❌ Errors: $total_error${NC}"
+fi
+echo ""
+
+if [ "$DRY_RUN" = true ]; then
+    echo -e "${YELLOW}Note: This was a DRY RUN. Run without --dry-run to apply changes.${NC}"
+fi
+
+if [[ "$TARGET_TYPE" == "fleet" ]]; then
+    echo -e "${YELLOW}Note: Fleet variables apply to all devices.${NC}"
+    echo -e "${YELLOW}      Devices may need restart to pick up new values.${NC}"
+fi
+
+echo ""
+echo "To view all variables:"
+echo "  balena env list --$TARGET_TYPE $TARGET"
+echo ""
+echo "To restart services:"
+echo "  balena device reboot <device-uuid>"
+
+if [ $total_error -gt 0 ]; then
     exit 1
 fi
