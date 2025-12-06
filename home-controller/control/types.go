@@ -1,37 +1,56 @@
 package control
 
 import (
+	"sync"
 	"time"
 
 	"github.com/mjasion/balena-home/thermostats/netatmo"
 )
 
-// ThermostatState tracks the state of a controlled thermostat
+// ThermostatState tracks the minimal state needed for controlled thermostat
 type ThermostatState struct {
-	RoomID                   string
-	RoomName                 string
-	LastSetpoint             float64   // Last setpoint we commanded
-	LastSetpointTime         time.Time // When we sent the last command
-	OverrideEndTime          time.Time // When the current override expires
-	ExternallyModified       bool      // Flag indicating manual override detected
+	RoomID                   string    // Room ID from Netatmo
+	RoomName                 string    // Room name for logging
+	LastHomeMode             string    // Last known home mode (away, hg, schedule, manual)
+	ExternallyModified       bool      // Flag indicating human override detected
 	ExternalModificationTime time.Time // When external modification was detected
-	SyncedScheduledTemp      float64   // Last synced scheduled temperature from Netatmo
-	SyncedScheduledTime      time.Time // When we synced the scheduled temperature
-	LastHomeMode             string    // Last known home mode (away, hg, etc.)
-	LastManualSetpoint       float64   // Last manual setpoint observed from Netatmo
-	LastManualEndTime        int64     // Last manual override end time observed from Netatmo
+}
 
-	// Runaway detection (backup safety layer)
-	ConsecutiveIncreases   int       // Count of consecutive setpoint increases
-	LastCalculatedSetpoint float64   // Last calculated setpoint (before safety limits)
-	RunawayHaltUntil       time.Time // Control halted until this time (runaway protection)
+// SharedHomeStatus holds the latest home status data with thread-safe access
+// Used for communication between Metric Job and Control Job
+type SharedHomeStatus struct {
+	mu               sync.RWMutex
+	homeStatus       *netatmo.HomeStatusResponse
+	fetchedAt        time.Time // When the data was fetched (local system time)
+	metricJobTraceID string    // Trace ID from Metric Job for correlation
+}
 
-	// Delayed execution (primary feedback loop prevention)
-	PendingSetpoint     float64   // Setpoint calculated last iteration but not yet executed
-	PendingSetpointTime time.Time // When the pending setpoint was calculated
+// NewSharedHomeStatus creates a new shared home status container
+func NewSharedHomeStatus() *SharedHomeStatus {
+	return &SharedHomeStatus{}
+}
 
-	// Schedule sync flags
-	ScheduleJustChanged bool // True when schedule changed during last sync, bypasses delayed execution once
+// Set stores new home status data (called by Metric Job)
+func (s *SharedHomeStatus) Set(homeStatus *netatmo.HomeStatusResponse, traceID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.homeStatus = homeStatus
+	s.fetchedAt = time.Now()
+	s.metricJobTraceID = traceID
+}
+
+// Get retrieves the current home status data with its age
+// Returns: homeStatus, age, metricJobTraceID, hasData
+func (s *SharedHomeStatus) Get() (*netatmo.HomeStatusResponse, time.Duration, string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.homeStatus == nil {
+		return nil, 0, "", false
+	}
+
+	age := time.Since(s.fetchedAt)
+	return s.homeStatus, age, s.metricJobTraceID, true
 }
 
 // Copy creates a defensive copy of the state
@@ -39,22 +58,9 @@ func (s *ThermostatState) Copy() ThermostatState {
 	return ThermostatState{
 		RoomID:                   s.RoomID,
 		RoomName:                 s.RoomName,
-		LastSetpoint:             s.LastSetpoint,
-		LastSetpointTime:         s.LastSetpointTime,
-		OverrideEndTime:          s.OverrideEndTime,
+		LastHomeMode:             s.LastHomeMode,
 		ExternallyModified:       s.ExternallyModified,
 		ExternalModificationTime: s.ExternalModificationTime,
-		SyncedScheduledTemp:      s.SyncedScheduledTemp,
-		SyncedScheduledTime:      s.SyncedScheduledTime,
-		LastHomeMode:             s.LastHomeMode,
-		LastManualSetpoint:       s.LastManualSetpoint,
-		LastManualEndTime:        s.LastManualEndTime,
-		ConsecutiveIncreases:     s.ConsecutiveIncreases,
-		LastCalculatedSetpoint:   s.LastCalculatedSetpoint,
-		RunawayHaltUntil:         s.RunawayHaltUntil,
-		PendingSetpoint:          s.PendingSetpoint,
-		PendingSetpointTime:      s.PendingSetpointTime,
-		ScheduleJustChanged:      s.ScheduleJustChanged,
 	}
 }
 
@@ -77,11 +83,4 @@ type ControlDecision struct {
 	ThermostatMode      string  // Thermostat mode: "schedule", "manual", "away", "hg" (frost guard), etc.
 	CalculatedSetpoint  float64 // New setpoint (if action is set_manual_override)
 	OverrideEndTime     int64   // Unix timestamp for override expiration
-}
-
-// CachedHomeStatus stores the latest home status with timestamp
-type CachedHomeStatus struct {
-	HomeStatus *netatmo.HomeStatusResponse
-	FetchTime  time.Time
-	FetchError error
 }
