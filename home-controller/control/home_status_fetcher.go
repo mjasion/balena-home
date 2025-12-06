@@ -74,25 +74,30 @@ func (m *MetricJob) Run(ctx context.Context) {
 		zap.Duration("fetch_duration", fetchDuration),
 	)
 
+	// Store home status in shared state for Control Job first
+	// Includes trace ID for correlation between Metric Job and Control Job
+	traceID := span.SpanContext().TraceID().String()
+	m.controller.sharedHomeStatus.Set(homeStatus, traceID)
+
+	span.SetAttributes(attribute.Bool("stored_to_shared_state", true))
+
+	m.logger.Debug("metric job - stored home status in shared state",
+		zap.String("trace_id", traceID),
+		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+	)
+
 	// Add Netatmo data to metrics buffer for Prometheus push
 	m.logger.Debug("metric job - adding Netatmo data to metrics buffer",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 	)
+
 	m.controller.addToMetricsBuffer(ctx, homeStatus)
 
-	// Store home status in shared state for Control Job
-	// Includes trace ID for correlation between Metric Job and Control Job
-	traceID := span.SpanContext().TraceID().String()
-	m.controller.sharedHomeStatus.Set(homeStatus, traceID)
-
 	totalDuration := time.Since(fetchStart)
-	span.SetAttributes(
-		attribute.Bool("stored_to_shared_state", true),
-		attribute.Int64("total_duration_ms", totalDuration.Milliseconds()),
-	)
+	span.SetAttributes(attribute.Int64("total_duration_ms", totalDuration.Milliseconds()))
 
-	m.logger.Info("metric job completed - home status stored in shared state",
+	m.logger.Info("metric job completed - home status stored and metrics pushed",
 		zap.String("trace_id", traceID),
 		zap.Duration("total_duration", totalDuration),
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),

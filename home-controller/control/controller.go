@@ -168,70 +168,68 @@ func (c *Controller) initializeRoomIDs(ctx context.Context) error {
 // addToMetricsBuffer converts Netatmo home status to buffer readings and adds them
 // Runs in a goroutine to avoid blocking control loop
 func (c *Controller) addToMetricsBuffer(ctx context.Context, homeStatus *netatmo.HomeStatusResponse) {
-	go func() {
-		spanCtx, span := c.tracer.Start(ctx, "add_netatmo_to_metrics_buffer",
-			trace.WithAttributes(
-				attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
-			),
-		)
-		defer span.End()
-		_ = spanCtx // Context used only for span creation
+	spanCtx, span := c.tracer.Start(ctx, "add_netatmo_to_metrics_buffer",
+		trace.WithAttributes(
+			attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+		),
+	)
+	defer span.End()
+	_ = spanCtx // Context used only for span creation
 
-		timestamp := time.Now()
+	timestamp := time.Now()
 
-		// Build room name map from config mappings
-		roomNames := make(map[string]string)
-		for _, mapping := range c.config.Mappings {
-			roomNames[mapping.RoomID] = mapping.RoomName
+	// Build room name map from config mappings
+	roomNames := make(map[string]string)
+	for _, mapping := range c.config.Mappings {
+		roomNames[mapping.RoomID] = mapping.RoomName
+	}
+
+	readingsAdded := 0
+	for _, roomStatus := range homeStatus.Body.Home.Rooms {
+		// Get room name from mapping, fallback to room ID
+		roomName, ok := roomNames[roomStatus.ID]
+		if !ok {
+			roomName = roomStatus.ID
 		}
 
-		readingsAdded := 0
-		for _, roomStatus := range homeStatus.Body.Home.Rooms {
-			// Get room name from mapping, fallback to room ID
-			roomName, ok := roomNames[roomStatus.ID]
-			if !ok {
-				roomName = roomStatus.ID
-			}
-
-			// Create buffer reading
-			bufferReading := &buffer.Reading{
-				Type: buffer.ReadingTypeNetatmo,
-				Thermostat: &buffer.ThermostatReading{
-					Timestamp:           timestamp,
-					HomeID:              c.homeID,
-					HomeName:            "", // We don't have home name in HomeStatusResponse
-					RoomID:              roomStatus.ID,
-					RoomName:            roomName,
-					MeasuredTemperature: roomStatus.ThermMeasuredTemperature,
-					SetpointTemperature: roomStatus.ThermSetpointTemperature,
-					SetpointMode:        roomStatus.ThermSetpointMode,
-					HeatingPowerRequest: roomStatus.HeatingPowerRequest,
-					OpenWindow:          roomStatus.OpenWindow,
-					Reachable:           roomStatus.Reachable,
-				},
-			}
-
-			c.metricsBuffer.Add(bufferReading)
-			readingsAdded++
-
-			c.logger.Debug("added Netatmo reading to metrics buffer",
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
-				zap.String("room_name", roomName),
-				zap.String("room_id", roomStatus.ID),
-				zap.Float64("measured_temp", roomStatus.ThermMeasuredTemperature),
-				zap.Float64("setpoint_temp", roomStatus.ThermSetpointTemperature),
-				zap.String("mode", roomStatus.ThermSetpointMode),
-				zap.Int("heating_power", roomStatus.HeatingPowerRequest),
-			)
+		// Create buffer reading
+		bufferReading := &buffer.Reading{
+			Type: buffer.ReadingTypeNetatmo,
+			Thermostat: &buffer.ThermostatReading{
+				Timestamp:           timestamp,
+				HomeID:              c.homeID,
+				HomeName:            "", // We don't have home name in HomeStatusResponse
+				RoomID:              roomStatus.ID,
+				RoomName:            roomName,
+				MeasuredTemperature: roomStatus.ThermMeasuredTemperature,
+				SetpointTemperature: roomStatus.ThermSetpointTemperature,
+				SetpointMode:        roomStatus.ThermSetpointMode,
+				HeatingPowerRequest: roomStatus.HeatingPowerRequest,
+				OpenWindow:          roomStatus.OpenWindow,
+				Reachable:           roomStatus.Reachable,
+			},
 		}
 
-		span.SetAttributes(attribute.Int("readings_added", readingsAdded))
+		c.metricsBuffer.Add(bufferReading)
+		readingsAdded++
 
-		c.logger.Debug("added Netatmo readings to metrics buffer",
+		c.logger.Debug("added Netatmo reading to metrics buffer",
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
-			zap.Int("readings_added", readingsAdded),
+			zap.String("room_name", roomName),
+			zap.String("room_id", roomStatus.ID),
+			zap.Float64("measured_temp", roomStatus.ThermMeasuredTemperature),
+			zap.Float64("setpoint_temp", roomStatus.ThermSetpointTemperature),
+			zap.String("mode", roomStatus.ThermSetpointMode),
+			zap.Int("heating_power", roomStatus.HeatingPowerRequest),
 		)
-	}()
+	}
+
+	span.SetAttributes(attribute.Int("readings_added", readingsAdded))
+
+	c.logger.Debug("added Netatmo readings to metrics buffer",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("readings_added", readingsAdded),
+	)
 }
 
 // runControlLoop executes one iteration of the control loop
