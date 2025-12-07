@@ -177,18 +177,20 @@ The system detects and respects manual thermostat changes to avoid fighting with
 ### Configuration Options
 
 **Thermostat Control** (in `config.yaml`):
-- `enabled`: Enable/disable thermostat control
-- `temperatureThreshold`: Minimum temperature difference to trigger action (default: 0.5°C)
-- `controlIntervalSeconds`: How often to evaluate control decisions (default: 60s)
+- `temperatureThreshold`: Minimum temperature difference to trigger action (default: 0.2°C)
 - `overrideDurationMinutes`: How long manual overrides last (default: 10 minutes)
-- `recheckDelayMinutes`: Delay before re-evaluating after sending override (default: 5 minutes)
-- `minSetpointCelsius`/`maxSetpointCelsius`: Safety limits (default: 7-30°C)
+- `minSetpointCelsius`/`maxSetpointCelsius`: Safety limits (default: 10-30°C)
 - `mappings`: List of room-to-sensor mappings (RoomName, SensorMAC, RoomID)
 - `hardOverrides`: Time-based temperature overrides (schedule, days, targetTemperature)
-- `dryRun`: Test mode without actually sending API commands
-- `metricJobEnabled`: Enable/disable metric job cron (default: true)
-- `controlJobEnabled`: Enable/disable control job cron (default: true)
-- `hardOverrideJobEnabled`: Enable/disable hard override job cron (default: true)
+- `dryRun`: Test mode without actually sending API commands (default: false)
+- `metricJobEnabled`: Enable/disable metric job cron (default: false)
+- `metricJobCron`: Cron schedule for metric job (default: "0 * * * * *")
+- `controlJobEnabled`: Enable/disable control job cron (default: false)
+- `controlJobCron`: Cron schedule for control job (default: "5 0,15,30,45 * * * *")
+- `hardOverrideJobEnabled`: Enable/disable hard override job cron (default: false)
+- `hardOverrideJobCron`: Cron schedule for hard override job (default: "0 * * * * *")
+
+**Note**: At least one job must be enabled for thermostat control to function. Typically you want all three enabled.
 
 ### Metrics and Observability
 
@@ -233,12 +235,12 @@ Critical secrets should be set via environment variables:
 - `PYROSCOPE_BASIC_AUTH_USER`: Pyroscope basic auth username (Grafana Cloud instance ID)
 - `PYROSCOPE_BASIC_AUTH_PASSWORD`: Pyroscope basic auth password (Grafana Cloud API key)
 
-**Thermostat Control Kill Switches** (emergency disable):
-- `METRIC_JOB_ENABLED`: Enable/disable metric job cron (default: true)
-- `CONTROL_JOB_ENABLED`: Enable/disable control job cron (default: true)
-- `HARD_OVERRIDE_JOB_ENABLED`: Enable/disable hard override job cron (default: true)
+**Thermostat Control Job Flags**:
+- `METRIC_JOB_ENABLED`: Enable/disable metric job cron (default: false)
+- `CONTROL_JOB_ENABLED`: Enable/disable control job cron (default: false)
+- `HARD_OVERRIDE_JOB_ENABLED`: Enable/disable hard override job cron (default: false)
 
-These kill switches allow you to quickly disable individual thermostat control cron jobs without modifying the config file or redeploying. Useful for emergencies, debugging, or testing. All jobs are enabled by default to maintain backward compatibility.
+These flags control individual thermostat control cron jobs. Set to `true` to enable specific jobs. At least one job must be enabled for thermostat control to function. All jobs are disabled by default for safety.
 
 ## Building and Running
 

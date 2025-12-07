@@ -143,10 +143,13 @@ func main() {
 		}
 	}()
 
-	// Create Netatmo client if thermostat control is enabled
+	// Create Netatmo client if any thermostat control job is enabled
 	// Controller handles both control and metrics collection
 	var netatmoClient *netatmo.Client
-	if cfg.ThermostatControl.Enabled {
+	anyThermostatJobEnabled := cfg.ThermostatControl.MetricJobEnabled ||
+		cfg.ThermostatControl.ControlJobEnabled ||
+		cfg.ThermostatControl.HardOverrideJobEnabled
+	if anyThermostatJobEnabled {
 		logger.Info("creating Netatmo API client for thermostat control")
 		netatmoClient = netatmo.NewClient(
 			cfg.Netatmo.ClientID,
@@ -199,9 +202,9 @@ func main() {
 		logger.Info("BLE aggregator disabled")
 	}
 
-	// Initialize and add thermostat control jobs if enabled
-	if cfg.ThermostatControl.Enabled {
-		logger.Info("thermostat control enabled, initializing and adding scheduler jobs")
+	// Initialize and add thermostat control jobs if any job is enabled
+	if anyThermostatJobEnabled {
+		logger.Info("thermostat control jobs enabled, initializing and adding scheduler jobs")
 
 		// Create shared home status for Metric Job → Control Job communication
 		sharedHomeStatus := control.NewSharedHomeStatus()
@@ -269,7 +272,7 @@ func main() {
 
 		logger.Info("thermostat control jobs configured")
 	} else {
-		logger.Info("thermostat control disabled")
+		logger.Info("all thermostat control jobs disabled")
 	}
 
 	// Add Prometheus pusher job (runs independently)

@@ -83,9 +83,9 @@ type OpenTelemetryConfig struct {
 // PrometheusConfig contains Prometheus metrics push configuration
 type PrometheusConfig struct {
 	PushIntervalSeconds int    `yaml:"pushIntervalSeconds" env:"PUSH_INTERVAL_SECONDS" env-default:"15"`
-	URL                 string `yaml:"prometheusUrl" env:"PROMETHEUS_URL" env-required:"true"`
-	Username            string `yaml:"prometheusUsername" env:"PROMETHEUS_USERNAME" env-required:"true"`
-	Password            string `yaml:"prometheusPassword" env:"PROMETHEUS_PASSWORD"`
+	URL                 string `yaml:"prometheusUrl" env:"PROMETHEUS_URL,GRAFANA_CLOUD_PROMETHEUS_URL" env-required:"true"`
+	Username            string `yaml:"prometheusUsername" env:"PROMETHEUS_USERNAME,GRAFANA_CLOUD_PROMETHEUS_USERNAME" env-required:"true"`
+	Password            string `yaml:"prometheusPassword" env:"PROMETHEUS_PASSWORD,GRAFANA_CLOUD_API_KEY"`
 	StartAtEvenSecond   bool   `yaml:"startAtEvenSecond" env:"START_AT_EVEN_SECOND" env-default:"true"`
 	BufferSize          int    `yaml:"bufferSize" env:"BUFFER_SIZE" env-default:"1000"`
 	BatchSize           int    `yaml:"batchSize" env:"BATCH_SIZE" env-default:"1000"`
@@ -100,7 +100,6 @@ type LoggingConfig struct {
 
 // ThermostatControlConfig contains thermostat control configuration
 type ThermostatControlConfig struct {
-	Enabled                 bool                `yaml:"enabled" env:"THERMOSTAT_CONTROL_ENABLED" env-default:"false"`
 	DryRun                  bool                `yaml:"dryRun" env:"THERMOSTAT_CONTROL_DRY_RUN" env-default:"false"`
 	TemperatureThreshold    float64             `yaml:"temperatureThreshold" env:"TEMPERATURE_THRESHOLD" env-default:"0.2"`
 	OverrideDurationMinutes int                 `yaml:"overrideDurationMinutes" env:"OVERRIDE_DURATION_MINUTES" env-default:"10"`
@@ -109,11 +108,11 @@ type ThermostatControlConfig struct {
 	Mappings                []ThermostatMapping `yaml:"mappings"`
 	HardOverrides           []HardOverride      `yaml:"hardOverrides"`
 	MetricJobCron           string              `yaml:"metricJobCron" env:"METRIC_JOB_CRON" env-default:"0 * * * * *"`              // Cron expression for metric job (runs every minute at :00)
-	MetricJobEnabled        bool                `yaml:"metricJobEnabled" env:"METRIC_JOB_ENABLED" env-default:"true"`                // Enable/disable metric job cron
+	MetricJobEnabled        bool                `yaml:"metricJobEnabled" env:"METRIC_JOB_ENABLED" env-default:"false"`               // Enable/disable metric job cron
 	ControlJobCron          string              `yaml:"controlJobCron" env:"CONTROL_JOB_CRON" env-default:"5 0,15,30,45 * * * *"`   // Cron expression for control job (runs every 15 min at :05/:20/:35/:50, 5 seconds after metric job)
-	ControlJobEnabled       bool                `yaml:"controlJobEnabled" env:"CONTROL_JOB_ENABLED" env-default:"true"`              // Enable/disable control job cron
+	ControlJobEnabled       bool                `yaml:"controlJobEnabled" env:"CONTROL_JOB_ENABLED" env-default:"false"`             // Enable/disable control job cron
 	HardOverrideJobCron     string              `yaml:"hardOverrideJobCron" env:"HARD_OVERRIDE_JOB_CRON" env-default:"0 * * * * *"` // Cron expression for hard override job (runs every minute at :00)
-	HardOverrideJobEnabled  bool                `yaml:"hardOverrideJobEnabled" env:"HARD_OVERRIDE_JOB_ENABLED" env-default:"true"`   // Enable/disable hard override job cron
+	HardOverrideJobEnabled  bool                `yaml:"hardOverrideJobEnabled" env:"HARD_OVERRIDE_JOB_ENABLED" env-default:"false"`  // Enable/disable hard override job cron
 }
 
 // ThermostatMapping maps a Netatmo room to a Xiaomi sensor
@@ -317,8 +316,13 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Validate thermostat control configuration if enabled
-	if c.ThermostatControl.Enabled {
+	// Check if any thermostat control job is enabled
+	anyThermostatJobEnabled := c.ThermostatControl.MetricJobEnabled ||
+		c.ThermostatControl.ControlJobEnabled ||
+		c.ThermostatControl.HardOverrideJobEnabled
+
+	// Validate thermostat control configuration if any job is enabled
+	if anyThermostatJobEnabled {
 		// Validate temperature threshold
 		if c.ThermostatControl.TemperatureThreshold < 0.1 || c.ThermostatControl.TemperatureThreshold > 5.0 {
 			return fmt.Errorf("thermostat control temperature threshold must be between 0.1 and 5.0°C, got: %.2f", c.ThermostatControl.TemperatureThreshold)
@@ -342,7 +346,7 @@ func (c *Config) Validate() error {
 
 		// Validate mappings
 		if len(c.ThermostatControl.Mappings) == 0 {
-			return fmt.Errorf("at least one thermostat mapping must be configured when thermostat control is enabled")
+			return fmt.Errorf("at least one thermostat mapping must be configured when any thermostat control job is enabled")
 		}
 
 		// Track room names and validate sensor MACs
@@ -435,15 +439,15 @@ func (c *Config) Validate() error {
 			}
 		}
 
-		// Validate Netatmo credentials when thermostat control is enabled
+		// Validate Netatmo credentials when any thermostat control job is enabled
 		if c.Netatmo.ClientID == "" {
-			return fmt.Errorf("netatmo client ID is required when thermostat control is enabled")
+			return fmt.Errorf("netatmo client ID is required when any thermostat control job is enabled")
 		}
 		if c.Netatmo.ClientSecret == "" {
-			return fmt.Errorf("netatmo client secret is required when thermostat control is enabled")
+			return fmt.Errorf("netatmo client secret is required when any thermostat control job is enabled")
 		}
 		if c.Netatmo.RefreshToken == "" {
-			return fmt.Errorf("netatmo refresh token is required when thermostat control is enabled")
+			return fmt.Errorf("netatmo refresh token is required when any thermostat control job is enabled")
 		}
 
 	}
@@ -578,7 +582,6 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.String("log_level", c.Logging.Level),
 		zap.Bool("aggregator_enabled", c.Aggregator.Enabled),
 		zap.String("aggregator_cron", c.Aggregator.Cron),
-		zap.Bool("thermostat_control_enabled", c.ThermostatControl.Enabled),
 		zap.Float64("thermostat_temperature_threshold", c.ThermostatControl.TemperatureThreshold),
 		zap.String("thermostat_metric_job_cron", c.ThermostatControl.MetricJobCron),
 		zap.Bool("thermostat_metric_job_enabled", c.ThermostatControl.MetricJobEnabled),

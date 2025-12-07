@@ -148,16 +148,30 @@ thermostats/
 
 ### Thermostat Control Settings (NEW)
 
-The thermostat control feature is **disabled by default**. Enable it by setting `thermostatControl.enabled: true` in config.yaml.
+The thermostat control feature uses **three independent cron jobs**, all disabled by default. Enable specific jobs by setting their corresponding `*JobEnabled` flags to `true`.
 
 ```yaml
 thermostatControl:
-  enabled: true
-  temperatureThreshold: 0.5  # Minimum difference (°C) to trigger adjustment
-  controlIntervalSeconds: 60  # How often to evaluate (default: 60s)
-  overrideDurationMinutes: 10  # Auto-expiring override duration (fail-safe)
-  recheckDelayMinutes: 5  # Wait time after adjustment before re-evaluating
-  externalModificationResetMinutes: 5  # Pause duration after manual change
+  # Dry-run mode (logs decisions without sending commands)
+  dryRun: false
+
+  # Temperature threshold to trigger action
+  temperatureThreshold: 0.2  # Minimum difference (°C) to trigger adjustment
+
+  # Job enable flags (all disabled by default)
+  metricJobEnabled: true      # Fetch home status from Netatmo API
+  controlJobEnabled: true     # Evaluate and apply control decisions
+  hardOverrideJobEnabled: true  # Apply time-based overrides
+
+  # Cron schedules (6-field with seconds)
+  metricJobCron: "0 * * * * *"              # Every minute at :00
+  controlJobCron: "5 0,15,30,45 * * * *"    # Every 15 min at :05
+  hardOverrideJobCron: "0 * * * * *"        # Every minute at :00
+
+  # Safety limits
+  overrideDurationMinutes: 10
+  minSetpointCelsius: 10.0
+  maxSetpointCelsius: 30.0
 
   # Map rooms to sensors
   mappings:

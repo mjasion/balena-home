@@ -1,9 +1,13 @@
 package buffer
 
 import (
+	"context"
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -102,6 +106,7 @@ type RingBuffer struct {
 	mu                sync.RWMutex
 	logger            *zap.Logger
 	enableAutoCleanup bool // If true, automatically cleanup readings older than 5 minutes
+	tracer            trace.Tracer
 }
 
 // New creates a new ring buffer with the specified capacity
@@ -113,6 +118,7 @@ func New(capacity int, logger *zap.Logger) *RingBuffer {
 		head:              0,
 		logger:            logger,
 		enableAutoCleanup: false,
+		tracer:            otel.Tracer("home-controller/buffer"),
 	}
 }
 
@@ -125,6 +131,7 @@ func NewWithAutoCleanup(capacity int, logger *zap.Logger) *RingBuffer {
 		head:              0,
 		logger:            logger,
 		enableAutoCleanup: true,
+		tracer:            otel.Tracer("home-controller/buffer"),
 	}
 }
 
@@ -132,6 +139,13 @@ func NewWithAutoCleanup(capacity int, logger *zap.Logger) *RingBuffer {
 // If the buffer is full, it overwrites the oldest entry
 // If auto-cleanup is enabled, removes readings older than 5 minutes
 func (rb *RingBuffer) Add(reading *Reading) {
+	ctx, span := rb.tracer.Start(context.Background(), "buffer.Add",
+		trace.WithAttributes(
+			attribute.String("reading_type", string(reading.Type)),
+		),
+	)
+	defer span.End()
+
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
@@ -140,12 +154,17 @@ func (rb *RingBuffer) Add(reading *Reading) {
 		rb.cleanupOldReadings()
 	}
 
+	overwritten := false
+	var overwrittenType ReadingType
+
 	// Check if we're about to overwrite data
 	if rb.size == rb.capacity {
-		overwrittenType := rb.data[rb.head].Type
+		overwrittenType = rb.data[rb.head].Type
+		overwritten = true
 		rb.logger.Debug("ring buffer full, overwriting oldest data",
 			zap.Int("capacity", rb.capacity),
 			zap.String("overwritten_type", string(overwrittenType)),
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
 		)
 	}
 
@@ -157,6 +176,17 @@ func (rb *RingBuffer) Add(reading *Reading) {
 	if rb.size < rb.capacity {
 		rb.size++
 	}
+
+	span.SetAttributes(
+		attribute.Int("buffer_size", rb.size),
+		attribute.Int("buffer_capacity", rb.capacity),
+		attribute.Bool("overwritten", overwritten),
+	)
+	if overwritten {
+		span.SetAttributes(attribute.String("overwritten_type", string(overwrittenType)))
+	}
+
+	_ = ctx // Unused but required for span context
 }
 
 // cleanupOldReadings removes readings older than 5 minutes
@@ -284,10 +314,14 @@ func (rb *RingBuffer) GetAll() []*Reading {
 // This prevents race conditions where data is added between GetAll() and Clear()
 // The returned slice is a copy, so it's safe to use after the call
 func (rb *RingBuffer) GetAllAndClear() []*Reading {
+	ctx, span := rb.tracer.Start(context.Background(), "buffer.GetAllAndClear")
+	defer span.End()
+
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
 	if rb.size == 0 {
+		span.SetAttributes(attribute.Int("reading_count", 0))
 		return nil
 	}
 
@@ -302,11 +336,27 @@ func (rb *RingBuffer) GetAllAndClear() []*Reading {
 		copy(result[n:], rb.data[:rb.head])
 	}
 
+	// Count by type for span attributes
+	typeCounts := make(map[ReadingType]int)
+	for _, r := range result {
+		typeCounts[r.Type]++
+	}
+
 	// Clear the buffer atomically
 	rb.size = 0
 	rb.head = 0
 	rb.data = make([]*Reading, rb.capacity)
 
+	span.SetAttributes(
+		attribute.Int("reading_count", len(result)),
+		attribute.Int("ble_count", typeCounts[ReadingTypeBLE]),
+		attribute.Int("netatmo_count", typeCounts[ReadingTypeNetatmo]),
+		attribute.Int("power_count", typeCounts[ReadingTypePower]),
+		attribute.Int("control_count", typeCounts[ReadingTypeControl]),
+		attribute.Int("weighted_avg_count", typeCounts[ReadingTypeBLEWeightedAvg]),
+	)
+
+	_ = ctx // Unused but required for span context
 	return result
 }
 
@@ -315,10 +365,14 @@ func (rb *RingBuffer) GetAllAndClear() []*Reading {
 // startTime and endTime should be time.Time values
 // Returns readings where reading.Timestamp >= startTime AND reading.Timestamp <= endTime
 func (rb *RingBuffer) GetReadingsByTimeWindow(startTime, endTime interface{}) []*Reading {
+	ctx, span := rb.tracer.Start(context.Background(), "buffer.GetReadingsByTimeWindow")
+	defer span.End()
+
 	rb.mu.RLock()
 	defer rb.mu.RUnlock()
 
 	if rb.size == 0 {
+		span.SetAttributes(attribute.Int("reading_count", 0))
 		return []*Reading{} // Return empty slice, not nil
 	}
 
@@ -330,8 +384,15 @@ func (rb *RingBuffer) GetReadingsByTimeWindow(startTime, endTime interface{}) []
 			zap.Any("startTime", startTime),
 			zap.Any("endTime", endTime),
 		)
+		span.SetAttributes(attribute.Bool("invalid_params", true))
 		return []*Reading{}
 	}
+
+	span.SetAttributes(
+		attribute.String("time_window_start", start.Format(time.RFC3339)),
+		attribute.String("time_window_end", end.Format(time.RFC3339)),
+		attribute.Int64("window_duration_seconds", int64(end.Sub(start).Seconds())),
+	)
 
 	result := make([]*Reading, 0, rb.size) // Pre-allocate with capacity
 
@@ -357,6 +418,23 @@ func (rb *RingBuffer) GetReadingsByTimeWindow(startTime, endTime interface{}) []
 		}
 	}
 
+	// Count by type for span attributes
+	typeCounts := make(map[ReadingType]int)
+	for _, r := range result {
+		typeCounts[r.Type]++
+	}
+
+	span.SetAttributes(
+		attribute.Int("reading_count", len(result)),
+		attribute.Int("buffer_size", rb.size),
+		attribute.Int("ble_count", typeCounts[ReadingTypeBLE]),
+		attribute.Int("netatmo_count", typeCounts[ReadingTypeNetatmo]),
+		attribute.Int("power_count", typeCounts[ReadingTypePower]),
+		attribute.Int("control_count", typeCounts[ReadingTypeControl]),
+		attribute.Int("weighted_avg_count", typeCounts[ReadingTypeBLEWeightedAvg]),
+	)
+
+	_ = ctx // Unused but required for span context
 	return result
 }
 

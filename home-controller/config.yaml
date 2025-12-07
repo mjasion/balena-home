@@ -126,7 +126,7 @@ opentelemetry:
   # Metrics sampling rate (0.0-1.0) for metrics push operations
   # Set lower than samplingRate to reduce high-frequency trace volume
   # This applies to all spans starting with "metrics."
-  metricsSamplingRate: 0.25  # or use OTEL_METRICS_SAMPLING_RATE env var
+  metricsSamplingRate: 1.0  # or use OTEL_METRICS_SAMPLING_RATE env var
 
   # Additional resource attributes
   # Example: environment, version, hostname
@@ -148,7 +148,7 @@ prometheus:
   prometheusUsername: "83165"
 
   # Grafana Cloud password (API key)
-  # IMPORTANT: Use PROMETHEUS_PASSWORD environment variable instead of storing here
+  # IMPORTANT: Use GRAFANA_CLOUD_API_KEY environment variable (same key for OTLP, metrics, logs)
   prometheusPassword: ""
 
   # Start pushing at even second boundaries (improves alignment in time series)
@@ -198,11 +198,8 @@ aggregator:
 
 # Intelligent Thermostat Control
 # Three-job architecture: Metric Job, Control Job, Hard Override Job
+# IMPORTANT: Requires Netatmo OAuth2 token with read_thermostat and write_thermostat scopes
 thermostatControl:
-  # Enable thermostat control (default: false)
-  # IMPORTANT: Requires Netatmo OAuth2 token with read_thermostat and write_thermostat scopes
-  enabled: true
-
   # Dry-run mode: Log control decisions without sending commands to thermostats (default: false)
   # Use this for testing before enabling real control
   # When true: Control loop runs, decisions are logged, but no API calls are made
@@ -217,19 +214,19 @@ thermostatControl:
   # Metric Job: Fetches home status from Netatmo API every minute at :00 seconds
   # Stores data in mutex-protected shared state
   metricJobCron: "0 * * * * *"  # or use METRIC_JOB_CRON env var
-  metricJobEnabled: true  # Enable/disable metric job cron (default: true) or use METRIC_JOB_ENABLED env var
+  metricJobEnabled: true  # Enable/disable metric job cron (default: false) or use METRIC_JOB_ENABLED env var
 
   # Control Job: Evaluates rooms and applies control decisions every 15 minutes at :05 seconds
   # Runs 5 seconds after Metric Job to ensure fresh data is available
   # Uses data from shared state (if < 30s old) or fetches fresh data itself
   controlJobCron: "5 0,15,30,45 * * * *"  # or use CONTROL_JOB_CRON env var
-  controlJobEnabled: true  # Enable/disable control job cron (default: true) or use CONTROL_JOB_ENABLED env var
+  controlJobEnabled: false  # Enable/disable control job cron (default: false) or use CONTROL_JOB_ENABLED env var
 
   # Hard Override Job: Applies time-based temperature overrides every minute
   # Runs at: :00 seconds of every minute
   # Checks hardOverrides schedule and applies when active
   hardOverrideJobCron: "0 * * * * *"  # or use HARD_OVERRIDE_JOB_CRON env var
-  hardOverrideJobEnabled: true  # Enable/disable hard override job cron (default: true) or use HARD_OVERRIDE_JOB_ENABLED env var
+  hardOverrideJobEnabled: false  # Enable/disable hard override job cron (default: false) or use HARD_OVERRIDE_JOB_ENABLED env var
 
   # Safety limits for calculated setpoints
   # SAFETY: Setpoints are clamped to these limits to prevent extreme temperatures

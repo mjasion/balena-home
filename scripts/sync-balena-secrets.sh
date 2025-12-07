@@ -173,6 +173,7 @@ set_balena_var() {
     local var_name="$1"
     local value="$2"
     local source="$3"
+    local service_name="${4:-}"  # Optional service name
 
     # Skip empty or placeholder values
     if [[ -z "$value" ]] || [[ "$value" == "REPLACE_"* ]] || [[ "$value" == "your-"* ]] || [[ "$value" == "example-"* ]]; then
@@ -187,18 +188,46 @@ set_balena_var() {
         echo -e "${YELLOW}  [DRY RUN] $var_name${NC}"
         if [ "$VERBOSE" = true ]; then
             echo -e "${YELLOW}            = $value${NC}"
+            if [ -n "$service_name" ]; then
+                echo -e "${YELLOW}            (service: $service_name)${NC}"
+            fi
         fi
         ((total_set++))
         return 0
     fi
 
-    # Check if variable already exists
-    local existing_id=$(balena env list --$TARGET_TYPE "$TARGET" --json 2>/dev/null | jq -r ".[] | select(.name == \"$var_name\") | .id" || echo "")
+    # Build service filter for querying existing variables
+    local service_filter=""
+    if [ -n "$service_name" ]; then
+        service_filter="and .serviceName == \"$service_name\""
+    else
+        service_filter="and .serviceName == \"*\""
+    fi
+
+    # Check if variable already exists and get its current value
+    local env_json=$(balena env list --$TARGET_TYPE "$TARGET" --json 2>/dev/null || echo "[]")
+    local existing_id=$(echo "$env_json" | jq -r ".[] | select(.name == \"$var_name\" $service_filter) | .id" 2>/dev/null || echo "")
+    local existing_value=$(echo "$env_json" | jq -r ".[] | select(.name == \"$var_name\" $service_filter) | .value" 2>/dev/null || echo "")
+
+    # Build the balena env set command with optional service flag
+    local set_cmd="balena env set \"$var_name\" \"$value\" --$TARGET_TYPE \"$TARGET\""
+    if [ -n "$service_name" ]; then
+        set_cmd="$set_cmd --service \"$service_name\""
+    fi
 
     if [ -n "$existing_id" ]; then
-        # Update existing variable
+        # Check if value has changed
+        if [ "$existing_value" = "$value" ]; then
+            if [ "$VERBOSE" = true ]; then
+                echo -e "${YELLOW}  ⏭️  Unchanged: $var_name${NC}"
+            fi
+            ((total_skip++))
+            return 0
+        fi
+
+        # Update existing variable (remove and re-add)
         if balena env rm "$existing_id" --yes &>/dev/null && \
-           balena env add "$var_name" "$value" --$TARGET_TYPE "$TARGET" &>/dev/null; then
+           eval "$set_cmd" &>/dev/null; then
             echo -e "${GREEN}  ✅ Updated: $var_name${NC}"
             ((total_set++))
         else
@@ -207,7 +236,7 @@ set_balena_var() {
         fi
     else
         # Add new variable
-        if balena env add "$var_name" "$value" --$TARGET_TYPE "$TARGET" &>/dev/null; then
+        if eval "$set_cmd" &>/dev/null; then
             echo -e "${GREEN}  ✅ Added: $var_name${NC}"
             ((total_set++))
         else
@@ -226,9 +255,9 @@ process_yaml() {
     local shared_vars=$(yq eval '.shared // {} | to_entries | .[] | .key + "=" + .value' "$config" 2>/dev/null || echo "")
 
     if [ -n "$shared_vars" ]; then
-        while IFS='=' read -r key value; do
+        while IFS='=' read -r key value || [ -n "$key" ]; do
             if [ -n "$key" ] && [ -n "$value" ]; then
-                set_balena_var "$key" "$value" "shared"
+                set_balena_var "$key" "$value" "shared" || true
             fi
         done <<< "$shared_vars"
     else
@@ -241,9 +270,9 @@ process_yaml() {
         local env_shared=$(yq eval ".environments.${ENVIRONMENT}.shared // {} | to_entries | .[] | .key + \"=\" + .value" "$config" 2>/dev/null || echo "")
         if [ -n "$env_shared" ]; then
             echo -e "${BLUE}=== Shared Overrides ($ENVIRONMENT) ===${NC}"
-            while IFS='=' read -r key value; do
+            while IFS='=' read -r key value || [ -n "$key" ]; do
                 if [ -n "$key" ] && [ -n "$value" ]; then
-                    set_balena_var "$key" "$value" "shared-override"
+                    set_balena_var "$key" "$value" "shared-override" || true
                 fi
             done <<< "$env_shared"
             echo ""
@@ -271,10 +300,10 @@ process_yaml() {
         local service_vars=$(yq eval ".services.${service} // {} | to_entries | .[] | .key + \"=\" + .value" "$config" 2>/dev/null || echo "")
 
         if [ -n "$service_vars" ]; then
-            while IFS='=' read -r key value; do
+            while IFS='=' read -r key value || [ -n "$key" ]; do
                 if [ -n "$key" ] && [ -n "$value" ] && [ "$key" != "pass" ]; then
-                    # Prefix variable name with service name
-                    set_balena_var "${service}_${key}" "$value" "$service"
+                    # Set service-specific variable (using --service flag, not prefix)
+                    set_balena_var "$key" "$value" "$service" "$service" || true
                 fi
             done <<< "$service_vars"
         fi
@@ -283,16 +312,16 @@ process_yaml() {
         if [ -n "$ENVIRONMENT" ]; then
             local env_service_vars=$(yq eval ".environments.${ENVIRONMENT}.services.${service} // {} | to_entries | .[] | .key + \"=\" + .value" "$config" 2>/dev/null || echo "")
             if [ -n "$env_service_vars" ]; then
-                while IFS='=' read -r key value; do
+                while IFS='=' read -r key value || [ -n "$key" ]; do
                     if [ -n "$key" ] && [ -n "$value" ]; then
-                        set_balena_var "${service}_${key}" "$value" "$service-override"
+                        set_balena_var "$key" "$value" "$service-override" "$service" || true
                     fi
                 done <<< "$env_service_vars"
             fi
         fi
 
         echo ""
-    done
+    done <<< "$services"
 }
 
 # Function to process ENV file (legacy support)

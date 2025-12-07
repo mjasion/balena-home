@@ -51,12 +51,12 @@ loki.source.docker "default" {
 // Write logs to Loki
 loki.write "default" {
   endpoint {
-    url = sys.env("LOKI_URL")
+    url = sys.env("GRAFANA_CLOUD_LOKI_URL")
 
     // Grafana Cloud requires authentication
     basic_auth {
-      username = sys.env("LOKI_USERNAME")
-      password = sys.env("LOKI_PASSWORD")
+      username = sys.env("GRAFANA_CLOUD_LOKI_USERNAME")
+      password = sys.env("GRAFANA_CLOUD_API_KEY")
     }
   }
 }
@@ -80,7 +80,7 @@ otelcol.receiver.otlp "default" {
   output {
     traces = [
       otelcol.exporter.otlp.datadog.input,
-      otelcol.exporter.otlp.grafana_cloud.input,
+      // otelcol.exporter.otlp.grafana_cloud.input,
     ]
   }
 }

@@ -48,29 +48,29 @@ cp secrets.example.yaml secrets.yaml
 
 2. **Sync to Balena (dry-run first):**
 ```bash
-./scripts/sync-balena-secrets.sh myorg/home-automation secrets.yaml --dry-run
+./scripts/sync-balena-secrets.sh balena280/nocznickiego secrets.yaml --dry-run
 ```
 
 3. **Apply for real:**
 ```bash
-./scripts/sync-balena-secrets.sh myorg/home-automation secrets.yaml
+./scripts/sync-balena-secrets.sh balena280/nocznickiego secrets.yaml
 ```
 
 ### Usage Examples
 
 #### Sync all services with YAML
 ```bash
-./scripts/sync-balena-secrets.sh myorg/home-automation secrets.yaml
+./scripts/sync-balena-secrets.sh balena280/nocznickiego secrets.yaml
 ```
 
 #### Sync with production environment overrides
 ```bash
-./scripts/sync-balena-secrets.sh myorg/home-automation secrets.yaml --env production
+./scripts/sync-balena-secrets.sh balena280/nocznickiego secrets.yaml --env production
 ```
 
 #### Sync only specific service
 ```bash
-./scripts/sync-balena-secrets.sh myorg/home-automation secrets.yaml --service home-controller
+./scripts/sync-balena-secrets.sh balena280/nocznickiego secrets.yaml --service home-controller
 ```
 
 #### Sync to specific device
@@ -80,12 +80,12 @@ cp secrets.example.yaml secrets.yaml
 
 #### Preview changes without applying (dry-run)
 ```bash
-./scripts/sync-balena-secrets.sh myorg/home-automation secrets.yaml --dry-run --verbose
+./scripts/sync-balena-secrets.sh balena280/nocznickiego secrets.yaml --dry-run --verbose
 ```
 
 #### Legacy: Sync from .env file
 ```bash
-./scripts/sync-balena-secrets.sh myorg/home-automation .env.prod
+./scripts/sync-balena-secrets.sh balena280/nocznickiego .env.prod
 ```
 
 ### How it works
@@ -100,11 +100,11 @@ shared:
 
 services:
   home-controller:
-    # Prefixed as: home-controller_NETATMO_CLIENT_ID
+    # Scoped to home-controller service (not prefixed)
     NETATMO_CLIENT_ID: "your-id"
 
-  datadog:
-    # Prefixed as: datadog_DD_API_KEY
+  datadog-agent:
+    # Scoped to datadog-agent service (not prefixed)
     DD_API_KEY: "your-key"
 
 environments:
@@ -116,11 +116,13 @@ environments:
         THERMOSTAT_CONTROL_DRY_RUN: "false"
 ```
 
-**Variable Naming in Balena:**
-- **Shared secrets**: `VARIABLE_NAME` (no prefix)
-- **Service-specific**: `SERVICE_NAME_VARIABLE_NAME`
-  - Example: `home-controller_NETATMO_CLIENT_ID`
-  - Example: `datadog_DD_API_KEY`
+**Variable Scoping in Balena:**
+- **Shared secrets**: Applied to all services (serviceName: `*`)
+  - Example: `PROMETHEUS_PASSWORD`
+- **Service-specific**: Scoped to specific service using `--service` flag (serviceName: `home-controller`)
+  - Example: `NETATMO_CLIENT_ID` (scoped to `home-controller` service)
+  - Example: `DD_API_KEY` (scoped to `datadog-agent` service)
+  - Note: Service names in secrets.yaml must match docker-compose.yml service names
 
 **Benefits:**
 - ✅ Organized by service

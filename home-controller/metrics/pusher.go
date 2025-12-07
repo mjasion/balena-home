@@ -59,8 +59,10 @@ func (p *Pusher) Run(ctx context.Context) {
 // pushMetrics gets all readings from buffer and pushes them in batches
 func (p *Pusher) pushMetrics() {
 
-	ctx, span := p.tracer.Start(context.Background(), "metrics.pushMetrics",
+	ctx, span := p.tracer.Start(context.Background(), "prometheus_pusher_job",
+		trace.WithSpanKind(trace.SpanKindServer),
 		trace.WithAttributes(
+			attribute.String("job", "prometheus_pusher"),
 			attribute.String("operation", "push_metrics_batch"),
 		),
 	)

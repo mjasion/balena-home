@@ -8,6 +8,9 @@ import (
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
 	"github.com/mjasion/balena-home/thermostats/scanner"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -17,6 +20,7 @@ type Aggregator struct {
 	controlBuffer *buffer.RingBuffer // Source buffer with BLE readings
 	metricsBuffer *buffer.RingBuffer // Destination buffer for metrics
 	logger        *zap.Logger
+	tracer        trace.Tracer
 }
 
 // New creates a new sensor data aggregator
@@ -31,16 +35,30 @@ func New(
 		controlBuffer: controlBuffer,
 		metricsBuffer: metricsBuffer,
 		logger:        logger,
+		tracer:        otel.Tracer("home-controller/aggregator"),
 	}
 }
 
 // Run executes a single aggregation iteration (called by scheduler)
 func (a *Aggregator) Run(ctx context.Context) {
-	a.calculateWeightedAverages()
+	ctx, span := a.tracer.Start(ctx, "ble_aggregator_job",
+		trace.WithSpanKind(trace.SpanKindServer),
+		trace.WithAttributes(
+			attribute.String("job", "ble_aggregator"),
+		),
+	)
+	defer span.End()
+
+	a.logger.Debug("starting BLE aggregator job",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.String("span_id", span.SpanContext().SpanID().String()),
+	)
+
+	a.calculateWeightedAverages(ctx, span)
 }
 
 // calculateWeightedAverages calculates weighted averages for all sensors
-func (a *Aggregator) calculateWeightedAverages() {
+func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan trace.Span) {
 	now := time.Now()
 	cutoff := now.Add(-60 * time.Second)
 
@@ -48,9 +66,19 @@ func (a *Aggregator) calculateWeightedAverages() {
 	readings := a.controlBuffer.GetReadingsByTimeWindow(cutoff, now)
 
 	if len(readings) == 0 {
-		a.logger.Debug("no readings available for weighted average calculation")
+		a.logger.Debug("no readings available for weighted average calculation",
+			zap.String("trace_id", parentSpan.SpanContext().TraceID().String()),
+		)
+		parentSpan.SetAttributes(attribute.Int("sensor_count", 0))
 		return
 	}
+
+	parentSpan.SetAttributes(
+		attribute.Int("total_readings", len(readings)),
+		attribute.Int("sensor_count", len(a.sensors)),
+	)
+
+	sensorsProcessed := 0
 
 	// Process each configured sensor
 	for _, sensor := range a.sensors {
@@ -75,6 +103,7 @@ func (a *Aggregator) calculateWeightedAverages() {
 			a.logger.Debug("no readings found for sensor in last 60 seconds",
 				zap.String("sensor_name", sensor.Name),
 				zap.String("sensor_mac", sensorMAC),
+				zap.String("trace_id", parentSpan.SpanContext().TraceID().String()),
 			)
 			continue
 		}
@@ -98,13 +127,23 @@ func (a *Aggregator) calculateWeightedAverages() {
 		// Push to metrics buffer
 		a.metricsBuffer.Add(avgReading)
 
+		sensorsProcessed++
+
 		a.logger.Debug("calculated weighted average temperature",
 			zap.String("sensor_name", sensor.Name),
 			zap.String("sensor_mac", sensorMAC),
 			zap.Int("reading_count", len(sensorReadings)),
 			zap.Float64("weighted_average", weightedAvg),
+			zap.String("trace_id", parentSpan.SpanContext().TraceID().String()),
 		)
 	}
+
+	parentSpan.SetAttributes(attribute.Int("sensors_processed", sensorsProcessed))
+
+	a.logger.Info("completed BLE aggregation",
+		zap.Int("sensors_processed", sensorsProcessed),
+		zap.String("trace_id", parentSpan.SpanContext().TraceID().String()),
+	)
 }
 
 // calculateWeightedAverage calculates time-weighted average
