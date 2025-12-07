@@ -68,6 +68,8 @@ services:
     environment:
       - DD_API_KEY=${DD_API_KEY}
       - DD_SITE=${DD_SITE:-datadoghq.com}
+      # Docker integration - use DOCKER_HOST from Balena socket
+      - DOCKER_HOST=${DOCKER_HOST}
       # Logs
       - DD_LOGS_ENABLED=true
       - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true
