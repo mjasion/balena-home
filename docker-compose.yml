@@ -83,7 +83,7 @@ services:
       # DogStatsD
       - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
       # Disable process agent (requires /proc mounts we don't have in Balena)
-      - DD_PROCESS_CONFIG_PROCESS_COLLECTION_ENABLED=false
+      - DD_PROCESS_AGENT_ENABLED=false
     ports:
       - "8126:8126"   # APM trace agent
       # OTLP ports not exposed - alloy forwards traces to datadog-agent internally
