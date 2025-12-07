@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"time"
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
@@ -23,7 +24,7 @@ type ControlMetrics struct {
 }
 
 // pushControlMetrics pushes control decision metrics to the metrics buffer
-func (c *Controller) pushControlMetrics(decision ControlDecision, hardOverrideActive bool, externallyModified bool) {
+func (c *Controller) pushControlMetrics(ctx context.Context, decision ControlDecision, hardOverrideActive bool, externallyModified bool) {
 	// Skip pushing metrics if XiaomiTemperature is 0 (indicates error or no sensor data)
 	// This prevents pushing invalid metrics when sensor data is unavailable
 	if decision.XiaomiTemperature == 0 {
@@ -61,6 +62,6 @@ func (c *Controller) pushControlMetrics(decision ControlDecision, hardOverrideAc
 
 	// Push to metrics buffer (not control buffer - this is for Prometheus)
 	if c.metricsBuffer != nil {
-		c.metricsBuffer.Add(reading)
+		c.metricsBuffer.Add(ctx, reading)
 	}
 }

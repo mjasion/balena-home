@@ -1,6 +1,7 @@
 package buffer
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 func TestRingBuffer_AddAndGet(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(5, logger)
+	ctx := context.Background()
 
 	// Add some readings
 	for i := 0; i < 3; i++ {
@@ -21,7 +23,7 @@ func TestRingBuffer_AddAndGet(t *testing.T) {
 				TemperatureCelsius: float64(20 + i),
 			},
 		}
-		rb.Add(reading)
+		rb.Add(ctx, reading)
 	}
 
 	// Check size
@@ -47,6 +49,7 @@ func TestRingBuffer_AddAndGet(t *testing.T) {
 func TestRingBuffer_Overflow(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(3, logger)
+	ctx := context.Background()
 
 	// Add more readings than capacity
 	for i := 0; i < 5; i++ {
@@ -57,7 +60,7 @@ func TestRingBuffer_Overflow(t *testing.T) {
 				TemperatureCelsius: float64(20 + i),
 			},
 		}
-		rb.Add(reading)
+		rb.Add(ctx, reading)
 	}
 
 	// Check size (should be capped at capacity)
@@ -83,6 +86,7 @@ func TestRingBuffer_Overflow(t *testing.T) {
 func TestRingBuffer_GetAllAndClear(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(5, logger)
+	ctx := context.Background()
 
 	// Add some readings
 	for i := 0; i < 3; i++ {
@@ -93,7 +97,7 @@ func TestRingBuffer_GetAllAndClear(t *testing.T) {
 				TemperatureCelsius: float64(20 + i),
 			},
 		}
-		rb.Add(reading)
+		rb.Add(ctx, reading)
 	}
 
 	// Check size before
@@ -102,7 +106,7 @@ func TestRingBuffer_GetAllAndClear(t *testing.T) {
 	}
 
 	// Get all and clear atomically
-	readings := rb.GetAllAndClear()
+	readings := rb.GetAllAndClear(ctx)
 
 	// Check returned readings
 	if len(readings) != 3 {
@@ -132,6 +136,7 @@ func TestRingBuffer_GetAllAndClear(t *testing.T) {
 func TestRingBuffer_Concurrent(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(100, logger)
+	ctx := context.Background()
 
 	var wg sync.WaitGroup
 
@@ -148,7 +153,7 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 						TemperatureCelsius: float64(id*10 + j),
 					},
 				}
-				rb.Add(reading)
+				rb.Add(ctx, reading)
 			}
 		}(i)
 	}
@@ -176,6 +181,7 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 func TestRingBuffer_GetReadingsByTimeWindow(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(10, logger)
+	ctx := context.Background()
 
 	now := time.Now()
 
@@ -202,12 +208,12 @@ func TestRingBuffer_GetReadingsByTimeWindow(t *testing.T) {
 				TemperatureCelsius: td.temp,
 			},
 		}
-		rb.Add(reading)
+		rb.Add(ctx, reading)
 	}
 
 	// Test: Get readings from last 60 seconds
 	cutoff := now.Add(-60 * time.Second)
-	readings := rb.GetReadingsByTimeWindow(cutoff, now)
+	readings := rb.GetReadingsByTimeWindow(ctx, cutoff, now)
 
 	// Should have 6 readings (all except the one at -90s)
 	if len(readings) != 6 {
@@ -228,11 +234,12 @@ func TestRingBuffer_GetReadingsByTimeWindow(t *testing.T) {
 func TestRingBuffer_GetReadingsByTimeWindow_EmptyBuffer(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(10, logger)
+	ctx := context.Background()
 
 	now := time.Now()
 	cutoff := now.Add(-60 * time.Second)
 
-	readings := rb.GetReadingsByTimeWindow(cutoff, now)
+	readings := rb.GetReadingsByTimeWindow(ctx, cutoff, now)
 
 	// Should return empty slice, not nil
 	if readings == nil {
@@ -247,6 +254,7 @@ func TestRingBuffer_GetReadingsByTimeWindow_EmptyBuffer(t *testing.T) {
 func TestRingBuffer_GetReadingsByTimeWindow_NoMatches(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(10, logger)
+	ctx := context.Background()
 
 	now := time.Now()
 
@@ -260,12 +268,12 @@ func TestRingBuffer_GetReadingsByTimeWindow_NoMatches(t *testing.T) {
 				TemperatureCelsius: float64(20 + i),
 			},
 		}
-		rb.Add(reading)
+		rb.Add(ctx, reading)
 	}
 
 	// Query for last 60 seconds (should find nothing)
 	cutoff := now.Add(-60 * time.Second)
-	readings := rb.GetReadingsByTimeWindow(cutoff, now)
+	readings := rb.GetReadingsByTimeWindow(ctx, cutoff, now)
 
 	if len(readings) != 0 {
 		t.Errorf("expected 0 readings (no matches), got %d", len(readings))
@@ -275,6 +283,7 @@ func TestRingBuffer_GetReadingsByTimeWindow_NoMatches(t *testing.T) {
 func TestRingBuffer_GetReadingsByTimeWindow_AllMatches(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(10, logger)
+	ctx := context.Background()
 
 	now := time.Now()
 
@@ -288,12 +297,12 @@ func TestRingBuffer_GetReadingsByTimeWindow_AllMatches(t *testing.T) {
 				TemperatureCelsius: float64(20 + i),
 			},
 		}
-		rb.Add(reading)
+		rb.Add(ctx, reading)
 	}
 
 	// Query for last 60 seconds (should match all)
 	cutoff := now.Add(-60 * time.Second)
-	readings := rb.GetReadingsByTimeWindow(cutoff, now)
+	readings := rb.GetReadingsByTimeWindow(ctx, cutoff, now)
 
 	if len(readings) != 5 {
 		t.Errorf("expected 5 readings (all matches), got %d", len(readings))
@@ -303,6 +312,7 @@ func TestRingBuffer_GetReadingsByTimeWindow_AllMatches(t *testing.T) {
 func TestRingBuffer_GetReadingsByTimeWindow_ConcurrentAccess(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(100, logger)
+	ctx := context.Background()
 
 	now := time.Now()
 	var wg sync.WaitGroup
@@ -321,7 +331,7 @@ func TestRingBuffer_GetReadingsByTimeWindow_ConcurrentAccess(t *testing.T) {
 						TemperatureCelsius: float64(id*10 + j),
 					},
 				}
-				rb.Add(reading)
+				rb.Add(ctx, reading)
 			}
 		}(i)
 	}
@@ -333,7 +343,7 @@ func TestRingBuffer_GetReadingsByTimeWindow_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			cutoff := now.Add(-60 * time.Second)
 			for j := 0; j < 10; j++ {
-				_ = rb.GetReadingsByTimeWindow(cutoff, now)
+				_ = rb.GetReadingsByTimeWindow(ctx, cutoff, now)
 			}
 		}()
 	}
@@ -360,6 +370,7 @@ func TestRingBuffer_GetReadingsByTimeWindow_ConcurrentAccess(t *testing.T) {
 func TestRingBuffer_GetReadingsByTimeWindow_WithGetAllAndClear(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(10, logger)
+	ctx := context.Background()
 
 	now := time.Now()
 
@@ -373,13 +384,13 @@ func TestRingBuffer_GetReadingsByTimeWindow_WithGetAllAndClear(t *testing.T) {
 				TemperatureCelsius: float64(20 + i),
 			},
 		}
-		rb.Add(reading)
+		rb.Add(ctx, reading)
 	}
 
 	cutoff := now.Add(-60 * time.Second)
 
 	// Get readings with time window (non-destructive)
-	readingsBefore := rb.GetReadingsByTimeWindow(cutoff, now)
+	readingsBefore := rb.GetReadingsByTimeWindow(ctx, cutoff, now)
 	if len(readingsBefore) != 5 {
 		t.Errorf("expected 5 readings before GetAllAndClear, got %d", len(readingsBefore))
 	}
@@ -390,7 +401,7 @@ func TestRingBuffer_GetReadingsByTimeWindow_WithGetAllAndClear(t *testing.T) {
 	}
 
 	// Now clear the buffer
-	readingsCleared := rb.GetAllAndClear()
+	readingsCleared := rb.GetAllAndClear(ctx)
 	if len(readingsCleared) != 5 {
 		t.Errorf("expected 5 readings from GetAllAndClear, got %d", len(readingsCleared))
 	}
@@ -401,7 +412,7 @@ func TestRingBuffer_GetReadingsByTimeWindow_WithGetAllAndClear(t *testing.T) {
 	}
 
 	// GetReadingsByTimeWindow on empty buffer should return empty slice
-	readingsAfter := rb.GetReadingsByTimeWindow(cutoff, now)
+	readingsAfter := rb.GetReadingsByTimeWindow(ctx, cutoff, now)
 	if len(readingsAfter) != 0 {
 		t.Errorf("expected 0 readings after GetAllAndClear, got %d", len(readingsAfter))
 	}
@@ -410,6 +421,7 @@ func TestRingBuffer_GetReadingsByTimeWindow_WithGetAllAndClear(t *testing.T) {
 func TestRingBuffer_GetReadingsByTimeWindow_InvalidTimeParams(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(10, logger)
+	ctx := context.Background()
 
 	now := time.Now()
 
@@ -422,10 +434,10 @@ func TestRingBuffer_GetReadingsByTimeWindow_InvalidTimeParams(t *testing.T) {
 			TemperatureCelsius: 25.0,
 		},
 	}
-	rb.Add(reading)
+	rb.Add(ctx, reading)
 
 	// Call with invalid parameters (not time.Time)
-	readings := rb.GetReadingsByTimeWindow("invalid", "params")
+	readings := rb.GetReadingsByTimeWindow(ctx, "invalid", "params")
 
 	// Should return empty slice and log error
 	if len(readings) != 0 {
@@ -436,6 +448,7 @@ func TestRingBuffer_GetReadingsByTimeWindow_InvalidTimeParams(t *testing.T) {
 func TestRingBuffer_GetReadingsByTimeWindow_MultipleReadingTypes(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	rb := New(10, logger)
+	ctx := context.Background()
 
 	now := time.Now()
 
@@ -448,7 +461,7 @@ func TestRingBuffer_GetReadingsByTimeWindow_MultipleReadingTypes(t *testing.T) {
 			TemperatureCelsius: 25.0,
 		},
 	}
-	rb.Add(bleReading)
+	rb.Add(ctx, bleReading)
 
 	// Add Netatmo reading
 	netatmoReading := &Reading{
@@ -459,7 +472,7 @@ func TestRingBuffer_GetReadingsByTimeWindow_MultipleReadingTypes(t *testing.T) {
 			MeasuredTemperature: 24.0,
 		},
 	}
-	rb.Add(netatmoReading)
+	rb.Add(ctx, netatmoReading)
 
 	// Add Power reading
 	powerReading := &Reading{
@@ -470,11 +483,11 @@ func TestRingBuffer_GetReadingsByTimeWindow_MultipleReadingTypes(t *testing.T) {
 			Value:      1500.0,
 		},
 	}
-	rb.Add(powerReading)
+	rb.Add(ctx, powerReading)
 
 	// Query for last 60 seconds (should match all 3)
 	cutoff := now.Add(-60 * time.Second)
-	readings := rb.GetReadingsByTimeWindow(cutoff, now)
+	readings := rb.GetReadingsByTimeWindow(ctx, cutoff, now)
 
 	if len(readings) != 3 {
 		t.Errorf("expected 3 readings (all types), got %d", len(readings))

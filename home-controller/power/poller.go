@@ -81,7 +81,7 @@ func (p *Poller) scrapeAndBuffer(ctx context.Context) {
 				Value:      reading.Value,
 			},
 		}
-		p.buffer.Add(bufferReading)
+		p.buffer.Add(ctx, bufferReading)
 
 		p.logger.Debug("added power reading to buffer",
 			zap.Int("sensor_id", reading.SensorID),

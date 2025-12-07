@@ -129,9 +129,9 @@ func (s *Scanner) Start(ctx context.Context) error {
 
 				// Write to BOTH buffers for dual buffer architecture
 				// Metrics buffer: Used by metrics pusher (cleared every 15s)
-				s.metricsBuffer.Add(bufReading)
+				s.metricsBuffer.Add(ctx, bufReading)
 				// Control buffer: Used by control loop (retained for 60s+ history)
-				s.controlBuffer.Add(bufReading)
+				s.controlBuffer.Add(ctx, bufReading)
 
 				// Log sensor reading
 				s.logger.Info("Read sensor data",

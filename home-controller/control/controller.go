@@ -210,7 +210,7 @@ func (c *Controller) addToMetricsBuffer(ctx context.Context, homeStatus *netatmo
 			},
 		}
 
-		c.metricsBuffer.Add(bufferReading)
+		c.metricsBuffer.Add(ctx, bufferReading)
 		readingsAdded++
 
 		c.logger.Debug("added Netatmo reading to metrics buffer",
@@ -485,7 +485,7 @@ func (c *Controller) processRoomsConcurrently(ctx context.Context, initialRoomSt
 
 			// Push metrics and execute decision
 			hardOverrideActive := c.isHardOverrideActive(m.RoomName)
-			c.pushControlMetrics(decision, hardOverrideActive, false)
+			c.pushControlMetrics(ctx, decision, hardOverrideActive, false)
 			c.executeDecision(ctx, decision)
 
 			c.logger.Debug("room processing completed",

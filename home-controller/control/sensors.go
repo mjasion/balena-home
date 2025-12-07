@@ -24,7 +24,7 @@ func (c *Controller) getWeightedAverageTemperature(ctx context.Context, sensorMA
 	cutoff := now.Add(-60 * time.Second)
 
 	// Get readings from control buffer
-	readings := c.controlBuffer.GetReadingsByTimeWindow(cutoff, now)
+	readings := c.controlBuffer.GetReadingsByTimeWindow(ctx, cutoff, now)
 
 	if len(readings) == 0 {
 		return 0, fmt.Errorf("no sensor readings in last 60 seconds")

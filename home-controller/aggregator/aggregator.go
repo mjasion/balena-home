@@ -63,7 +63,7 @@ func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan t
 	cutoff := now.Add(-60 * time.Second)
 
 	// Get readings from control buffer (last 60 seconds)
-	readings := a.controlBuffer.GetReadingsByTimeWindow(cutoff, now)
+	readings := a.controlBuffer.GetReadingsByTimeWindow(ctx, cutoff, now)
 
 	if len(readings) == 0 {
 		a.logger.Debug("no readings available for weighted average calculation",
@@ -125,7 +125,7 @@ func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan t
 		}
 
 		// Push to metrics buffer
-		a.metricsBuffer.Add(avgReading)
+		a.metricsBuffer.Add(ctx, avgReading)
 
 		sensorsProcessed++
 

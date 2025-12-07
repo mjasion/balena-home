@@ -31,7 +31,7 @@ func (c *Controller) evaluateAndExecuteRooms(ctx context.Context, roomStatusMap 
 
 		// Push metrics for this decision
 		hardOverrideActive := c.isHardOverrideActive(mapping.RoomName)
-		c.pushControlMetrics(decision, hardOverrideActive, false)
+		c.pushControlMetrics(ctx, decision, hardOverrideActive, false)
 		c.executeDecision(ctx, decision)
 	}
 

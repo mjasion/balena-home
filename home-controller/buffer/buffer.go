@@ -138,8 +138,8 @@ func NewWithAutoCleanup(capacity int, logger *zap.Logger) *RingBuffer {
 // Add adds a new reading to the buffer
 // If the buffer is full, it overwrites the oldest entry
 // If auto-cleanup is enabled, removes readings older than 5 minutes
-func (rb *RingBuffer) Add(reading *Reading) {
-	ctx, span := rb.tracer.Start(context.Background(), "buffer.Add",
+func (rb *RingBuffer) Add(ctx context.Context, reading *Reading) {
+	ctx, span := rb.tracer.Start(ctx, "buffer.Add",
 		trace.WithAttributes(
 			attribute.String("reading_type", string(reading.Type)),
 		),
@@ -185,8 +185,6 @@ func (rb *RingBuffer) Add(reading *Reading) {
 	if overwritten {
 		span.SetAttributes(attribute.String("overwritten_type", string(overwrittenType)))
 	}
-
-	_ = ctx // Unused but required for span context
 }
 
 // cleanupOldReadings removes readings older than 5 minutes
@@ -313,8 +311,8 @@ func (rb *RingBuffer) GetAll() []*Reading {
 // GetAllAndClear atomically returns all buffered readings and clears the buffer
 // This prevents race conditions where data is added between GetAll() and Clear()
 // The returned slice is a copy, so it's safe to use after the call
-func (rb *RingBuffer) GetAllAndClear() []*Reading {
-	ctx, span := rb.tracer.Start(context.Background(), "buffer.GetAllAndClear")
+func (rb *RingBuffer) GetAllAndClear(ctx context.Context) []*Reading {
+	ctx, span := rb.tracer.Start(ctx, "buffer.GetAllAndClear")
 	defer span.End()
 
 	rb.mu.Lock()
@@ -356,7 +354,6 @@ func (rb *RingBuffer) GetAllAndClear() []*Reading {
 		attribute.Int("weighted_avg_count", typeCounts[ReadingTypeBLEWeightedAvg]),
 	)
 
-	_ = ctx // Unused but required for span context
 	return result
 }
 
@@ -364,8 +361,8 @@ func (rb *RingBuffer) GetAllAndClear() []*Reading {
 // This is a non-destructive read that doesn't clear the buffer
 // startTime and endTime should be time.Time values
 // Returns readings where reading.Timestamp >= startTime AND reading.Timestamp <= endTime
-func (rb *RingBuffer) GetReadingsByTimeWindow(startTime, endTime interface{}) []*Reading {
-	ctx, span := rb.tracer.Start(context.Background(), "buffer.GetReadingsByTimeWindow")
+func (rb *RingBuffer) GetReadingsByTimeWindow(ctx context.Context, startTime, endTime interface{}) []*Reading {
+	ctx, span := rb.tracer.Start(ctx, "buffer.GetReadingsByTimeWindow")
 	defer span.End()
 
 	rb.mu.RLock()
@@ -434,7 +431,6 @@ func (rb *RingBuffer) GetReadingsByTimeWindow(startTime, endTime interface{}) []
 		attribute.Int("weighted_avg_count", typeCounts[ReadingTypeBLEWeightedAvg]),
 	)
 
-	_ = ctx // Unused but required for span context
 	return result
 }
 

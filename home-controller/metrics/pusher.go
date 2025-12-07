@@ -69,7 +69,7 @@ func (p *Pusher) pushMetrics() {
 	defer span.End()
 
 	// Get all readings and clear buffer atomically
-	readings := p.buffer.GetAllAndClear()
+	readings := p.buffer.GetAllAndClear(ctx)
 	if len(readings) == 0 {
 		p.logger.Debug("no readings to push",
 			zap.String("trace_id", span.SpanContext().TraceID().String()),

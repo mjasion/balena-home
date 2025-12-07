@@ -156,12 +156,13 @@ func TestWeightedAverageTemperature(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
 			// Clear buffer
-			controlBuffer.GetAllAndClear()
+			controlBuffer.GetAllAndClear(ctx)
 
 			// Add readings
 			for _, r := range tt.readings {
-				controlBuffer.Add(&buffer.Reading{
+				controlBuffer.Add(ctx, &buffer.Reading{
 					Type: buffer.ReadingTypeBLE,
 					BLE: &buffer.SensorReading{
 						Timestamp:          r.timestamp,
@@ -207,10 +208,11 @@ func TestWeightedAverageWithVaryingFrequencies(t *testing.T) {
 
 	now := time.Now()
 	sensorMAC := "AA:BB:CC:DD:EE:FF"
+	ctx := context.Background()
 
 	// Add many old readings at 19.0°C (1 reading per second for 50 seconds, excluding last 10 seconds)
 	for i := 60; i >= 10; i-- {
-		controlBuffer.Add(&buffer.Reading{
+		controlBuffer.Add(ctx, &buffer.Reading{
 			Type: buffer.ReadingTypeBLE,
 			BLE: &buffer.SensorReading{
 				Timestamp:          now.Add(-time.Duration(i) * time.Second),
@@ -222,7 +224,7 @@ func TestWeightedAverageWithVaryingFrequencies(t *testing.T) {
 
 	// Add many recent readings at 21.0°C (last 10 seconds, 1 per second)
 	for i := 9; i >= 0; i-- {
-		controlBuffer.Add(&buffer.Reading{
+		controlBuffer.Add(ctx, &buffer.Reading{
 			Type: buffer.ReadingTypeBLE,
 			BLE: &buffer.SensorReading{
 				Timestamp:          now.Add(-time.Duration(i) * time.Second),
@@ -411,9 +413,10 @@ func TestBufferIsolation(t *testing.T) {
 
 	now := time.Now()
 	sensorMAC := "AA:BB:CC:DD:EE:FF"
+	ctx := context.Background()
 
 	// Add reading to control buffer
-	controlBuffer.Add(&buffer.Reading{
+	controlBuffer.Add(ctx, &buffer.Reading{
 		Type: buffer.ReadingTypeBLE,
 		BLE: &buffer.SensorReading{
 			Timestamp:          now,
@@ -428,7 +431,7 @@ func TestBufferIsolation(t *testing.T) {
 	}
 
 	// Clear metrics buffer (should not affect control buffer)
-	metricsBuffer.GetAllAndClear()
+	metricsBuffer.GetAllAndClear(ctx)
 
 	// Verify control buffer still has 1 reading
 	if controlBuffer.Size() != 1 {
@@ -478,7 +481,8 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 
 	// Add sensor reading: Xiaomi shows 23.5°C (below 24°C target)
 	now := time.Now()
-	controlBuffer.Add(&buffer.Reading{
+	ctx := context.Background()
+	controlBuffer.Add(ctx, &buffer.Reading{
 		Type: buffer.ReadingTypeBLE,
 		BLE: &buffer.SensorReading{
 			Timestamp:          now,
