@@ -86,7 +86,9 @@ services:
       - DD_PROCESS_AGENT_ENABLED=false
     ports:
       - "8126:8126"   # APM trace agent
-      # OTLP ports not exposed - alloy forwards traces to datadog-agent internally
+    expose:
+      - "4317"  # OTLP gRPC - internal only for Alloy
+      - "4318"  # OTLP HTTP - internal only for Alloy
     labels:
       io.balena.features.balena-socket: '1'
 
