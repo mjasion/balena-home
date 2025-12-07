@@ -82,11 +82,6 @@ services:
       - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
       # Disable process agent (requires /proc mounts we don't have in Balena)
       - DD_PROCESS_CONFIG_PROCESS_COLLECTION_ENABLED=false
-    volumes:
-      # Docker socket for container discovery and log collection
-      - /var/run/balena-engine.sock:/var/run/docker.sock:ro
-      # For container logs
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
     ports:
       - "8126:8126"   # APM trace agent
       # OTLP ports not exposed - alloy forwards traces to datadog-agent internally
