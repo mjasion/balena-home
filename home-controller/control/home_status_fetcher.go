@@ -2,8 +2,10 @@ package control
 
 import (
 	"context"
+	"strings"
 	"time"
 
+	"github.com/mjasion/balena-home/thermostats/buffer"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -100,7 +102,7 @@ func (m *MetricJob) Run(ctx context.Context) {
 		zap.Int("mapping_count", len(m.controller.config.Mappings)),
 	)
 
-	xiaomiPushedCount := m.controller.calculateAndPushXiaomiAverages(ctx)
+	xiaomiPushedCount := m.calculateAndPushXiaomiAverages(ctx)
 
 	span.SetAttributes(attribute.Int("xiaomi_averages_pushed", xiaomiPushedCount))
 
@@ -118,6 +120,88 @@ func (m *MetricJob) Run(ctx context.Context) {
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 		zap.Int("xiaomi_averages", xiaomiPushedCount),
 	)
+}
+
+// calculateAndPushXiaomiAverages calculates weighted averages for all configured Xiaomi sensors
+// and pushes them to metrics buffer for Prometheus export
+func (m *MetricJob) calculateAndPushXiaomiAverages(ctx context.Context) int {
+	ctx, span := m.tracer.Start(ctx, "calculate_and_push_xiaomi_averages",
+		trace.WithAttributes(
+			attribute.Int("mapping_count", len(m.controller.config.Mappings)),
+		),
+	)
+	defer span.End()
+
+	timestamp := time.Now()
+	pushedCount := 0
+
+	// Process each room mapping to calculate weighted average for its sensor
+	processedSensors := make(map[string]bool) // Track which sensors we've already processed
+
+	for _, mapping := range m.controller.config.Mappings {
+		sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
+
+		// Skip if we've already processed this sensor (same sensor might be used in multiple rooms)
+		if processedSensors[sensorMAC] {
+			continue
+		}
+		processedSensors[sensorMAC] = true
+
+		// Calculate weighted average temperature using controller's method
+		xiaomiTemp, err := m.controller.getWeightedAverageTemperature(ctx, sensorMAC)
+		if err != nil {
+			m.logger.Debug("skipping Xiaomi average for sensor (no data available)",
+				zap.String("sensor_mac", sensorMAC),
+				zap.String("room_name", mapping.RoomName),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		// Get reading count from control buffer for this sensor
+		now := time.Now()
+		cutoff := now.Add(-60 * time.Second)
+		readings := m.controller.controlBuffer.GetReadingsByTimeWindow(ctx, cutoff, now)
+		readingCount := 0
+		for _, reading := range readings {
+			if reading.Type == buffer.ReadingTypeBLE && reading.BLE != nil {
+				if strings.ToUpper(reading.BLE.MAC) == sensorMAC {
+					readingCount++
+				}
+			}
+		}
+
+		// Create weighted average reading
+		weightedAvgReading := &buffer.Reading{
+			Type: buffer.ReadingTypeBLEWeightedAvg,
+			WeightedAvg: &buffer.WeightedAvgReading{
+				Timestamp:          timestamp,
+				MAC:                sensorMAC,
+				RoomName:           mapping.RoomName,
+				SensorID:           0, // We don't have sensor ID in mapping, set to 0
+				TemperatureCelsius: xiaomiTemp,
+				ReadingCount:       readingCount,
+			},
+		}
+
+		m.controller.metricsBuffer.Add(ctx, weightedAvgReading)
+		pushedCount++
+
+		m.logger.Debug("pushed Xiaomi weighted average to metrics buffer",
+			zap.String("sensor_mac", sensorMAC),
+			zap.String("room_name", mapping.RoomName),
+			zap.Float64("weighted_avg", xiaomiTemp),
+			zap.Int("reading_count", readingCount),
+		)
+	}
+
+	span.SetAttributes(attribute.Int("pushed_count", pushedCount))
+
+	m.logger.Debug("finished calculating and pushing Xiaomi weighted averages",
+		zap.Int("total_pushed", pushedCount),
+	)
+
+	return pushedCount
 }
 
 // Deprecated: HomeStatusFetcher - Use MetricJob instead
