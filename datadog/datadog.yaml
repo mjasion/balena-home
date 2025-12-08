@@ -1,0 +1,75 @@
+## Datadog Agent Main Configuration
+## This file supplements environment variables for Balena-specific settings
+
+## ================================================================================
+## Log Collection Configuration
+## ================================================================================
+
+logs_enabled: true
+
+## Collect logs from all Docker containers via Balena Engine socket
+logs_config:
+  container_collect_all: true
+
+  ## Use DOCKER_HOST from environment (set to unix:///var/run/balena-engine.sock)
+  ## No need to specify docker_container_use_labels here as it's automatic
+
+  ## Process multiline logs
+  auto_multi_line_detection: true
+
+## ================================================================================
+## Docker Integration Configuration
+## ================================================================================
+
+## Extract tags from Docker labels for both logs and metrics
+docker_labels_as_tags:
+  "com.datadoghq.tags.service": "service"
+  "com.datadoghq.tags.env": "env"
+  "io.balena.service.name": "balena_service"
+
+## Container filtering
+ac_exclude:
+  - "name:datadog-agent"
+
+container_exclude:
+  - "name:datadog-agent"
+
+## ================================================================================
+## Autodiscovery Configuration
+## ================================================================================
+
+## Enable Autodiscovery for Docker containers
+listeners:
+  - name: docker
+
+config_providers:
+  - name: docker
+    polling: true
+
+## ================================================================================
+## APM / Tracing Configuration
+## ================================================================================
+
+apm_config:
+  enabled: true
+  apm_non_local_traffic: true
+
+  ## OTLP receivers (configured via environment variables)
+  ## DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_ENDPOINT=0.0.0.0:14317
+  ## DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_HTTP_ENDPOINT=0.0.0.0:14318
+
+## ================================================================================
+## DogStatsD Configuration
+## ================================================================================
+
+dogstatsd_non_local_traffic: true
+
+## ================================================================================
+## Process and System Probe (Disabled for Balena)
+## ================================================================================
+
+## Process agent disabled - doesn't work without /host/proc on Balena
+## Set via DD_PROCESS_AGENT_ENABLED=false in docker-compose.yml
+
+## System probe disabled - doesn't work without /host/proc on Balena
+## Set via DD_SYSTEM_PROBE_ENABLED=false in docker-compose.yml
