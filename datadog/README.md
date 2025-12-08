@@ -163,8 +163,10 @@ environment:
   - DD_LOGS_ENABLED=true                              # Enable log collection
   - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true         # Collect from all containers
   - DD_CONTAINER_EXCLUDE="name:datadog-agent"         # Exclude agent itself
-  - DD_LOGS_CONFIG_DOCKER_LABELS_AS_TAGS='{"com.datadoghq.tags.service":"service",...}'
+  - DD_DOCKER_LABELS_AS_TAGS='{"com.datadoghq.tags.service":"service",...}'  # Extract tags from labels
 ```
+
+**Note**: The `DD_DOCKER_LABELS_AS_TAGS` environment variable applies to both logs and metrics, automatically extracting tags from Docker container labels.
 
 **Per-Service Configuration via Docker Labels**:
 Services can add custom log configuration via Docker labels:

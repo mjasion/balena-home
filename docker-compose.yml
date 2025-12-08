@@ -77,7 +77,6 @@ services:
       - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true
       - DD_CONTAINER_EXCLUDE="name:datadog-agent"
       - DD_AC_EXCLUDE="name:datadog-agent"
-      - DD_LOGS_CONFIG_DOCKER_LABELS_AS_TAGS='{"com.datadoghq.tags.service":"service","com.datadoghq.tags.env":"env","io.balena.service.name":"balena_service"}'
       # APM / Traces
       - DD_APM_ENABLED=true
       - DD_APM_NON_LOCAL_TRAFFIC=true
@@ -85,7 +84,7 @@ services:
       - DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_HTTP_ENDPOINT=0.0.0.0:14318
       # DogStatsD
       - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
-      # Docker metrics
+      # Docker labels as tags (applies to both logs and metrics)
       - DD_DOCKER_LABELS_AS_TAGS='{"com.datadoghq.tags.service":"service","com.datadoghq.tags.env":"env","io.balena.service.name":"balena_service"}'
       # Completely disable process-agent (doesn't work without /proc mount on Balena)
       - DD_PROCESS_AGENT_ENABLED=false
