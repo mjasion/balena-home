@@ -5,9 +5,10 @@ This directory contains Datadog Agent configuration for monitoring the home auto
 ## Overview
 
 The Datadog Agent is configured to:
-- **Collect logs** from all Docker containers
+- **Collect logs** from all Docker containers via Balena socket
 - **Receive traces** via OpenTelemetry Protocol (OTLP)
-- **Monitor container performance** (CPU, memory, network)
+- **Monitor Docker containers** (CPU, memory, network, I/O) via Docker integration
+- **Collect Docker events** (container start, stop, die, etc.)
 - **Ship telemetry** to Datadog cloud
 
 ## Dual Telemetry Architecture
@@ -70,12 +71,26 @@ See `.env.example` in the root directory for a complete list of required environ
 ```
 datadog/
 ├── README.md                           # This file
+├── Dockerfile                          # Datadog Agent container
 └── conf.d/                             # Check configurations
+    ├── docker.d/
+    │   └── conf.yaml                   # Docker integration (container metrics)
     └── openmetrics.d/
-        └── conf.yaml                   # Prometheus metrics scraping
+        └── conf.yaml                   # Prometheus metrics scraping (optional)
 ```
 
-### OpenMetrics Configuration
+### Docker Integration Configuration
+
+The `conf.d/docker.d/conf.yaml` file enables Docker monitoring on Balena:
+
+- **Socket**: `unix:///var/run/balena-engine.sock` (via `io.balena.features.balena-socket` label)
+- **Metrics**: Container CPU, memory, network, I/O, disk, exit codes
+- **Events**: Container lifecycle events (start, stop, die, etc.)
+- **Interval**: 15 seconds
+- **Filtering**: Excludes `datadog-agent` itself
+- **Tags**: Automatic extraction from Docker labels (`com.datadoghq.tags.*`, `io.balena.service.name`)
+
+### OpenMetrics Configuration (Optional)
 
 The `conf.d/openmetrics.d/conf.yaml` file configures Prometheus metrics scraping:
 
@@ -83,6 +98,37 @@ The `conf.d/openmetrics.d/conf.yaml` file configures Prometheus metrics scraping
 - **Namespace**: `home_automation` (prefixed to all metrics)
 - **Interval**: 10 seconds
 - **Tags**: `service:alloy`, `env:production`
+- **Status**: Currently disabled (can be enabled by uncommenting)
+
+## Balena-Specific Configuration
+
+### Docker Socket Access
+
+On Balena, the Docker socket is accessed via the Balena Engine socket at `/var/run/balena-engine.sock`. This is configured using:
+
+1. **Label in docker-compose.yml**:
+   ```yaml
+   labels:
+     io.balena.features.balena-socket: '1'
+   ```
+   This automatically mounts the Balena socket into the container.
+
+2. **Environment variable**:
+   ```yaml
+   environment:
+     - DOCKER_HOST=unix:///var/run/balena-engine.sock
+   ```
+   This tells the Datadog Agent where to find the Docker socket.
+
+**Important**: Balena has restrictions on volume mounts. Instead of manually mounting `/var/run/docker.sock`, use the `io.balena.features.balena-socket` label which handles socket access properly on Balena devices.
+
+### Why Host Network Mode?
+
+The Datadog Agent uses `network_mode: host` to:
+- Access the Balena Engine socket on the host
+- Receive OTLP traces from Alloy on localhost:14317/14318
+- Monitor host-level network metrics
+- Avoid network namespace isolation issues
 
 ## How It Works
 
@@ -105,12 +151,22 @@ This architecture provides:
 
 ### Log Collection
 
-Logs are automatically collected from all containers via Docker socket:
-- **Source**: `/var/lib/docker/containers` (mounted read-only)
-- **Processing**: Datadog Agent parses JSON logs
-- **Tagging**: Automatic container, image, and service tags
+Logs are automatically collected from all containers via Balena Engine socket:
+- **Source**: Balena Engine API via `/var/run/balena-engine.sock`
+- **Processing**: Datadog Agent parses container stdout/stderr
+- **Tagging**: Automatic extraction from Docker labels
 - **Filtering**: Excludes `datadog-agent` container itself
 
+**Configuration via Environment Variables**:
+```yaml
+environment:
+  - DD_LOGS_ENABLED=true                              # Enable log collection
+  - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true         # Collect from all containers
+  - DD_CONTAINER_EXCLUDE="name:datadog-agent"         # Exclude agent itself
+  - DD_LOGS_CONFIG_DOCKER_LABELS_AS_TAGS='{"com.datadoghq.tags.service":"service",...}'
+```
+
+**Per-Service Configuration via Docker Labels**:
 Services can add custom log configuration via Docker labels:
 ```yaml
 labels:
@@ -125,6 +181,32 @@ home-controller:
     com.datadoghq.ad.logs: '[{"source": "home-controller", "service": "home-controller"}]'
     com.datadoghq.ad.tags: '["env:production", "service:home-automation"]'
 ```
+
+### Docker Integration (Container Metrics)
+
+The Docker integration monitors container performance metrics:
+
+**What's Collected**:
+- **Container metrics**: CPU, memory, network, I/O per container
+- **Container counts**: Number of running/stopped containers
+- **Image stats**: Image sizes, count
+- **Volume stats**: Volume count and usage
+- **Disk stats**: Container disk usage
+- **Exit codes**: Container exit status codes
+- **Events**: Container lifecycle events (start, stop, die, kill, etc.)
+
+**Configuration**:
+- **File**: `conf.d/docker.d/conf.yaml`
+- **Socket**: `unix:///var/run/balena-engine.sock` (via `DOCKER_HOST` env var)
+- **Interval**: 15 seconds
+- **Label extraction**: Automatic tagging from `com.datadoghq.tags.*` and `io.balena.service.name` labels
+
+**Tags Applied**:
+All Docker metrics are tagged with:
+- `env:production`
+- `platform:balena`
+- `device:balena-home`
+- Container-specific labels (service, env, balena_service)
 
 ### Metrics Collection (Optional - Currently Disabled)
 
@@ -207,6 +289,27 @@ docker exec datadog-agent agent check openmetrics
 ### Verify Metrics Endpoint
 ```bash
 curl http://grafana-alloy:12345/metrics
+```
+
+### Test Docker Integration
+```bash
+# Check Docker integration status
+docker exec datadog-agent agent check docker
+
+# Verify Docker socket access
+docker exec datadog-agent ls -la /var/run/balena-engine.sock
+
+# Check DOCKER_HOST environment variable
+docker exec datadog-agent env | grep DOCKER_HOST
+```
+
+### Check Log Collection
+```bash
+# View log agent status
+docker exec datadog-agent agent status | grep -A 20 "Logs Agent"
+
+# Check which containers are being monitored
+docker exec datadog-agent agent status | grep -A 50 "Log Sources"
 ```
 
 ## Security Notes
