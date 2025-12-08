@@ -78,27 +78,55 @@ otelcol.receiver.otlp "default" {
   }
 
   output {
+    traces = [otelcol.processor.batch.default.input]
+  }
+}
+
+// Batch processor to reduce request frequency and improve throughput
+otelcol.processor.batch "default" {
+  // Send batches every 10 seconds or when 8192 spans are collected
+  timeout = "10s"
+  send_batch_size = 8192
+  send_batch_max_size = 10000
+
+  output {
     traces = [
+      otelcol.exporter.otlphttp.grafana_cloud.input,
       otelcol.exporter.otlp.datadog.input,
-      // otelcol.exporter.otlp.grafana_cloud.input,
     ]
   }
 }
 
-// Export traces to Datadog Agent
+// Export traces to Datadog Agent (gRPC)
+// Note: Both alloy and datadog-agent use network_mode: host
+// DataDog listens on ports 14317/14318 to avoid conflict with Alloy's receivers (4317/4318)
 otelcol.exporter.otlp "datadog" {
   client {
-    endpoint = "datadog-agent:4317"
+    endpoint = "localhost:14317"
     tls {
       insecure = true
     }
   }
+
+  // Retry and queue configuration to handle backpressure
+  sending_queue {
+    enabled = true
+    num_consumers = 10
+    queue_size = 5000
+  }
+
+  retry_on_failure {
+    enabled = true
+    initial_interval = "1s"
+    max_interval = "30s"
+    max_elapsed_time = "5m"
+  }
 }
 
-// Export traces to Grafana Cloud
-otelcol.exporter.otlp "grafana_cloud" {
+// Export traces to Grafana Cloud (HTTP)
+otelcol.exporter.otlphttp "grafana_cloud" {
   client {
-    endpoint = sys.env("GRAFANA_CLOUD_OTLP_ENDPOINT")
+    endpoint = "https://otlp-gateway-prod-us-central-0.grafana.net/otlp"
     auth = otelcol.auth.basic.grafana_cloud.handler
   }
 }

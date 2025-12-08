@@ -46,6 +46,7 @@ services:
     build: alloy
     container_name: grafana-alloy
     restart: unless-stopped
+    network_mode: host
     environment:
       # Grafana Cloud - unified credentials
       - GRAFANA_CLOUD_API_KEY=${GRAFANA_CLOUD_API_KEY}
@@ -55,21 +56,20 @@ services:
       # Loki (logs)
       - GRAFANA_CLOUD_LOKI_URL=${GRAFANA_CLOUD_LOKI_URL}
       - GRAFANA_CLOUD_LOKI_USERNAME=${GRAFANA_CLOUD_LOKI_USERNAME}
-    ports:
-      - "12345:12345"  # Alloy UI/metrics
-      - "4317:4317"    # OTLP gRPC receiver
-      - "4318:4318"    # OTLP HTTP receiver
     labels:
       io.balena.features.balena-socket: '1'
   datadog-agent:
     build: datadog
     container_name: datadog-agent
     restart: unless-stopped
+    hostname: balena-home
+    privileged: true
+    pid: host
+    network_mode: host
     environment:
       - DD_API_KEY=${DD_API_KEY}
       - DD_SITE=${DD_SITE:-datadoghq.com}
-      # Docker integration - use DOCKER_HOST from Balena socket
-      - DOCKER_HOST=${DOCKER_HOST}
+      - DD_HOSTNAME=balena-home3
       # Logs
       - DD_LOGS_ENABLED=true
       - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true
@@ -78,17 +78,13 @@ services:
       # APM / Traces
       - DD_APM_ENABLED=true
       - DD_APM_NON_LOCAL_TRAFFIC=true
-      - DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_ENDPOINT=0.0.0.0:4317
-      - DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_HTTP_ENDPOINT=0.0.0.0:4318
+      - DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_ENDPOINT=0.0.0.0:14317
+      - DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_HTTP_ENDPOINT=0.0.0.0:14318
       # DogStatsD
       - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
-      # Disable process agent (requires /proc mounts we don't have in Balena)
+      # Completely disable process-agent (doesn't work without /proc mount on Balena)
       - DD_PROCESS_AGENT_ENABLED=false
-    ports:
-      - "8126:8126"   # APM trace agent
-    expose:
-      - "4317"  # OTLP gRPC - internal only for Alloy
-      - "4318"  # OTLP HTTP - internal only for Alloy
+      - DD_SYSTEM_PROBE_ENABLED=false
     labels:
       io.balena.features.balena-socket: '1'
 
