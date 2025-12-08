@@ -94,13 +94,29 @@ func (m *MetricJob) Run(ctx context.Context) {
 
 	m.controller.addToMetricsBuffer(ctx, homeStatus)
 
+	// Calculate and push Xiaomi weighted averages to metrics buffer
+	m.logger.Debug("metric job - calculating and pushing Xiaomi weighted averages",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("mapping_count", len(m.controller.config.Mappings)),
+	)
+
+	xiaomiPushedCount := m.controller.calculateAndPushXiaomiAverages(ctx)
+
+	span.SetAttributes(attribute.Int("xiaomi_averages_pushed", xiaomiPushedCount))
+
+	m.logger.Debug("metric job - Xiaomi weighted averages pushed",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("count", xiaomiPushedCount),
+	)
+
 	totalDuration := time.Since(fetchStart)
 	span.SetAttributes(attribute.Int64("total_duration_ms", totalDuration.Milliseconds()))
 
-	m.logger.Info("metric job completed - home status stored and metrics pushed",
+	m.logger.Info("metric job completed - home status stored, Netatmo metrics and Xiaomi averages pushed",
 		zap.String("trace_id", traceID),
 		zap.Duration("total_duration", totalDuration),
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
+		zap.Int("xiaomi_averages", xiaomiPushedCount),
 	)
 }
 

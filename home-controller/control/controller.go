@@ -165,6 +165,88 @@ func (c *Controller) initializeRoomIDs(ctx context.Context) error {
 	return nil
 }
 
+// calculateAndPushXiaomiAverages calculates weighted averages for all configured Xiaomi sensors
+// and pushes them to metrics buffer for Prometheus export
+func (c *Controller) calculateAndPushXiaomiAverages(ctx context.Context) int {
+	ctx, span := c.tracer.Start(ctx, "calculate_and_push_xiaomi_averages",
+		trace.WithAttributes(
+			attribute.Int("mapping_count", len(c.config.Mappings)),
+		),
+	)
+	defer span.End()
+
+	timestamp := time.Now()
+	pushedCount := 0
+
+	// Process each room mapping to calculate weighted average for its sensor
+	processedSensors := make(map[string]bool) // Track which sensors we've already processed
+
+	for _, mapping := range c.config.Mappings {
+		sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
+
+		// Skip if we've already processed this sensor (same sensor might be used in multiple rooms)
+		if processedSensors[sensorMAC] {
+			continue
+		}
+		processedSensors[sensorMAC] = true
+
+		// Calculate weighted average temperature
+		xiaomiTemp, err := c.getWeightedAverageTemperature(ctx, sensorMAC)
+		if err != nil {
+			c.logger.Debug("skipping Xiaomi average for sensor (no data available)",
+				zap.String("sensor_mac", sensorMAC),
+				zap.String("room_name", mapping.RoomName),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		// Get reading count from control buffer for this sensor
+		now := time.Now()
+		cutoff := now.Add(-60 * time.Second)
+		readings := c.controlBuffer.GetReadingsByTimeWindow(ctx, cutoff, now)
+		readingCount := 0
+		for _, reading := range readings {
+			if reading.Type == buffer.ReadingTypeBLE && reading.BLE != nil {
+				if strings.ToUpper(reading.BLE.MAC) == sensorMAC {
+					readingCount++
+				}
+			}
+		}
+
+		// Create weighted average reading
+		weightedAvgReading := &buffer.Reading{
+			Type: buffer.ReadingTypeBLEWeightedAvg,
+			WeightedAvg: &buffer.WeightedAvgReading{
+				Timestamp:          timestamp,
+				MAC:                sensorMAC,
+				RoomName:           mapping.RoomName,
+				SensorID:           0, // We don't have sensor ID in mapping, set to 0
+				TemperatureCelsius: xiaomiTemp,
+				ReadingCount:       readingCount,
+			},
+		}
+
+		c.metricsBuffer.Add(ctx, weightedAvgReading)
+		pushedCount++
+
+		c.logger.Debug("pushed Xiaomi weighted average to metrics buffer",
+			zap.String("sensor_mac", sensorMAC),
+			zap.String("room_name", mapping.RoomName),
+			zap.Float64("weighted_avg", xiaomiTemp),
+			zap.Int("reading_count", readingCount),
+		)
+	}
+
+	span.SetAttributes(attribute.Int("pushed_count", pushedCount))
+
+	c.logger.Debug("finished calculating and pushing Xiaomi weighted averages",
+		zap.Int("total_pushed", pushedCount),
+	)
+
+	return pushedCount
+}
+
 // addToMetricsBuffer converts Netatmo home status to buffer readings and adds them
 // Runs in a goroutine to avoid blocking control loop
 func (c *Controller) addToMetricsBuffer(ctx context.Context, homeStatus *netatmo.HomeStatusResponse) {
@@ -483,9 +565,7 @@ func (c *Controller) processRoomsConcurrently(ctx context.Context, initialRoomSt
 			}
 			mu.Unlock()
 
-			// Push metrics and execute decision
-			hardOverrideActive := c.isHardOverrideActive(m.RoomName)
-			c.pushControlMetrics(ctx, decision, hardOverrideActive, false)
+			// Execute decision
 			c.executeDecision(ctx, decision)
 
 			c.logger.Debug("room processing completed",
