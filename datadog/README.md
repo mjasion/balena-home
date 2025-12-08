@@ -72,12 +72,24 @@ See `.env.example` in the root directory for a complete list of required environ
 datadog/
 ├── README.md                           # This file
 ├── Dockerfile                          # Datadog Agent container
+├── datadog.yaml                        # Main agent configuration
 └── conf.d/                             # Check configurations
     ├── docker.d/
     │   └── conf.yaml                   # Docker integration (container metrics)
     └── openmetrics.d/
         └── conf.yaml                   # Prometheus metrics scraping (optional)
 ```
+
+### Main Configuration File
+
+The `datadog.yaml` file contains the core agent configuration:
+- **Log collection**: Enables `logs_enabled` and `container_collect_all`
+- **Autodiscovery**: Configures Docker listener and config provider
+- **Label extraction**: Automatic tagging from Docker labels
+- **APM/Traces**: Enables OTLP receivers
+- **Filtering**: Excludes datadog-agent from monitoring
+
+This file is copied into `/etc/datadog-agent/datadog.yaml` in the container and works alongside environment variables from `docker-compose.yml`.
 
 ### Docker Integration Configuration
 
