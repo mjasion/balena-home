@@ -1,4 +1,4 @@
-FROM public.ecr.aws/datadog/agent:7.72.4
+FROM public.ecr.aws/datadog/agent:7.73.0
 
 # Copy custom Datadog configuration
 COPY conf.d /etc/datadog-agent/conf.d
