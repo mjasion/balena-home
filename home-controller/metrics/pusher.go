@@ -899,15 +899,11 @@ func (p *Pusher) buildWeightedAvgTimeSeries(readings []*buffer.WeightedAvgReadin
 	// Build time series for each sensor
 	var timeSeries []prompb.TimeSeries
 	for key, sensorData := range sensorReadings {
-		// Create base labels for this sensor
+		// Create base labels for this sensor (without sensor_id)
 		baseLabels := []prompb.Label{
 			{
 				Name:  "room_name",
 				Value: key.name,
-			},
-			{
-				Name:  "sensor_id",
-				Value: fmt.Sprintf("%d", key.id),
 			},
 			{
 				Name:  "mac",

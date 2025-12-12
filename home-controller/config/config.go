@@ -107,12 +107,13 @@ type ThermostatControlConfig struct {
 	MaxSetpointCelsius      float64             `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
 	Mappings                []ThermostatMapping `yaml:"mappings"`
 	HardOverrides           []HardOverride      `yaml:"hardOverrides"`
-	MetricJobCron           string              `yaml:"metricJobCron" env:"METRIC_JOB_CRON" env-default:"0 * * * * *"`              // Cron expression for metric job (runs every minute at :00)
-	MetricJobEnabled        bool                `yaml:"metricJobEnabled" env:"METRIC_JOB_ENABLED" env-default:"false"`               // Enable/disable metric job cron
-	ControlJobCron          string              `yaml:"controlJobCron" env:"CONTROL_JOB_CRON" env-default:"5 0,15,30,45 * * * *"`   // Cron expression for control job (runs every 15 min at :05/:20/:35/:50, 5 seconds after metric job)
-	ControlJobEnabled       bool                `yaml:"controlJobEnabled" env:"CONTROL_JOB_ENABLED" env-default:"false"`             // Enable/disable control job cron
-	HardOverrideJobCron     string              `yaml:"hardOverrideJobCron" env:"HARD_OVERRIDE_JOB_CRON" env-default:"0 * * * * *"` // Cron expression for hard override job (runs every minute at :00)
-	HardOverrideJobEnabled  bool                `yaml:"hardOverrideJobEnabled" env:"HARD_OVERRIDE_JOB_ENABLED" env-default:"false"`  // Enable/disable hard override job cron
+	MetricJobCron           string              `yaml:"metricJobCron" env:"METRIC_JOB_CRON" env-default:"0 * * * * *"`                   // Cron expression for metric job (runs every minute at :00)
+	MetricJobEnabled        bool                `yaml:"metricJobEnabled" env:"METRIC_JOB_ENABLED" env-default:"false"`                   // Enable/disable metric job cron
+	ControlJobCron          string              `yaml:"controlJobCron" env:"CONTROL_JOB_CRON" env-default:"5 0,15,30,45 * * * *"`        // Cron expression for control job (runs every 15 min at :05/:20/:35/:50, 5 seconds after metric job)
+	ControlJobEnabled       bool                `yaml:"controlJobEnabled" env:"CONTROL_JOB_ENABLED" env-default:"false"`                 // Enable/disable control job cron
+	HardOverrideJobCron     string              `yaml:"hardOverrideJobCron" env:"HARD_OVERRIDE_JOB_CRON" env-default:"0 * * * * *"`      // Cron expression for hard override job (runs every minute at :00)
+	HardOverrideJobEnabled  bool                `yaml:"hardOverrideJobEnabled" env:"HARD_OVERRIDE_JOB_ENABLED" env-default:"false"`      // Enable/disable hard override job cron
+	XiaomiAverageJobCron    string              `yaml:"xiaomiAverageJobCron" env:"XIAOMI_AVERAGE_JOB_CRON" env-default:"*/30 * * * * *"` // Cron expression for Xiaomi average job (runs every minute at :00, always enabled)
 }
 
 // ThermostatMapping maps a Netatmo room to a Xiaomi sensor

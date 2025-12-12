@@ -28,6 +28,9 @@ func (c *Controller) executeDecision(ctx context.Context, decision ControlDecisi
 		zap.String("reason", decision.Reason),
 	)
 
+	// Push control metrics to Prometheus
+	c.pushControlMetrics(ctx, decision, false, false)
+
 	if decision.Action == "skip" || decision.Action == "no_adjustment_needed" {
 		c.logDecision(span, decision)
 		return

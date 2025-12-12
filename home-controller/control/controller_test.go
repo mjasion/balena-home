@@ -19,7 +19,6 @@ func TestControllerConstructor(t *testing.T) {
 	metricsBuffer := buffer.New(100, logger)
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled:                 true,
 		TemperatureThreshold:    0.2,
 		MetricJobCron:           "0 * * * * *",
 		ControlJobCron:          "0 0,15,30,45 * * * *",
@@ -85,7 +84,6 @@ func TestWeightedAverageTemperature(t *testing.T) {
 	metricsBuffer := buffer.New(100, logger)
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled:                 true,
 		TemperatureThreshold:    0.2,
 		MetricJobCron:           "0 * * * * *",
 		ControlJobCron:          "0 0,15,30,45 * * * *",
@@ -199,9 +197,7 @@ func TestWeightedAverageWithVaryingFrequencies(t *testing.T) {
 	controlBuffer := buffer.New(1000, logger)
 	metricsBuffer := buffer.New(100, logger)
 
-	cfg := &config.ThermostatControlConfig{
-		Enabled: true,
-	}
+	cfg := &config.ThermostatControlConfig{}
 
 	sharedHomeStatus := NewSharedHomeStatus()
 	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, sharedHomeStatus)
@@ -261,7 +257,6 @@ func TestHardOverrideDetection(t *testing.T) {
 	currentTimeStr := now.Format("15:04")
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled: true,
 		HardOverrides: []config.HardOverride{
 			{
 				RoomName: "Living Room",
@@ -342,9 +337,7 @@ func TestHardOverrideDetection(t *testing.T) {
 func TestControllerWithNilBuffers(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
-	cfg := &config.ThermostatControlConfig{
-		Enabled: true,
-	}
+	cfg := &config.ThermostatControlConfig{}
 
 	// Create controller with nil buffers (should not crash during construction)
 	sharedHomeStatus := NewSharedHomeStatus()
@@ -367,7 +360,6 @@ func TestStartWithCancelledContext(t *testing.T) {
 	metricsBuffer := buffer.New(100, logger)
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled:             true,
 		MetricJobCron:       "0 * * * * *",
 		ControlJobCron:      "0 0,15,30,45 * * * *",
 		HardOverrideJobCron: "0 * * * * *",
@@ -404,9 +396,7 @@ func TestBufferIsolation(t *testing.T) {
 	controlBuffer := buffer.New(100, logger)
 	metricsBuffer := buffer.New(100, logger)
 
-	cfg := &config.ThermostatControlConfig{
-		Enabled: true,
-	}
+	cfg := &config.ThermostatControlConfig{}
 
 	sharedHomeStatus := NewSharedHomeStatus()
 	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, sharedHomeStatus)
@@ -457,7 +447,6 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 	metricsBuffer := buffer.New(100, logger)
 
 	cfg := &config.ThermostatControlConfig{
-		Enabled:                 true,
 		TemperatureThreshold:    0.3, // Low threshold to trigger action
 		MetricJobCron:           "0 * * * * *",
 		ControlJobCron:          "0 0,15,30,45 * * * *",
