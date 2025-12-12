@@ -115,6 +115,9 @@ func (c *Controller) evaluateRoom(
 		zap.Float64("thermostat_measured", decision.ThermostatMeasured),
 	)
 
+	// Push Xiaomi temperature metric immediately after fetching
+	c.pushXiaomiTemperatureMetric(ctx, mapping.RoomName, xiaomiTemp)
+
 	// Check if this is a human override (duration >= 60 minutes)
 	if c.isHumanOverride(roomStatus) {
 		decision.Reason = "human override detected (duration >= 60 min), skipping"

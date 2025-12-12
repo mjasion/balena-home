@@ -23,6 +23,30 @@ type ControlMetrics struct {
 	HardOverrideActive    bool
 }
 
+// pushXiaomiTemperatureMetric pushes just the Xiaomi temperature metric to the metrics buffer
+// This is called immediately after fetching Xiaomi temperature in evaluateRoom
+func (c *Controller) pushXiaomiTemperatureMetric(ctx context.Context, roomName string, xiaomiTemp float64) {
+	// Create a minimal control reading with just the Xiaomi temperature
+	reading := &buffer.Reading{
+		Type: buffer.ReadingTypeControl,
+		Control: &buffer.ControlReading{
+			Timestamp:         time.Now(),
+			RoomName:          roomName,
+			XiaomiTemperature: xiaomiTemp,
+		},
+	}
+
+	// Push to metrics buffer (not control buffer - this is for Prometheus)
+	if c.metricsBuffer != nil {
+		c.metricsBuffer.Add(ctx, reading)
+	}
+
+	c.logger.Debug("pushed Xiaomi temperature metric",
+		zap.String("room_name", roomName),
+		zap.Float64("xiaomi_temp", xiaomiTemp),
+	)
+}
+
 // pushControlMetrics pushes control decision metrics to the metrics buffer
 func (c *Controller) pushControlMetrics(ctx context.Context, decision ControlDecision, hardOverrideActive bool, externallyModified bool) {
 	// Skip pushing metrics if XiaomiTemperature is 0 (indicates error or no sensor data)

@@ -28,7 +28,7 @@ func (c *Controller) executeDecision(ctx context.Context, decision ControlDecisi
 		zap.String("reason", decision.Reason),
 	)
 
-	// Push control metrics to Prometheus
+	// Push full control metrics to Prometheus (Xiaomi temperature already pushed in evaluateRoom)
 	c.pushControlMetrics(ctx, decision, false, false)
 
 	if decision.Action == "skip" || decision.Action == "no_adjustment_needed" {
