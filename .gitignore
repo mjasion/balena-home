@@ -23,3 +23,4 @@ home-controller/ble-temp-monitor
 *.log
 /home-controller/coverage.out
 /home-controller/home-controller
+/home-controller/thermostats
