@@ -407,14 +407,6 @@ func (p *Pusher) buildBLETimeSeries(readings []*buffer.SensorReading) ([]prompb.
 				Name:  "room_name",
 				Value: key.name,
 			},
-			{
-				Name:  "sensor_id",
-				Value: fmt.Sprintf("%d", key.id),
-			},
-			{
-				Name:  "mac",
-				Value: sensorData[0].MAC, // All readings have same MAC
-			},
 		}
 
 		// Temperature time series
@@ -904,10 +896,6 @@ func (p *Pusher) buildWeightedAvgTimeSeries(readings []*buffer.WeightedAvgReadin
 			{
 				Name:  "room_name",
 				Value: key.name,
-			},
-			{
-				Name:  "mac",
-				Value: sensorData[0].MAC, // All readings have same MAC
 			},
 		}
 
