@@ -45,7 +45,10 @@ discovery.relabel "add_service_label" {
 loki.source.docker "default" {
   host       = sys.env("DOCKER_HOST")
   targets    = discovery.relabel.add_service_label.output
-  forward_to = [loki.write.default.receiver]
+  forward_to = [
+    loki.write.default.receiver,
+    otelcol.receiver.loki.default.receiver,
+  ]
 }
 
 // Write logs to Loki
@@ -58,6 +61,42 @@ loki.write "default" {
       username = sys.env("GRAFANA_CLOUD_LOKI_USERNAME")
       password = sys.env("GRAFANA_CLOUD_API_KEY")
     }
+  }
+}
+
+// ============================================================================
+// Datadog Logs Configuration
+// ============================================================================
+
+// Convert Loki logs to OTLP format for Datadog
+otelcol.receiver.loki "default" {
+  output {
+    logs = [otelcol.exporter.datadog.logs.input]
+  }
+}
+
+// Export logs to Datadog via HTTP API
+otelcol.exporter.datadog "logs" {
+  api {
+    key  = sys.env("DD_API_KEY")
+    site = "datadoghq.com"
+  }
+
+  // Optional: Configure hostname
+  hostname = "balena-home"
+
+  // Retry and queue configuration
+  retry_on_failure {
+    enabled          = true
+    initial_interval = "5s"
+    max_interval     = "60s"
+    max_elapsed_time = "30m"
+  }
+
+  sending_queue {
+    enabled      = true
+    num_consumers = 20
+    queue_size   = 50000
   }
 }
 
