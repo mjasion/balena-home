@@ -185,7 +185,7 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 		// Execute the override
 		if !h.controller.config.DryRun {
 			// Set override with boundary-aligned end time
-			endTime := h.controller.calculateBoundaryAlignedEndTime()
+			endTime := calculateBoundaryAlignedEndTime()
 			durationMinutes := int64(endTime.Sub(time.Now()).Minutes())
 			if durationMinutes <= 0 {
 				durationMinutes = 1 // Minimum 1 minute
@@ -310,7 +310,7 @@ func (h *HardOverrideJob) calculateSetpointForHardOverride(
 
 	// Round and apply safety bounds
 	calculatedSetpoint = roundToHalfDegree(calculatedSetpoint)
-	calculatedSetpoint = h.controller.applySafetyBounds(calculatedSetpoint)
+	calculatedSetpoint = applySafetyBounds(calculatedSetpoint)
 
 	h.logger.Debug("hard override setpoint calculation",
 		zap.String("room_name", override.RoomName),
