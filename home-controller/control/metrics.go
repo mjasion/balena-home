@@ -11,8 +11,8 @@ import (
 )
 
 // pushAllXiaomiTemperatureMetrics pushes Xiaomi temperature metrics for all rooms
-// Called immediately after fetching home status in runControlLoop
-// Calculates temperature difference between Xiaomi sensor and scheduled temperature
+// Called immediately after fetching home status in Metric Job
+// Calculates temperature difference between Xiaomi sensor and Netatmo measured temperature (sensor offset)
 func (c *Controller) pushAllXiaomiTemperatureMetrics(ctx context.Context, homeStatus *netatmo.HomeStatusResponse) {
 	for _, mapping := range c.config.Mappings {
 		// Get Xiaomi sensor reading
@@ -44,11 +44,9 @@ func (c *Controller) pushAllXiaomiTemperatureMetrics(ctx context.Context, homeSt
 			continue
 		}
 
-		// Calculate scheduled temperature (respects hard overrides)
-		scheduledTemp := c.determineScheduledTemp(mapping.RoomName, roomStatus)
-
-		// Calculate temperature difference
-		tempDiff := xiaomiTemp - scheduledTemp
+		// Calculate temperature difference (sensor offset: Xiaomi - Netatmo)
+		// This shows how much the Netatmo sensor is off compared to the accurate Xiaomi sensor
+		tempDiff := xiaomiTemp - roomStatus.ThermMeasuredTemperature
 
 		// Create control reading with Xiaomi temperature and temperature difference
 		reading := &buffer.Reading{
@@ -66,11 +64,11 @@ func (c *Controller) pushAllXiaomiTemperatureMetrics(ctx context.Context, homeSt
 			c.metricsBuffer.Add(ctx, reading)
 		}
 
-		c.logger.Debug("pushed Xiaomi temperature metric with difference",
+		c.logger.Debug("pushed Xiaomi temperature metric with sensor offset",
 			zap.String("room_name", mapping.RoomName),
 			zap.Float64("xiaomi_temp", xiaomiTemp),
-			zap.Float64("scheduled_temp", scheduledTemp),
-			zap.Float64("temp_diff", tempDiff),
+			zap.Float64("netatmo_measured", roomStatus.ThermMeasuredTemperature),
+			zap.Float64("sensor_offset", tempDiff),
 		)
 	}
 }
