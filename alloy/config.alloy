@@ -47,7 +47,7 @@ loki.source.docker "default" {
   targets    = discovery.relabel.add_service_label.output
   forward_to = [
     loki.write.default.receiver,
-    otelcol.receiver.loki.default.receiver,
+    otelcol.receiver.loki.datadog_logs.receiver,
   ]
 }
 
@@ -69,34 +69,35 @@ loki.write "default" {
 // ============================================================================
 
 // Convert Loki logs to OTLP format for Datadog
-otelcol.receiver.loki "default" {
+otelcol.receiver.loki "datadog_logs" {
   output {
-    logs = [otelcol.exporter.datadog.logs.input]
+    logs = [otelcol.exporter.otlp.datadog_logs.input]
   }
 }
 
-// Export logs to Datadog via HTTP API
-otelcol.exporter.datadog "logs" {
-  api {
-    key  = sys.env("DD_API_KEY")
-    site = "datadoghq.com"
+// Export logs to Datadog Agent via OTLP (gRPC)
+// Note: Both alloy and datadog-agent use network_mode: host
+// Datadog agent accepts OTLP on port 14317 (configured via DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_ENDPOINT)
+otelcol.exporter.otlp "datadog_logs" {
+  client {
+    endpoint = "localhost:14317"
+    tls {
+      insecure = true
+    }
   }
 
-  // Optional: Configure hostname
-  hostname = "balena-home"
+  // Retry and queue configuration to handle backpressure
+  sending_queue {
+    enabled      = true
+    num_consumers = 20
+    queue_size   = 50000
+  }
 
-  // Retry and queue configuration
   retry_on_failure {
     enabled          = true
     initial_interval = "5s"
     max_interval     = "60s"
     max_elapsed_time = "30m"
-  }
-
-  sending_queue {
-    enabled      = true
-    num_consumers = 20
-    queue_size   = 50000
   }
 }
 
