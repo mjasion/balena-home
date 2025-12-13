@@ -186,6 +186,7 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 		if !h.controller.config.DryRun {
 			// Set override with boundary-aligned end time
 			endTime := calculateBoundaryAlignedEndTime()
+			// Calculate duration for logging only
 			durationMinutes := int64(endTime.Sub(time.Now()).Minutes())
 			if durationMinutes <= 0 {
 				durationMinutes = 1 // Minimum 1 minute
@@ -196,15 +197,17 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 				zap.Float64("calculated_setpoint", calculatedSetpoint),
 				zap.Float64("target_temperature", targetTemp),
 				zap.Duration("override_duration", time.Duration(durationMinutes)*time.Minute),
+				zap.Time("end_time", endTime),
 			)
 
+			// Pass the Unix timestamp (endTime) to the API, not the duration
 			err := h.controller.netatmoClient.SetRoomThermpoint(
 				ctx,
 				h.controller.homeID,
 				roomID,
 				"manual",
 				calculatedSetpoint,
-				durationMinutes,
+				endTime.Unix(),
 			)
 
 			if err != nil {

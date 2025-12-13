@@ -162,6 +162,7 @@ func (c *Controller) applyConfigSafetyLimits(setpoint float64, roomName string) 
 
 // setNetatmoThermostat calls Netatmo API to set thermostat setpoint
 func (c *Controller) setNetatmoThermostat(ctx context.Context, roomID, roomName string, setpoint float64, endTime int64) error {
+	// Calculate duration for logging/telemetry only
 	durationMinutes := calculateOverrideDurationMinutes(endTime)
 
 	ctx, span := c.tracer.Start(ctx, "set_netatmo_thermostat_"+roomName,
@@ -171,6 +172,7 @@ func (c *Controller) setNetatmoThermostat(ctx context.Context, roomID, roomName 
 			attribute.Float64("setpoint", setpoint),
 			attribute.String("mode", "manual"),
 			attribute.Int64("duration_minutes", durationMinutes),
+			attribute.Int64("end_time", endTime),
 		),
 	)
 	defer span.End()
@@ -180,9 +182,11 @@ func (c *Controller) setNetatmoThermostat(ctx context.Context, roomID, roomName 
 		zap.String("room_id", roomID),
 		zap.Float64("setpoint", setpoint),
 		zap.String("mode", "manual"),
-		zap.Int64("duration_minutes", durationMinutes))
+		zap.Int64("duration_minutes", durationMinutes),
+		zap.Int64("end_time", endTime))
 
-	err := c.netatmoClient.SetRoomThermpoint(ctx, c.homeID, roomID, "manual", setpoint, durationMinutes)
+	// Pass the Unix timestamp (endTime) to the API, not the duration
+	err := c.netatmoClient.SetRoomThermpoint(ctx, c.homeID, roomID, "manual", setpoint, endTime)
 
 	recordAPICallAttributes(span, c.homeID, roomID, setpoint, durationMinutes, err == nil)
 
