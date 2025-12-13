@@ -14,28 +14,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// evaluateAndExecuteRooms evaluates and executes control decisions for all rooms
-func (c *Controller) evaluateAndExecuteRooms(ctx context.Context, roomStatusMap map[string]*netatmo.RoomStatus) (skipCount, adjustCount, noAdjustCount int) {
-	for _, mapping := range c.config.Mappings {
-		decision := c.evaluateRoom(ctx, mapping, roomStatusMap)
-
-		// Track decision types
-		switch decision.Action {
-		case "skip":
-			skipCount++
-		case "set_manual_override":
-			adjustCount++
-		case "no_adjustment_needed":
-			noAdjustCount++
-		}
-
-		// Execute decision
-		c.executeDecision(ctx, decision)
-	}
-
-	return skipCount, adjustCount, noAdjustCount
-}
-
 // evaluateRoom evaluates whether a room needs thermostat adjustment
 func (c *Controller) evaluateRoom(
 	ctx context.Context,
