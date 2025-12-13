@@ -332,10 +332,6 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		attribute.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 	)
 
-	// Push Xiaomi temperature metrics immediately after fetching home status
-	// This calculates and pushes the temperature difference for all rooms
-	c.pushAllXiaomiTemperatureMetrics(ctx, homeStatus)
-
 	// Build room status map for quick lookup
 	roomStatusMap := make(map[string]*netatmo.RoomStatus)
 	for i := range homeStatus.Body.Home.Rooms {

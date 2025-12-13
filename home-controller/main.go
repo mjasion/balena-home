@@ -270,16 +270,6 @@ func main() {
 			logger.Info("hard override job disabled")
 		}
 
-		// Create Xiaomi Average Job (always enabled, runs every minute)
-		xiaomiAverageJob := control.NewXiaomiAverageJob(controller, logger, tracer)
-
-		// Add Xiaomi average job
-		if err := jobScheduler.AddCronJobWithSeconds("Xiaomi Average Job", cfg.ThermostatControl.XiaomiAverageJobCron, xiaomiAverageJob.Run); err != nil {
-			logger.Error("failed to add Xiaomi average job cron job", zap.Error(err))
-			os.Exit(1)
-		}
-		logger.Info("xiaomi average job enabled (always runs if thermostat jobs enabled)", zap.String("xiaomi_average_cron", cfg.ThermostatControl.XiaomiAverageJobCron))
-
 		logger.Info("thermostat control jobs configured")
 	} else {
 		logger.Info("all thermostat control jobs disabled")

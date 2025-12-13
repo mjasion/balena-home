@@ -113,7 +113,6 @@ type ThermostatControlConfig struct {
 	ControlJobEnabled       bool                `yaml:"controlJobEnabled" env:"CONTROL_JOB_ENABLED" env-default:"false"`                 // Enable/disable control job cron
 	HardOverrideJobCron     string              `yaml:"hardOverrideJobCron" env:"HARD_OVERRIDE_JOB_CRON" env-default:"0 * * * * *"`      // Cron expression for hard override job (runs every minute at :00)
 	HardOverrideJobEnabled  bool                `yaml:"hardOverrideJobEnabled" env:"HARD_OVERRIDE_JOB_ENABLED" env-default:"false"`      // Enable/disable hard override job cron
-	XiaomiAverageJobCron    string              `yaml:"xiaomiAverageJobCron" env:"XIAOMI_AVERAGE_JOB_CRON" env-default:"*/30 * * * * *"` // Cron expression for Xiaomi average job (runs every minute at :00, always enabled)
 }
 
 // ThermostatMapping maps a Netatmo room to a Xiaomi sensor

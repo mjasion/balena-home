@@ -74,6 +74,10 @@ func (m *MetricJob) Run(ctx context.Context) {
 		zap.Duration("fetch_duration", fetchDuration),
 	)
 
+	// Push Xiaomi temperature metrics immediately after fetching home status
+	// This calculates and pushes the temperature difference for all rooms
+	m.controller.pushAllXiaomiTemperatureMetrics(ctx, homeStatus)
+
 	// Store home status in shared state for Control Job first
 	// Includes trace ID for correlation between Metric Job and Control Job
 	traceID := span.SpanContext().TraceID().String()

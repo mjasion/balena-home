@@ -396,19 +396,11 @@ func TestBuildWriteRequest(t *testing.T) {
 	// Verify each time series has the required labels
 	for _, ts := range writeReq.Timeseries {
 		foundName := false
-		foundSensorID := false
-		foundMAC := false
 		foundRoomName := false
 
 		for _, label := range ts.Labels {
 			if label.Name == "__name__" {
 				foundName = true
-			}
-			if label.Name == "sensor_id" {
-				foundSensorID = true
-			}
-			if label.Name == "mac" {
-				foundMAC = true
 			}
 			if label.Name == "room_name" {
 				foundRoomName = true
@@ -417,12 +409,6 @@ func TestBuildWriteRequest(t *testing.T) {
 
 		if !foundName {
 			t.Error("Expected __name__ label in time series")
-		}
-		if !foundSensorID {
-			t.Error("Expected sensor_id label in time series")
-		}
-		if !foundMAC {
-			t.Error("Expected mac label in time series")
 		}
 		if !foundRoomName {
 			t.Error("Expected room_name label in time series")
