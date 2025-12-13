@@ -14,21 +14,23 @@ type AlgorithmResult struct {
 }
 
 // calculateThreeZoneSetpoint implements the three-zone temperature control algorithm
+// Uses sensor offset (difference between Xiaomi and Netatmo) to determine zones
 // Returns the calculated setpoint, zone name, and adjustment amount
 func calculateThreeZoneSetpoint(xiaomiTemp, scheduledTemp, thermostatMeasured, threshold float64) AlgorithmResult {
-	tempDiff := xiaomiTemp - scheduledTemp
+	// Calculate sensor offset: difference between accurate Xiaomi and less accurate Netatmo
+	sensorOffset := xiaomiTemp - thermostatMeasured
 
 	switch {
-	case tempDiff <= -threshold:
-		// Zone 1: Room too cold - add 0.5°C to trigger heating
+	case sensorOffset <= -threshold:
+		// Zone 1: Xiaomi reads colder than Netatmo - add 0.5°C to trigger heating
 		return AlgorithmResult{
 			CalculatedSetpoint: thermostatMeasured + 0.5,
 			Zone:               "too_cold",
 			Adjustment:         0.5,
 		}
 
-	case tempDiff >= threshold:
-		// Zone 3: Room too warm - subtract 0.5°C to stop heating
+	case sensorOffset >= threshold:
+		// Zone 3: Xiaomi reads warmer than Netatmo - subtract 0.5°C to stop heating
 		return AlgorithmResult{
 			CalculatedSetpoint: thermostatMeasured - 0.5,
 			Zone:               "too_warm",
@@ -36,7 +38,7 @@ func calculateThreeZoneSetpoint(xiaomiTemp, scheduledTemp, thermostatMeasured, t
 		}
 
 	default:
-		// Zone 2: Within range - maintain current reading
+		// Zone 2: Sensors agree within threshold - maintain current reading
 		return AlgorithmResult{
 			CalculatedSetpoint: thermostatMeasured,
 			Zone:               "within_range",
