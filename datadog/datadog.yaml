@@ -68,8 +68,14 @@ dogstatsd_non_local_traffic: true
 ## Process and System Probe (Disabled for Balena)
 ## ================================================================================
 
-## Process agent disabled - doesn't work without /host/proc on Balena
-## Set via DD_PROCESS_AGENT_ENABLED=false in docker-compose.yml
+## Process agent completely disabled - doesn't work without /host/proc on Balena
+process_config:
+  enabled: false
+  process_collection:
+    enabled: false
+  container_collection:
+    enabled: false
 
-## System probe disabled - doesn't work without /host/proc on Balena
-## Set via DD_SYSTEM_PROBE_ENABLED=false in docker-compose.yml
+## System probe disabled
+system_probe_config:
+  enabled: false

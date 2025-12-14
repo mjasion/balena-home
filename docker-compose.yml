@@ -67,28 +67,21 @@ services:
     pid: host
     network_mode: host
     environment:
+      # Secrets and deployment-specific configuration
       - DD_API_KEY=${DD_API_KEY}
       - DD_SITE=${DD_SITE:-datadoghq.com}
-      - DD_HOSTNAME=balena-home3
-      # Docker Integration
-      - DOCKER_HOST=unix:///var/run/balena-engine.sock
-      # Logs
-      - DD_LOGS_ENABLED=true
-      - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true
-      - DD_CONTAINER_EXCLUDE="name:datadog-agent"
-      - DD_AC_EXCLUDE="name:datadog-agent"
-      # APM / Traces
-      - DD_APM_ENABLED=true
-      - DD_APM_NON_LOCAL_TRAFFIC=true
-      - DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_ENDPOINT=0.0.0.0:14317
-      - DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_HTTP_ENDPOINT=0.0.0.0:14318
-      # DogStatsD
-      - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
-      # Docker labels as tags (applies to both logs and metrics)
-      - DD_DOCKER_LABELS_AS_TAGS='{"com.datadoghq.tags.service":"service","com.datadoghq.tags.env":"env","io.balena.service.name":"balena_service"}'
-      # Completely disable process-agent (doesn't work without /proc mount on Balena)
-      - DD_PROCESS_AGENT_ENABLED=false
-      - DD_SYSTEM_PROBE_ENABLED=false
+      - DD_HOSTNAME=balena-home
     labels:
       io.balena.features.balena-socket: '1'
+      # This effectively does "--pid=host", mounting host /proc over container /proc
+      io.balena.features.procfs: '1'
+      # Mounts host /sys over container /sys
+      io.balena.features.sysfs: '1'
+      # Mounts host /var/lib/docker/volumes to allow disk usage checks (optional)
+      io.balena.features.supervisor-api: '1'
 
+      io.balena.features.kernel-modules: '1'
+      io.balena.features.firmware: '1'
+      io.balena.features.dbus: '1'
+      io.balena.features.journal-logs: '1'
+      io.balena.features.balena-api: '1'
