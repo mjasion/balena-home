@@ -182,3 +182,5 @@ olympos.io/encoding/edn v0.0.0-20201019073823-d3554ca0b0a3 h1:slmdOY3vp8a7KQbHkL
 olympos.io/encoding/edn v0.0.0-20201019073823-d3554ca0b0a3/go.mod h1:oVgVk4OWVDi43qWBEyGhXgYxt7+ED4iYNpTngSLX2Iw=
 tinygo.org/x/bluetooth v0.13.0 h1:3pkTMcfqv71HoAxG4DBTm2n+1bm6Nqqz8eoHjSW9+5g=
 tinygo.org/x/bluetooth v0.13.0/go.mod h1:YnyJRVX09i+wkFeHpXut0b+qHq+T2WwKBRRiF/scANA=
+tinygo.org/x/bluetooth v0.14.0 h1:rrUaT+Fu6O0phGm4Y5UZULL8F7UahOq/JwGAPjJm+V4=
+tinygo.org/x/bluetooth v0.14.0/go.mod h1:YnyJRVX09i+wkFeHpXut0b+qHq+T2WwKBRRiF/scANA=
