@@ -40,8 +40,6 @@ services:
       - GRAFANA_CLOUD_API_KEY=${GRAFANA_CLOUD_API_KEY}
     labels:
       io.balena.features.dbus: '1'
-      com.datadoghq.ad.logs: '[{"source": "home-controller", "service": "home-controller"}]'
-      com.datadoghq.ad.tags: '["env:production", "service:home-automation"]'
   alloy:
     build: alloy
     container_name: grafana-alloy
@@ -58,30 +56,3 @@ services:
       - GRAFANA_CLOUD_LOKI_USERNAME=${GRAFANA_CLOUD_LOKI_USERNAME}
     labels:
       io.balena.features.balena-socket: '1'
-  datadog-agent:
-    build: datadog
-    container_name: datadog-agent
-    restart: unless-stopped
-    hostname: balena-home
-    privileged: true
-    pid: host
-    network_mode: host
-    environment:
-      # Secrets and deployment-specific configuration
-      - DD_API_KEY=${DD_API_KEY}
-      - DD_SITE=${DD_SITE:-datadoghq.com}
-      - DD_HOSTNAME=balena-home
-    labels:
-      io.balena.features.balena-socket: '1'
-      # This effectively does "--pid=host", mounting host /proc over container /proc
-      io.balena.features.procfs: '1'
-      # Mounts host /sys over container /sys
-      io.balena.features.sysfs: '1'
-      # Mounts host /var/lib/docker/volumes to allow disk usage checks (optional)
-      io.balena.features.supervisor-api: '1'
-
-      io.balena.features.kernel-modules: '1'
-      io.balena.features.firmware: '1'
-      io.balena.features.dbus: '1'
-      io.balena.features.journal-logs: '1'
-      io.balena.features.balena-api: '1'
