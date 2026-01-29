@@ -47,7 +47,6 @@ loki.source.docker "default" {
   targets    = discovery.relabel.add_service_label.output
   forward_to = [
     loki.write.default.receiver,
-    otelcol.receiver.loki.datadog_logs.receiver,
   ]
 }
 
@@ -64,42 +63,8 @@ loki.write "default" {
   }
 }
 
-// ============================================================================
-// Datadog Logs Configuration
-// ============================================================================
 
-// Convert Loki logs to OTLP format for Datadog
-otelcol.receiver.loki "datadog_logs" {
-  output {
-    logs = [otelcol.exporter.otlp.datadog_logs.input]
-  }
-}
 
-// Export logs to Datadog Agent via OTLP (gRPC)
-// Note: Both alloy and datadog-agent use network_mode: host
-// Datadog agent accepts OTLP on port 14317 (configured via DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_ENDPOINT)
-otelcol.exporter.otlp "datadog_logs" {
-  client {
-    endpoint = "localhost:14317"
-    tls {
-      insecure = true
-    }
-  }
-
-  // Retry and queue configuration to handle backpressure
-  sending_queue {
-    enabled      = true
-    num_consumers = 20
-    queue_size   = 50000
-  }
-
-  retry_on_failure {
-    enabled          = true
-    initial_interval = "5s"
-    max_interval     = "60s"
-    max_elapsed_time = "30m"
-  }
-}
 
 // ============================================================================
 // OpenTelemetry Traces Configuration
@@ -132,34 +97,7 @@ otelcol.processor.batch "default" {
   output {
     traces = [
       otelcol.exporter.otlphttp.grafana_cloud.input,
-      otelcol.exporter.otlp.datadog.input,
     ]
-  }
-}
-
-// Export traces to Datadog Agent (gRPC)
-// Note: Both alloy and datadog-agent use network_mode: host
-// DataDog listens on ports 14317/14318 to avoid conflict with Alloy's receivers (4317/4318)
-otelcol.exporter.otlp "datadog" {
-  client {
-    endpoint = "localhost:14317"
-    tls {
-      insecure = true
-    }
-  }
-
-  // Retry and queue configuration to handle backpressure
-  sending_queue {
-    enabled = true
-    num_consumers = 10
-    queue_size = 5000
-  }
-
-  retry_on_failure {
-    enabled = true
-    initial_interval = "1s"
-    max_interval = "30s"
-    max_elapsed_time = "5m"
   }
 }
 
