@@ -3,7 +3,7 @@ module github.com/mjasion/balena-home/thermostats
 go 1.25
 
 require (
-	github.com/go-co-op/gocron-ui v0.2.0
+	github.com/go-co-op/gocron-ui v0.3.0
 	github.com/go-co-op/gocron/v2 v2.19.1
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/snappy v1.0.0
