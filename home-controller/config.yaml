@@ -242,8 +242,8 @@ thermostatControl:
   #   sensorMAC: "A4:C1:38:ED:C0:21"  # Xiaomi sensor MAC (must exist in ble.sensors)
   #   roomID: ""  # Leave empty - auto-populated at startup from Netatmo API
   #
-   - roomName: "Salon"
-     sensorMAC: "A4:C1:38:26:E2:4C"
+   # - roomName: "Salon"
+   #   sensorMAC: "A4:C1:38:26:E2:4C"
    - roomName: "Hol"
      sensorMAC: "A4:C1:38:26:E2:4C"
    - roomName: "Sypialnia"
