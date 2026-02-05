@@ -94,6 +94,7 @@ func (s *Scanner) Start(ctx context.Context) error {
 		mac := strings.ToUpper(result.Address.String())
 		sensorInfo, found := s.sensorMACs[mac]
 		if !found {
+			s.logger.Info("Not found MAC", zap.String("mac", mac))
 			return
 		}
 		s.logger.Debug("BLE scan",
