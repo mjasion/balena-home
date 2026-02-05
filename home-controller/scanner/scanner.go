@@ -71,7 +71,13 @@ func (s *Scanner) Start(ctx context.Context) error {
 	}
 
 	s.logger.Info("BLE adapter initialized successfully")
-	s.logger.Info("starting BLE scan", zap.Int("sensor_count", len(s.sensorMACs)), zap.Any("sensors", s.sensorMACs))
+
+	// Convert sensor map to loggable format
+	sensorNames := make([]string, 0, len(s.sensorMACs))
+	for mac, info := range s.sensorMACs {
+		sensorNames = append(sensorNames, fmt.Sprintf("%s:%s", mac, info.Name))
+	}
+	s.logger.Info("starting BLE scan", zap.Int("sensor_count", len(s.sensorMACs)), zap.Strings("sensors", sensorNames))
 
 	// Start scanning
 	err = s.adapter.Scan(func(adapter *bluetooth.Adapter, result bluetooth.ScanResult) {
