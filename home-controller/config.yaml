@@ -53,7 +53,7 @@ power:
 # Pyroscope profiling configuration
 pyroscope:
   # Enable Pyroscope continuous profiling
-  enabled: true
+  enabled: false
 
   # Pyroscope server URL
   # For Grafana Cloud: https://profiles-prod-XXX.grafana.net
@@ -175,7 +175,7 @@ prometheus:
 logging:
   # Log format: "console" (human-readable) or "json" (structured)
   # Use "console" for development, "json" for production
-  logFormat: "console"
+  logFormat: "logfmt"
 
   # Log level: "debug", "info", "warn", "error"
   logLevel: "info"
@@ -203,7 +203,7 @@ thermostatControl:
   # Dry-run mode: Log control decisions without sending commands to thermostats (default: false)
   # Use this for testing before enabling real control
   # When true: Control loop runs, decisions are logged, but no API calls are made
-  dryRun: true
+  dryRun: false
 
   # Temperature difference threshold (°C) to trigger adjustment (default: 0.2)
   # Minimum difference between Xiaomi sensor and scheduled temperature to trigger action
@@ -220,7 +220,7 @@ thermostatControl:
   # Runs 5 seconds after Metric Job to ensure fresh data is available
   # Uses data from shared state (if < 30s old) or fetches fresh data itself
   controlJobCron: "5 0,15,30,45 * * * *"  # or use CONTROL_JOB_CRON env var
-  controlJobEnabled: false  # Enable/disable control job cron (default: false) or use CONTROL_JOB_ENABLED env var
+  controlJobEnabled: true  # Enable/disable control job cron (default: false) or use CONTROL_JOB_ENABLED env var
 
   # Hard Override Job: Applies time-based temperature overrides every minute
   # Runs at: :00 seconds of every minute
@@ -311,7 +311,7 @@ thermostatControl:
 # Job Scheduler Configuration
 scheduler:
   # Enable web UI for viewing and managing scheduled jobs
-  uiEnabled: true
+  uiEnabled: false
 
   # Host address for the scheduler UI server (0.0.0.0 = all interfaces)
   # For local access only, use "127.0.0.1" or "localhost"
