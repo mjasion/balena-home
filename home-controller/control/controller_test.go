@@ -154,13 +154,12 @@ func TestWeightedAverageTemperature(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
 			// Clear buffer
-			controlBuffer.GetAllAndClear(ctx)
+			controlBuffer.GetAllAndClear(context.Background())
 
 			// Add readings
 			for _, r := range tt.readings {
-				controlBuffer.Add(ctx, &buffer.Reading{
+				controlBuffer.Add(context.Background(), &buffer.Reading{
 					Type: buffer.ReadingTypeBLE,
 					BLE: &buffer.SensorReading{
 						Timestamp:          r.timestamp,
@@ -197,18 +196,18 @@ func TestWeightedAverageWithVaryingFrequencies(t *testing.T) {
 	controlBuffer := buffer.New(1000, logger)
 	metricsBuffer := buffer.New(100, logger)
 
-	cfg := &config.ThermostatControlConfig{}
+	cfg := &config.ThermostatControlConfig{
+	}
 
 	sharedHomeStatus := NewSharedHomeStatus()
 	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, sharedHomeStatus)
 
 	now := time.Now()
 	sensorMAC := "AA:BB:CC:DD:EE:FF"
-	ctx := context.Background()
 
 	// Add many old readings at 19.0°C (1 reading per second for 50 seconds, excluding last 10 seconds)
 	for i := 60; i >= 10; i-- {
-		controlBuffer.Add(ctx, &buffer.Reading{
+		controlBuffer.Add(context.Background(), &buffer.Reading{
 			Type: buffer.ReadingTypeBLE,
 			BLE: &buffer.SensorReading{
 				Timestamp:          now.Add(-time.Duration(i) * time.Second),
@@ -220,7 +219,7 @@ func TestWeightedAverageWithVaryingFrequencies(t *testing.T) {
 
 	// Add many recent readings at 21.0°C (last 10 seconds, 1 per second)
 	for i := 9; i >= 0; i-- {
-		controlBuffer.Add(ctx, &buffer.Reading{
+		controlBuffer.Add(context.Background(), &buffer.Reading{
 			Type: buffer.ReadingTypeBLE,
 			BLE: &buffer.SensorReading{
 				Timestamp:          now.Add(-time.Duration(i) * time.Second),
@@ -337,7 +336,8 @@ func TestHardOverrideDetection(t *testing.T) {
 func TestControllerWithNilBuffers(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
-	cfg := &config.ThermostatControlConfig{}
+	cfg := &config.ThermostatControlConfig{
+	}
 
 	// Create controller with nil buffers (should not crash during construction)
 	sharedHomeStatus := NewSharedHomeStatus()
@@ -396,17 +396,17 @@ func TestBufferIsolation(t *testing.T) {
 	controlBuffer := buffer.New(100, logger)
 	metricsBuffer := buffer.New(100, logger)
 
-	cfg := &config.ThermostatControlConfig{}
+	cfg := &config.ThermostatControlConfig{
+	}
 
 	sharedHomeStatus := NewSharedHomeStatus()
 	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, sharedHomeStatus)
 
 	now := time.Now()
 	sensorMAC := "AA:BB:CC:DD:EE:FF"
-	ctx := context.Background()
 
 	// Add reading to control buffer
-	controlBuffer.Add(ctx, &buffer.Reading{
+	controlBuffer.Add(context.Background(), &buffer.Reading{
 		Type: buffer.ReadingTypeBLE,
 		BLE: &buffer.SensorReading{
 			Timestamp:          now,
@@ -421,7 +421,7 @@ func TestBufferIsolation(t *testing.T) {
 	}
 
 	// Clear metrics buffer (should not affect control buffer)
-	metricsBuffer.GetAllAndClear(ctx)
+	metricsBuffer.GetAllAndClear(context.Background())
 
 	// Verify control buffer still has 1 reading
 	if controlBuffer.Size() != 1 {
@@ -470,8 +470,7 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 
 	// Add sensor reading: Xiaomi shows 23.5°C (below 24°C target)
 	now := time.Now()
-	ctx := context.Background()
-	controlBuffer.Add(ctx, &buffer.Reading{
+	controlBuffer.Add(context.Background(), &buffer.Reading{
 		Type: buffer.ReadingTypeBLE,
 		BLE: &buffer.SensorReading{
 			Timestamp:          now,

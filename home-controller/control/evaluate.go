@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -13,264 +14,256 @@ import (
 	"go.uber.org/zap"
 )
 
+// evaluateAndExecuteRooms evaluates and executes control decisions for all rooms
+func (c *Controller) evaluateAndExecuteRooms(ctx context.Context, roomStatusMap map[string]*netatmo.RoomStatus) (skipCount, adjustCount, noAdjustCount int) {
+	for _, mapping := range c.config.Mappings {
+		decision := c.evaluateRoom(ctx, mapping, roomStatusMap)
+
+		// Track decision types
+		switch decision.Action {
+		case "skip":
+			skipCount++
+		case "set_manual_override":
+			adjustCount++
+		case "no_adjustment_needed":
+			noAdjustCount++
+		}
+
+		// Push metrics for this decision
+		hardOverrideActive := c.isHardOverrideActive(mapping.RoomName)
+		c.pushControlMetrics(ctx, decision, hardOverrideActive, false)
+		c.executeDecision(ctx, decision)
+	}
+
+	return skipCount, adjustCount, noAdjustCount
+}
+
 // evaluateRoom evaluates whether a room needs thermostat adjustment
 func (c *Controller) evaluateRoom(
 	ctx context.Context,
 	mapping config.ThermostatMapping,
 	roomStatusMap map[string]*netatmo.RoomStatus,
 ) ControlDecision {
-	ctx, span := c.startRoomSpan(ctx, "evaluate_room", mapping.RoomName, mapping.RoomID)
+	ctx, span := c.tracer.Start(ctx, "evaluate_room_"+mapping.RoomName,
+		trace.WithAttributes(
+			attribute.String("room_name", mapping.RoomName),
+			attribute.String("room_id", mapping.RoomID),
+			attribute.String("sensor_mac", mapping.SensorMAC),
+		),
+	)
 	defer span.End()
 
-	span.SetAttributes(attribute.String("sensor_mac", mapping.SensorMAC))
+	c.logger.Debug("evaluating room - starting decision process",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.String("room_name", mapping.RoomName),
+	)
 
-	c.logEvaluationDebug(span, mapping.RoomName, "evaluating room - starting decision process")
-
-	decision := c.initDecision(mapping)
-
-	// Validate room status
-	roomStatus, ok := c.validateRoomStatus(ctx, span, mapping, roomStatusMap, &decision)
-	if !ok {
-		return decision
-	}
-
-	// Populate current status
-	c.populateCurrentStatus(&decision, roomStatus)
-
-	// Get sensor reading
-	xiaomiTemp, ok := c.getSensorReading(ctx, span, mapping, &decision)
-	if !ok {
-		return decision
-	}
-
-	// Check for human override
-	if c.shouldSkipDueToOverride(span, mapping.RoomName, roomStatus, &decision) {
-		return decision
-	}
-
-	// Calculate control action
-	return c.calculateControlAction(ctx, span, mapping, roomStatus, xiaomiTemp, decision)
-}
-
-// initDecision creates an initial decision with default skip action
-func (c *Controller) initDecision(mapping config.ThermostatMapping) ControlDecision {
-	return ControlDecision{
+	decision := ControlDecision{
 		RoomID:   mapping.RoomID,
 		RoomName: mapping.RoomName,
 		Action:   "skip",
 	}
-}
 
-// validateRoomStatus checks if room exists and is reachable
-func (c *Controller) validateRoomStatus(ctx context.Context, span trace.Span, mapping config.ThermostatMapping,
-	roomStatusMap map[string]*netatmo.RoomStatus, decision *ControlDecision) (*netatmo.RoomStatus, bool) {
-
+	// Get room status - required for all decisions
 	roomStatus, roomExists := roomStatusMap[mapping.RoomID]
 	if !roomExists {
 		decision.Reason = "room not found in Netatmo status"
-		c.logEvaluationWarn(span, mapping.RoomName,
-			"evaluating room - room not found in Netatmo home status",
-			zap.String("room_id", mapping.RoomID))
-		recordSkipReason(span, "room_not_found")
-		return nil, false
+		c.logger.Warn("evaluating room - room not found in Netatmo home status",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("room_name", mapping.RoomName),
+			zap.String("room_id", mapping.RoomID),
+		)
+		span.SetAttributes(attribute.String("skip_reason", "room_not_found"))
+		return decision
 	}
 
 	if !roomStatus.Reachable {
 		decision.Reason = "thermostat not reachable"
-		c.logEvaluationInfo(span, mapping.RoomName,
-			"evaluating room - thermostat not reachable, skipping")
-		recordSkipReason(span, "not_reachable")
-		return nil, false
-	}
-
-	return roomStatus, true
-}
-
-// logEvaluationInfo is a helper for info-level evaluation logging
-func (c *Controller) logEvaluationInfo(span trace.Span, roomName, message string, fields ...zap.Field) {
-	allFields := []zap.Field{
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
-		zap.String("room_name", roomName),
-	}
-	allFields = append(allFields, fields...)
-	c.logger.Info(message, allFields...)
-}
-
-// populateCurrentStatus fills in current thermostat status fields
-func (c *Controller) populateCurrentStatus(decision *ControlDecision, roomStatus *netatmo.RoomStatus) {
-	decision.ThermostatMeasured = roomStatus.ThermMeasuredTemperature
-	decision.SetpointTemperature = roomStatus.ThermSetpointTemperature
-	decision.ThermostatMode = roomStatus.ThermSetpointMode
-	decision.ScheduledTemp = c.determineScheduledTemp(decision.RoomName, roomStatus)
-}
-
-// getSensorReading retrieves and validates Xiaomi sensor reading
-func (c *Controller) getSensorReading(ctx context.Context, span trace.Span, mapping config.ThermostatMapping, decision *ControlDecision) (float64, bool) {
-	sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
-	xiaomiTemp, err := c.getWeightedAverageTemperature(ctx, sensorMAC)
-
-	if err != nil || xiaomiTemp == 0 {
-		decision.Reason = "sensor data unavailable"
-		c.logEvaluationWarn(span, mapping.RoomName,
-			"evaluating room - sensor data unavailable",
-			zap.String("sensor_mac", sensorMAC))
-		recordSkipReason(span, "no_sensor_data")
-		return 0, false
-	}
-
-	decision.XiaomiTemperature = xiaomiTemp
-
-	c.logEvaluationDebug(span, mapping.RoomName,
-		"evaluating room - sensor data retrieved",
-		zap.Float64("xiaomi_temp", xiaomiTemp),
-		zap.Float64("thermostat_measured", decision.ThermostatMeasured))
-
-	return xiaomiTemp, true
-}
-
-// shouldSkipDueToOverride checks if we should skip due to human override
-func (c *Controller) shouldSkipDueToOverride(span trace.Span, roomName string, roomStatus *netatmo.RoomStatus, decision *ControlDecision) bool {
-	if !c.isHumanOverride(roomStatus) {
-		return false
-	}
-
-	decision.Reason = "human override detected (duration >= 60 min), skipping"
-	c.logEvaluationInfo(span, roomName,
-		"evaluating room - human override detected, skipping control",
-		zap.String("mode", roomStatus.ThermSetpointMode))
-	recordSkipReason(span, "human_override")
-	return true
-}
-
-// calculateControlAction implements the three-zone algorithm and determines action
-func (c *Controller) calculateControlAction(ctx context.Context, span trace.Span, mapping config.ThermostatMapping,
-	roomStatus *netatmo.RoomStatus, xiaomiTemp float64, decision ControlDecision) ControlDecision {
-
-	// Early check: if room is too warm AND heating is already off, skip
-	// This prevents unnecessary API calls when room will cool naturally
-	// Only check for "too warm" case - if room is cold, we need to evaluate even if heating appears off
-	// (Netatmo sensor might be inaccurate and showing heating off when it should be on)
-	roomTooWarm := xiaomiTemp > decision.ScheduledTemp
-	heatingAlreadyOff := decision.SetpointTemperature < decision.ThermostatMeasured
-
-	if roomTooWarm && heatingAlreadyOff {
-		decision.Action = "skip"
-		decision.Reason = fmt.Sprintf("room too warm (%.1f°C > %.1f°C target) and heating already off (setpoint %.1f°C < measured %.1f°C)",
-			xiaomiTemp, decision.ScheduledTemp, decision.SetpointTemperature, decision.ThermostatMeasured)
-		c.logEvaluationInfo(span, mapping.RoomName,
-			"evaluating room - room too warm and heating already off, no action needed",
-			zap.Float64("xiaomi_temp", xiaomiTemp),
-			zap.Float64("target_temp", decision.ScheduledTemp),
-			zap.Float64("setpoint", decision.SetpointTemperature),
-			zap.Float64("measured", decision.ThermostatMeasured))
-		recordSkipReason(span, "too_warm_heating_off")
+		c.logger.Info("evaluating room - thermostat not reachable, skipping",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("room_name", mapping.RoomName),
+		)
+		span.SetAttributes(attribute.String("skip_reason", "not_reachable"))
 		return decision
 	}
 
-	// Calculate sensor offset (difference between accurate Xiaomi and less accurate Netatmo)
-	tempDiff := xiaomiTemp - decision.ThermostatMeasured
+	// Populate current status fields
+	decision.ThermostatMeasured = roomStatus.ThermMeasuredTemperature
+	decision.SetpointTemperature = roomStatus.ThermSetpointTemperature
+	decision.ThermostatMode = roomStatus.ThermSetpointMode
 
-	c.logEvaluationDebug(span, mapping.RoomName,
-		"evaluating room - sensor offset calculated",
+	// Get scheduled temperature (respects hard overrides)
+	decision.ScheduledTemp = c.determineScheduledTemp(mapping.RoomName, roomStatus)
+
+	// Get Xiaomi sensor reading
+	sensorMAC := strings.ToUpper(strings.TrimSpace(mapping.SensorMAC))
+	xiaomiTemp, err := c.getWeightedAverageTemperature(ctx, sensorMAC)
+	if err != nil || xiaomiTemp == 0 {
+		decision.Reason = "sensor data unavailable"
+		c.logger.Warn("evaluating room - sensor data unavailable",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("room_name", mapping.RoomName),
+			zap.String("sensor_mac", sensorMAC),
+		)
+		span.SetAttributes(attribute.String("skip_reason", "no_sensor_data"))
+		return decision
+	}
+	decision.XiaomiTemperature = xiaomiTemp
+
+	c.logger.Debug("evaluating room - sensor data retrieved",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.String("room_name", mapping.RoomName),
 		zap.Float64("xiaomi_temp", xiaomiTemp),
-		zap.Float64("netatmo_measured", decision.ThermostatMeasured),
-		zap.Float64("sensor_offset", tempDiff),
-		zap.Float64("target_temp", decision.ScheduledTemp),
-		zap.Float64("threshold", c.config.TemperatureThreshold))
-
-	// Apply three-zone algorithm
-	result := calculateThreeZoneSetpoint(xiaomiTemp, decision.ScheduledTemp,
-		decision.ThermostatMeasured, c.config.TemperatureThreshold)
-
-	span.SetAttributes(attribute.String("zone", result.Zone))
-
-	c.logZoneDecision(span, mapping.RoomName, result, tempDiff)
-
-	// Round and apply safety bounds
-	calculatedSetpoint := applySafetyBounds(roundToHalfDegree(result.CalculatedSetpoint))
-
-	c.logEvaluationDebug(span, mapping.RoomName,
-		"evaluating room - setpoint calculated and bounded",
-		zap.Float64("raw_calculated", result.CalculatedSetpoint),
-		zap.Float64("rounded", roundToHalfDegree(result.CalculatedSetpoint)),
-		zap.Float64("final_setpoint", calculatedSetpoint))
-
-	// Check if adjustment is needed
-	if !needsAdjustment(decision.SetpointTemperature, calculatedSetpoint) {
-		return c.buildNoAdjustmentDecision(span, mapping.RoomName, decision, calculatedSetpoint)
-	}
-
-	// Build override decision
-	return c.buildOverrideDecision(span, mapping.RoomName, decision, xiaomiTemp, calculatedSetpoint, result.Zone, tempDiff)
-}
-
-// logZoneDecision logs the three-zone algorithm decision
-func (c *Controller) logZoneDecision(span trace.Span, roomName string, result AlgorithmResult, sensorOffset float64) {
-	switch result.Zone {
-	case "too_cold":
-		c.logEvaluation(span, roomName, "evaluating room - three-zone algorithm: ZONE 1 (Xiaomi colder than Netatmo)",
-			zap.Float64("sensor_offset", sensorOffset),
-			zap.Float64("adjustment", result.Adjustment),
-			zap.String("action", "add 0.5°C to trigger heating"))
-
-	case "too_warm":
-		c.logEvaluation(span, roomName, "evaluating room - three-zone algorithm: ZONE 3 (Xiaomi warmer than Netatmo)",
-			zap.Float64("sensor_offset", sensorOffset),
-			zap.Float64("adjustment", result.Adjustment),
-			zap.String("action", "subtract 0.5°C to stop heating"))
-
-	default: // within_range
-		c.logEvaluationDebug(span, roomName, "evaluating room - three-zone algorithm: ZONE 2 (sensors agree)",
-			zap.Float64("sensor_offset", sensorOffset),
-			zap.String("action", "maintain current measured temperature"))
-	}
-}
-
-// buildNoAdjustmentDecision builds a decision when no adjustment is needed
-func (c *Controller) buildNoAdjustmentDecision(span trace.Span, roomName string, decision ControlDecision, calculatedSetpoint float64) ControlDecision {
-	decision.Action = "no_adjustment_needed"
-	decision.Reason = fmt.Sprintf("setpoint already at target (%.1f°C)", calculatedSetpoint)
-
-	c.logEvaluation(span, roomName,
-		"evaluating room - no adjustment needed, setpoint already at target",
-		zap.Float64("current_setpoint", decision.SetpointTemperature),
-		zap.Float64("target_setpoint", calculatedSetpoint))
-
-	span.SetAttributes(
-		attribute.String("decision_action", "no_adjustment_needed"),
-		attribute.Float64("current_setpoint", decision.SetpointTemperature),
-		attribute.Float64("target_setpoint", calculatedSetpoint),
+		zap.Float64("thermostat_measured", decision.ThermostatMeasured),
 	)
 
-	return decision
-}
+	// Check if this is a human override (duration >= 60 minutes)
+	if c.isHumanOverride(roomStatus) {
+		decision.Reason = "human override detected (duration >= 60 min), skipping"
+		c.logger.Info("evaluating room - human override detected, skipping control",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("room_name", mapping.RoomName),
+			zap.String("mode", roomStatus.ThermSetpointMode),
+		)
+		span.SetAttributes(attribute.String("skip_reason", "human_override"))
+		return decision
+	}
 
-// buildOverrideDecision builds a manual override decision
-func (c *Controller) buildOverrideDecision(span trace.Span, roomName string, decision ControlDecision,
-	xiaomiTemp, calculatedSetpoint float64, zone string, sensorOffset float64) ControlDecision {
+	// Calculate temperature difference
+	tempDiff := xiaomiTemp - decision.ScheduledTemp
 
+	c.logger.Debug("evaluating room - temperature difference calculated",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.String("room_name", mapping.RoomName),
+		zap.Float64("xiaomi_temp", xiaomiTemp),
+		zap.Float64("target_temp", decision.ScheduledTemp),
+		zap.Float64("temp_diff", tempDiff),
+		zap.Float64("threshold", c.config.TemperatureThreshold),
+	)
+
+	// Determine setpoint based on three-zone algorithm
+	var calculatedSetpoint float64
+	var zone string
+
+	switch {
+	case tempDiff <= -c.config.TemperatureThreshold:
+		// Zone 1: Room too cold - add 0.5°C to trigger heating
+		calculatedSetpoint = decision.ThermostatMeasured + 0.5
+		zone = "too_cold"
+		span.SetAttributes(attribute.String("zone", zone))
+		c.logger.Info("evaluating room - three-zone algorithm: ZONE 1 (too cold)",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("room_name", mapping.RoomName),
+			zap.Float64("temp_diff", tempDiff),
+			zap.Float64("adjustment", 0.5),
+			zap.String("action", "add 0.5°C to trigger heating"),
+		)
+
+	case tempDiff >= c.config.TemperatureThreshold:
+		// Zone 3: Room too warm - subtract 0.5°C to stop heating
+		calculatedSetpoint = decision.ThermostatMeasured - 0.5
+		zone = "too_warm"
+		span.SetAttributes(attribute.String("zone", zone))
+		c.logger.Info("evaluating room - three-zone algorithm: ZONE 3 (too warm)",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("room_name", mapping.RoomName),
+			zap.Float64("temp_diff", tempDiff),
+			zap.Float64("adjustment", -0.5),
+			zap.String("action", "subtract 0.5°C to stop heating"),
+		)
+
+	default:
+		// Zone 2: Within range - maintain current reading
+		calculatedSetpoint = decision.ThermostatMeasured
+		zone = "within_range"
+		span.SetAttributes(attribute.String("zone", zone))
+		c.logger.Debug("evaluating room - three-zone algorithm: ZONE 2 (within range)",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("room_name", mapping.RoomName),
+			zap.Float64("temp_diff", tempDiff),
+			zap.String("action", "maintain current measured temperature"),
+		)
+	}
+
+	// Round to 0.5°C increments (Netatmo requirement)
+	calculatedSetpoint = roundToHalfDegree(calculatedSetpoint)
+
+	// Apply safety bounds (7-30°C)
+	calculatedSetpoint = c.applySafetyBounds(calculatedSetpoint)
+
+	c.logger.Debug("evaluating room - setpoint calculated and bounded",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.String("room_name", mapping.RoomName),
+		zap.Float64("raw_calculated", decision.ThermostatMeasured),
+		zap.Float64("rounded", roundToHalfDegree(decision.ThermostatMeasured)),
+		zap.Float64("final_setpoint", calculatedSetpoint),
+	)
+
+	// Check if setpoint already matches current (no change needed)
+	if math.Abs(calculatedSetpoint-decision.SetpointTemperature) < 0.1 {
+		decision.Action = "no_adjustment_needed"
+		decision.Reason = fmt.Sprintf("setpoint already at target (%.1f°C)", calculatedSetpoint)
+
+		c.logger.Info("evaluating room - no adjustment needed, setpoint already at target",
+			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("room_name", mapping.RoomName),
+			zap.Float64("current_setpoint", decision.SetpointTemperature),
+			zap.Float64("target_setpoint", calculatedSetpoint),
+		)
+
+		span.SetAttributes(
+			attribute.String("decision_action", "no_adjustment_needed"),
+			attribute.Float64("current_setpoint", decision.SetpointTemperature),
+			attribute.Float64("target_setpoint", calculatedSetpoint),
+		)
+
+		return decision
+	}
+
+	// Decision: Set manual override with boundary-aligned expiration
 	decision.Action = "set_manual_override"
 	decision.CalculatedSetpoint = calculatedSetpoint
-	overrideEndTime := calculateBoundaryAlignedEndTime()
+	overrideEndTime := c.calculateBoundaryAlignedEndTime()
 	decision.OverrideEndTime = overrideEndTime.Unix()
 
-	hardOverrideActive := c.isHardOverrideActive(roomName)
-	decision.Reason = buildDecisionReason(xiaomiTemp, decision.ScheduledTemp,
-		decision.ThermostatMeasured, calculatedSetpoint, hardOverrideActive)
+	reasonParts := []string{
+		fmt.Sprintf("xiaomi=%.1f°C", xiaomiTemp),
+		fmt.Sprintf("target=%.1f°C", decision.ScheduledTemp),
+		fmt.Sprintf("measured=%.1f°C", decision.ThermostatMeasured),
+		fmt.Sprintf("setpoint=%.1f°C", calculatedSetpoint),
+	}
 
-	c.logEvaluation(span, roomName,
-		"evaluating room - decision: set manual override",
+	hardOverrideActive := c.isHardOverrideActive(mapping.RoomName)
+	if hardOverrideActive {
+		reasonParts = append(reasonParts, "hard override")
+	}
+
+	decision.Reason = strings.Join(reasonParts, ", ")
+
+	c.logger.Info("evaluating room - decision: set manual override",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.String("room_name", mapping.RoomName),
 		zap.String("zone", zone),
 		zap.Float64("xiaomi_temp", xiaomiTemp),
-		zap.Float64("netatmo_measured", decision.ThermostatMeasured),
-		zap.Float64("sensor_offset", sensorOffset),
 		zap.Float64("target_temp", decision.ScheduledTemp),
+		zap.Float64("temp_diff", tempDiff),
 		zap.Float64("current_setpoint", decision.SetpointTemperature),
 		zap.Float64("new_setpoint", calculatedSetpoint),
 		zap.Time("override_end_time", overrideEndTime),
-		zap.Bool("hard_override_active", hardOverrideActive))
+		zap.Bool("hard_override_active", hardOverrideActive),
+	)
 
-	recordDecisionAttributes(span, decision, hardOverrideActive)
+	span.SetAttributes(
+		attribute.String("decision_action", decision.Action),
+		attribute.String("decision_reason", decision.Reason),
+		attribute.Float64("xiaomi_temperature", decision.XiaomiTemperature),
+		attribute.Float64("scheduled_temperature", decision.ScheduledTemp),
+		attribute.Float64("thermostat_measured", decision.ThermostatMeasured),
+		attribute.Float64("setpoint_temperature", decision.SetpointTemperature),
+		attribute.String("thermostat_mode", decision.ThermostatMode),
+		attribute.Float64("calculated_setpoint", decision.CalculatedSetpoint),
+		attribute.Bool("hard_override_active", hardOverrideActive),
+	)
 
 	return decision
 }
@@ -290,6 +283,54 @@ func (c *Controller) determineScheduledTemp(roomName string, roomStatus *netatmo
 	// If thermostat is in schedule mode, this is the scheduled temp
 	// If in manual mode, we use this as the target for compensation
 	return roomStatus.ThermSetpointTemperature
+}
+
+// roundToHalfDegree rounds a temperature to the nearest 0.5°C
+// Netatmo thermostats only accept setpoints in 0.5°C increments
+func roundToHalfDegree(temp float64) float64 {
+	return math.Round(temp*2.0) / 2.0
+}
+
+// applySafetyBounds applies safety limits to the calculated setpoint
+func (c *Controller) applySafetyBounds(setpoint float64) float64 {
+	const minSetpoint = 7.0
+	const maxSetpoint = 30.0
+
+	if setpoint < minSetpoint {
+		return minSetpoint
+	} else if setpoint > maxSetpoint {
+		return maxSetpoint
+	}
+	return setpoint
+}
+
+// calculateBoundaryAlignedEndTime returns the next 15-minute boundary minus 1 second
+// For example: 12:00:03 → 12:14:59, 12:15:30 → 12:29:59
+func (c *Controller) calculateBoundaryAlignedEndTime() time.Time {
+	now := time.Now()
+	minute := now.Minute()
+
+	// Determine which boundary this falls into
+	var nextBoundary int
+	if minute < 15 {
+		nextBoundary = 15
+	} else if minute < 30 {
+		nextBoundary = 30
+	} else if minute < 45 {
+		nextBoundary = 45
+	} else {
+		nextBoundary = 0 // Next hour
+	}
+
+	// Calculate end time: next boundary minus 1 second (e.g., 14:59:59)
+	if nextBoundary == 0 {
+		// Next hour
+		return now.Add(time.Hour).Truncate(time.Hour).Add(-1 * time.Second)
+	}
+
+	// Same hour
+	endTime := now.Truncate(time.Hour).Add(time.Duration(nextBoundary) * time.Minute).Add(-1 * time.Second)
+	return endTime
 }
 
 // isHardOverrideActive checks if a hard override is currently active for a room
