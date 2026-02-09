@@ -135,8 +135,8 @@ func (c *Controller) evaluateRoom(
 			zap.String("action", "add 0.5°C to trigger heating"),
 		)
 
-	case tempDiff >= c.config.TemperatureThreshold:
-		// Zone 3: Room too warm - subtract 0.5°C to stop heating
+	case tempDiff >= 0.1:
+		// Zone 3: Room too warm (asymmetric: hardcoded 0.1°C) - subtract 0.5°C to stop heating
 		calculatedSetpoint = decision.ThermostatMeasured - 0.5
 		zone = "too_warm"
 		span.SetAttributes(attribute.String("zone", zone))

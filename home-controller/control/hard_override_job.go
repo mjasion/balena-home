@@ -197,7 +197,12 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 		}
 
 		// Calculate setpoint for this room using three-zone algorithm with hard override target
-		calculatedSetpoint := h.calculateSetpointForHardOverride(ctx, override, roomStatus, h.controller.config.Mappings)
+		// Only applies when room is below target (Xiaomi sensor)
+		calculatedSetpoint, shouldApply := h.calculateSetpointForHardOverride(ctx, override, roomStatus, h.controller.config.Mappings)
+		if !shouldApply {
+			skippedOverrideCount++
+			continue
+		}
 
 		// Check if setpoint already matches current (no change needed)
 		if math.Abs(calculatedSetpoint-roomStatus.ThermSetpointTemperature) < 0.1 {
@@ -271,13 +276,14 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 	)
 }
 
-// calculateSetpointForHardOverride calculates the setpoint using the three-zone algorithm with hard override target
+// calculateSetpointForHardOverride calculates the setpoint using the three-zone algorithm with hard override target.
+// Returns (setpoint, shouldApply). shouldApply is false when room is already at/above target (Xiaomi) or no sensor data.
 func (h *HardOverrideJob) calculateSetpointForHardOverride(
 	ctx context.Context,
 	override config.HardOverride,
 	roomStatus *netatmo.RoomStatus,
 	mappings []config.ThermostatMapping,
-) float64 {
+) (float64, bool) {
 	// Find sensor MAC for this room
 	var sensorMAC string
 	for _, mapping := range mappings {
@@ -300,22 +306,31 @@ func (h *HardOverrideJob) calculateSetpointForHardOverride(
 	targetTemp, isActive := h.controller.getHardOverrideTemp(override)
 	if !isActive {
 		// This shouldn't happen since we already checked, but safety
-		return roomStatus.ThermSetpointTemperature
+		return roomStatus.ThermSetpointTemperature, false
 	}
 
-	// If we don't have Xiaomi data, just use measured + adjustment
+	// If we don't have Xiaomi data, skip — cannot make informed decisions without sensor data
 	if xiaomiTemp == 0 {
-		h.logger.Warn("no Xiaomi data available for hard override, using thermostat measured",
+		h.logger.Warn("no Xiaomi data available for hard override, skipping",
 			zap.String("room_name", override.RoomName),
 		)
-		// Return measured temperature to maintain stability
-		return roundToHalfDegree(roomStatus.ThermMeasuredTemperature)
+		return 0, false
 	}
 
-	// Calculate temperature difference
+	// Hard override only applies when room is below target temperature (Xiaomi sensor)
+	// If room is already at or above target, let normal schedule/manual mode handle it
+	if xiaomiTemp >= targetTemp {
+		h.logger.Info("hard override job - room already at/above target, skipping override",
+			zap.String("room_name", override.RoomName),
+			zap.Float64("xiaomi_temp", xiaomiTemp),
+			zap.Float64("target_temp", targetTemp),
+		)
+		return 0, false
+	}
+
+	// Room is below target — calculate setpoint using three-zone algorithm
 	tempDiff := xiaomiTemp - targetTemp
 
-	// Apply three-zone algorithm
 	var calculatedSetpoint float64
 
 	switch {
@@ -323,12 +338,8 @@ func (h *HardOverrideJob) calculateSetpointForHardOverride(
 		// Too cold - add 0.5°C
 		calculatedSetpoint = roomStatus.ThermMeasuredTemperature + 0.5
 
-	case tempDiff >= h.controller.config.TemperatureThreshold:
-		// Too warm - subtract 0.5°C
-		calculatedSetpoint = roomStatus.ThermMeasuredTemperature - 0.5
-
 	default:
-		// Within range - maintain current reading
+		// Within range (between -threshold and 0, since we already checked xiaomiTemp < targetTemp)
 		calculatedSetpoint = roomStatus.ThermMeasuredTemperature
 	}
 
@@ -344,11 +355,11 @@ func (h *HardOverrideJob) calculateSetpointForHardOverride(
 		zap.Float64("calculated_setpoint", calculatedSetpoint),
 	)
 
-	return calculatedSetpoint
+	return calculatedSetpoint, true
 }
 
 // isNonAlgorithmicOverride checks if there's a non-algorithmic override active
-// This would be indicated by an override duration > 15 minutes
+// This would be indicated by an override duration exceeding our configured duration + 5 min buffer
 func (h *HardOverrideJob) isNonAlgorithmicOverride(roomStatus *netatmo.RoomStatus) bool {
 	if roomStatus.ThermSetpointMode != "manual" {
 		return false
@@ -360,6 +371,7 @@ func (h *HardOverrideJob) isNonAlgorithmicOverride(roomStatus *netatmo.RoomStatu
 
 	// Calculate duration
 	durationSeconds := roomStatus.ThermSetpointEndTime - roomStatus.ThermSetpointStartTime
-	// More than 15 minutes (900 seconds)
-	return durationSeconds > 15*60
+	// Non-algorithmic if duration exceeds configured override duration + 5 min buffer
+	maxAlgorithmicDuration := int64(h.controller.config.OverrideDurationMinutes+5) * 60
+	return durationSeconds > maxAlgorithmicDuration
 }

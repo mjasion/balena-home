@@ -226,7 +226,7 @@ thermostatControl:
   # Runs at: :00 seconds of every minute
   # Checks hardOverrides schedule and applies when active
   hardOverrideJobCron: "0 * * * * *"  # or use HARD_OVERRIDE_JOB_CRON env var
-  hardOverrideJobEnabled: false  # Enable/disable hard override job cron (default: false) or use HARD_OVERRIDE_JOB_ENABLED env var
+  hardOverrideJobEnabled: true  # Enable/disable hard override job cron (default: false) or use HARD_OVERRIDE_JOB_ENABLED env var
 
   # Override duration in minutes (how long manual overrides last before expiring)
   overrideDurationMinutes: 30
@@ -281,7 +281,7 @@ thermostatControl:
     #       # No days specified = applies every day
    - roomName: "Łazienka"
      schedule:
-       - startTime: "06:10"
+       - startTime: "05:40"
          endTime: "06:30"
          targetTemperature: 26.5
          days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
