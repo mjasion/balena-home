@@ -15,17 +15,19 @@ import (
 
 // HardOverrideJob handles time-based temperature overrides independently from Control Job
 type HardOverrideJob struct {
-	controller *Controller
-	logger     *zap.Logger
-	tracer     trace.Tracer
+	controller       *Controller
+	logger           *zap.Logger
+	tracer           trace.Tracer
+	sharedHomeStatus *SharedHomeStatus
 }
 
 // NewHardOverrideJob creates a new hard override job
-func NewHardOverrideJob(controller *Controller, logger *zap.Logger, tracer trace.Tracer) *HardOverrideJob {
+func NewHardOverrideJob(controller *Controller, logger *zap.Logger, tracer trace.Tracer, sharedHomeStatus *SharedHomeStatus) *HardOverrideJob {
 	return &HardOverrideJob{
-		controller: controller,
-		logger:     logger,
-		tracer:     tracer,
+		controller:       controller,
+		logger:           logger,
+		tracer:           tracer,
+		sharedHomeStatus: sharedHomeStatus,
 	}
 }
 
@@ -56,20 +58,46 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 
 	span.SetAttributes(attribute.Bool("has_overrides", true))
 
-	// Fetch current home status
-	h.logger.Debug("hard override job - fetching home status from Netatmo API",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
-	)
+	// Get home status from shared state (set by Metric Job) or fetch fresh
+	const maxDataAge = 30 * time.Second
+	var homeStatus *netatmo.HomeStatusResponse
 
-	homeStatus, err := h.controller.netatmoClient.GetHomeStatus(ctx, h.controller.homeID)
-	if err != nil {
-		h.logger.Error("hard override job failed - could not fetch home status",
-			zap.Error(err),
+	sharedStatus, age, metricJobTraceID, hasData := h.sharedHomeStatus.Get()
+	if hasData && age <= maxDataAge {
+		homeStatus = sharedStatus
+		h.logger.Debug("hard override job - using fresh data from metric job",
 			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			zap.String("metric_job_trace_id", metricJobTraceID),
+			zap.Duration("data_age", age),
 		)
-		span.RecordError(err)
-		span.SetAttributes(attribute.Bool("fetch_success", false))
-		return
+		span.SetAttributes(
+			attribute.String("data_source", "metric_job"),
+			attribute.String("metric_job_trace_id", metricJobTraceID),
+		)
+	} else {
+		if hasData {
+			h.logger.Debug("hard override job - shared data is stale, fetching fresh",
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				zap.Duration("data_age", age),
+			)
+		} else {
+			h.logger.Debug("hard override job - no shared data, fetching from Netatmo API",
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
+			)
+		}
+
+		fetchedStatus, err := h.controller.netatmoClient.GetHomeStatus(ctx, h.controller.homeID)
+		if err != nil {
+			h.logger.Error("hard override job failed - could not fetch home status",
+				zap.Error(err),
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
+			)
+			span.RecordError(err)
+			span.SetAttributes(attribute.Bool("fetch_success", false))
+			return
+		}
+		homeStatus = fetchedStatus
+		span.SetAttributes(attribute.String("data_source", "direct_fetch"))
 	}
 
 	span.SetAttributes(
@@ -77,7 +105,7 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 		attribute.Bool("fetch_success", true),
 	)
 
-	h.logger.Debug("hard override job - home status fetched successfully",
+	h.logger.Debug("hard override job - home status available",
 		zap.String("trace_id", span.SpanContext().TraceID().String()),
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 	)

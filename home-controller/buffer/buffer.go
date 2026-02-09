@@ -2,6 +2,7 @@ package buffer
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
@@ -477,6 +478,41 @@ func (rb *RingBuffer) Size() int {
 	rb.mu.RLock()
 	defer rb.mu.RUnlock()
 	return rb.size
+}
+
+// TimestampedReading is a lightweight struct for weighted average calculations
+type TimestampedReading struct {
+	Timestamp   time.Time
+	Temperature float64
+}
+
+// CalculateWeightedAverage calculates a time-weighted average of temperature readings.
+// Recent readings have higher weight: weight = (timestamp - cutoff) / (now - cutoff).
+// Falls back to simple average if all weights are zero. Result is rounded to 2 decimal places.
+func CalculateWeightedAverage(readings []TimestampedReading, cutoff, now time.Time) float64 {
+	if len(readings) == 0 {
+		return 0
+	}
+
+	var weightedSum float64
+	var totalWeight float64
+	timeRange := now.Sub(cutoff).Seconds()
+
+	for _, reading := range readings {
+		weight := reading.Timestamp.Sub(cutoff).Seconds() / timeRange
+		weightedSum += reading.Temperature * weight
+		totalWeight += weight
+	}
+
+	if totalWeight == 0 {
+		var sum float64
+		for _, reading := range readings {
+			sum += reading.Temperature
+		}
+		return math.Round(sum/float64(len(readings))*100) / 100
+	}
+
+	return math.Round(weightedSum/totalWeight*100) / 100
 }
 
 // AddMultiple adds multiple readings to the buffer at once

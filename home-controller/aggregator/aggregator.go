@@ -2,7 +2,6 @@ package aggregator
 
 import (
 	"context"
-	"math"
 	"strings"
 	"time"
 
@@ -85,12 +84,12 @@ func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan t
 		sensorMAC := strings.ToUpper(strings.TrimSpace(sensor.MACAddress))
 
 		// Filter readings for this sensor
-		var sensorReadings []sensorReading
+		var sensorReadings []buffer.TimestampedReading
 		for _, reading := range readings {
 			if reading.Type == buffer.ReadingTypeBLE && reading.BLE != nil {
 				if strings.ToUpper(reading.BLE.MAC) == sensorMAC {
 					if ts, ok := reading.BLE.Timestamp.(time.Time); ok {
-						sensorReadings = append(sensorReadings, sensorReading{
+						sensorReadings = append(sensorReadings, buffer.TimestampedReading{
 							Timestamp:   ts,
 							Temperature: reading.BLE.TemperatureCelsius,
 						})
@@ -108,8 +107,8 @@ func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan t
 			continue
 		}
 
-		// Calculate weighted average
-		weightedAvg := a.calculateWeightedAverage(sensorReadings, cutoff, now)
+		// Calculate weighted average using shared implementation
+		weightedAvg := buffer.CalculateWeightedAverage(sensorReadings, cutoff, now)
 
 		// Create weighted average reading
 		avgReading := &buffer.Reading{
@@ -146,43 +145,3 @@ func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan t
 	)
 }
 
-// calculateWeightedAverage calculates time-weighted average
-// Recent readings have higher weight than older readings
-func (a *Aggregator) calculateWeightedAverage(readings []sensorReading, cutoff, now time.Time) float64 {
-	if len(readings) == 0 {
-		return 0
-	}
-
-	// Calculate weighted average
-	// weight = (timestamp - cutoffTime) / (now - cutoffTime)
-	var weightedSum float64
-	var totalWeight float64
-	timeRange := now.Sub(cutoff).Seconds()
-
-	for _, reading := range readings {
-		weight := reading.Timestamp.Sub(cutoff).Seconds() / timeRange
-		weightedSum += reading.Temperature * weight
-		totalWeight += weight
-	}
-
-	var result float64
-	if totalWeight == 0 {
-		// Fallback: use simple average
-		var sum float64
-		for _, reading := range readings {
-			sum += reading.Temperature
-		}
-		result = sum / float64(len(readings))
-	} else {
-		result = weightedSum / totalWeight
-	}
-
-	// Round to 2 decimal places
-	return math.Round(result*100) / 100
-}
-
-// sensorReading is a lightweight struct for calculations
-type sensorReading struct {
-	Timestamp   time.Time
-	Temperature float64
-}

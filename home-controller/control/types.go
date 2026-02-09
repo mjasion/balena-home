@@ -64,12 +64,6 @@ func (s *ThermostatState) Copy() ThermostatState {
 	}
 }
 
-// SensorReading represents a BLE sensor temperature reading
-type SensorReading struct {
-	Timestamp   time.Time
-	Temperature float64
-}
-
 // ControlDecision represents a decision made by the control algorithm
 type ControlDecision struct {
 	RoomID              string

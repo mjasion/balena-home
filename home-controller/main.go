@@ -258,7 +258,7 @@ func main() {
 
 		// Create Hard Override Job (runs every minute)
 		if cfg.ThermostatControl.HardOverrideJobEnabled {
-			hardOverrideJob := control.NewHardOverrideJob(controller, logger, tracer)
+			hardOverrideJob := control.NewHardOverrideJob(controller, logger, tracer, sharedHomeStatus)
 
 			// Add hard override job
 			if err := jobScheduler.AddCronJobWithSeconds("Hard Override Job", cfg.ThermostatControl.HardOverrideJobCron, hardOverrideJob.Run); err != nil {
