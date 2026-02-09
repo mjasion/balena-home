@@ -832,6 +832,8 @@ func (p *Pusher) buildControlTimeSeries(readings []*buffer.ControlReading) ([]pr
 				actionValue = 1.0
 			case "set_manual_override":
 				actionValue = 2.0
+			case "metric":
+				actionValue = 3.0
 			}
 			actionSamples = append(actionSamples, prompb.Sample{
 				Value:     actionValue,
