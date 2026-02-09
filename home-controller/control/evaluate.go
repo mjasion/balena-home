@@ -196,10 +196,10 @@ func (c *Controller) evaluateRoom(
 		return decision
 	}
 
-	// Decision: Set manual override with boundary-aligned expiration
+	// Decision: Set manual override with configured duration
 	decision.Action = "set_manual_override"
 	decision.CalculatedSetpoint = calculatedSetpoint
-	overrideEndTime := c.calculateBoundaryAlignedEndTime()
+	overrideEndTime := time.Now().Add(time.Duration(c.config.OverrideDurationMinutes) * time.Minute)
 	decision.OverrideEndTime = overrideEndTime.Unix()
 
 	reasonParts := []string{
@@ -278,35 +278,6 @@ func (c *Controller) applySafetyBounds(setpoint float64) float64 {
 		return maxSetpoint
 	}
 	return setpoint
-}
-
-// calculateBoundaryAlignedEndTime returns the next 15-minute boundary minus 1 second
-// For example: 12:00:03 → 12:14:59, 12:15:30 → 12:29:59
-func (c *Controller) calculateBoundaryAlignedEndTime() time.Time {
-	now := time.Now()
-	minute := now.Minute()
-
-	// Determine which boundary this falls into
-	var nextBoundary int
-	if minute < 15 {
-		nextBoundary = 15
-	} else if minute < 30 {
-		nextBoundary = 30
-	} else if minute < 45 {
-		nextBoundary = 45
-	} else {
-		nextBoundary = 0 // Next hour
-	}
-
-	// Calculate end time: next boundary minus 1 second (e.g., 14:59:59)
-	if nextBoundary == 0 {
-		// Next hour
-		return now.Add(time.Hour).Truncate(time.Hour).Add(-1 * time.Second)
-	}
-
-	// Same hour
-	endTime := now.Truncate(time.Hour).Add(time.Duration(nextBoundary) * time.Minute).Add(-1 * time.Second)
-	return endTime
 }
 
 // isHardOverrideActive checks if a hard override is currently active for a room

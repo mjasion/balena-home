@@ -195,18 +195,13 @@ func (c *Controller) applyConfigSafetyLimits(setpoint float64, roomName string) 
 
 // setNetatmoThermostat calls Netatmo API to set thermostat setpoint
 func (c *Controller) setNetatmoThermostat(ctx context.Context, roomID, roomName string, setpoint float64, endTime int64) error {
-	durationMinutes := int64((time.Unix(endTime, 0).Sub(time.Now())).Minutes())
-	if durationMinutes <= 0 {
-		durationMinutes = 1 // Minimum 1 minute
-	}
-
 	ctx, span := c.tracer.Start(ctx, "set_netatmo_thermostat_"+roomName,
 		trace.WithAttributes(
 			attribute.String("home_id", c.homeID),
 			attribute.String("room_id", roomID),
 			attribute.Float64("setpoint", setpoint),
 			attribute.String("mode", "manual"),
-			attribute.Int64("duration_minutes", durationMinutes),
+			attribute.Int64("end_time_unix", endTime),
 		),
 	)
 	defer span.End()
@@ -218,10 +213,10 @@ func (c *Controller) setNetatmoThermostat(ctx context.Context, roomID, roomName 
 		zap.String("room_id", roomID),
 		zap.Float64("setpoint", setpoint),
 		zap.String("mode", "manual"),
-		zap.Int64("duration_minutes", durationMinutes),
+		zap.Int64("end_time_unix", endTime),
 	)
 
-	err := c.netatmoClient.SetRoomThermpoint(ctx, c.homeID, roomID, "manual", setpoint, durationMinutes)
+	err := c.netatmoClient.SetRoomThermpoint(ctx, c.homeID, roomID, "manual", setpoint, endTime)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to set thermostat setpoint")

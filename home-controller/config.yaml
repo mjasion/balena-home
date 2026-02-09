@@ -228,6 +228,9 @@ thermostatControl:
   hardOverrideJobCron: "0 * * * * *"  # or use HARD_OVERRIDE_JOB_CRON env var
   hardOverrideJobEnabled: false  # Enable/disable hard override job cron (default: false) or use HARD_OVERRIDE_JOB_ENABLED env var
 
+  # Override duration in minutes (how long manual overrides last before expiring)
+  overrideDurationMinutes: 30
+
   # Safety limits for calculated setpoints
   # SAFETY: Setpoints are clamped to these limits to prevent extreme temperatures
   minSetpointCelsius: 10.0  # Minimum setpoint (prevents freezing)
