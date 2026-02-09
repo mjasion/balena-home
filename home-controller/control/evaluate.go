@@ -196,6 +196,55 @@ func (c *Controller) evaluateRoom(
 		return decision
 	}
 
+	// In schedule mode, only override if it would actually improve heating behavior.
+	// The schedule is already managing the thermostat — don't convert to manual mode
+	// unless the override moves the setpoint in the right direction.
+	if decision.ThermostatMode == "schedule" {
+		skipScheduleOverride := false
+		var skipReason string
+
+		switch zone {
+		case "within_range":
+			// Schedule is fine, no need to override
+			skipScheduleOverride = true
+			skipReason = fmt.Sprintf("schedule mode, within range (diff=%.2f°C)", tempDiff)
+		case "too_cold":
+			// Only override if we're raising the setpoint above what the schedule has
+			if calculatedSetpoint <= decision.SetpointTemperature {
+				skipScheduleOverride = true
+				skipReason = fmt.Sprintf("schedule mode, too cold but schedule setpoint (%.1f°C) already >= calculated (%.1f°C)", decision.SetpointTemperature, calculatedSetpoint)
+			}
+		case "too_warm":
+			// Only override if we're lowering the setpoint below what the schedule has
+			if calculatedSetpoint >= decision.SetpointTemperature {
+				skipScheduleOverride = true
+				skipReason = fmt.Sprintf("schedule mode, too warm but calculated (%.1f°C) >= schedule setpoint (%.1f°C)", calculatedSetpoint, decision.SetpointTemperature)
+			}
+		}
+
+		if skipScheduleOverride {
+			decision.Action = "no_adjustment_needed"
+			decision.Reason = skipReason
+
+			c.logger.Info("evaluating room - skipping override, schedule already correct",
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				zap.String("room_name", mapping.RoomName),
+				zap.String("zone", zone),
+				zap.String("reason", skipReason),
+				zap.Float64("calculated_setpoint", calculatedSetpoint),
+				zap.Float64("schedule_setpoint", decision.SetpointTemperature),
+			)
+
+			span.SetAttributes(
+				attribute.String("decision_action", "no_adjustment_needed"),
+				attribute.String("skip_reason", "schedule_already_correct"),
+				attribute.String("zone", zone),
+			)
+
+			return decision
+		}
+	}
+
 	// Decision: Set manual override with configured duration
 	decision.Action = "set_manual_override"
 	decision.CalculatedSetpoint = calculatedSetpoint
