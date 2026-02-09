@@ -1,22 +1,3 @@
-<!-- OPENSPEC:START -->
-# OpenSpec Instructions
-
-These instructions are for AI assistants working in this project.
-
-Always open `@/openspec/AGENTS.md` when the request:
-- Mentions planning or proposals (words like proposal, spec, change, plan)
-- Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work
-- Sounds ambiguous and you need the authoritative spec before coding
-
-Use `@/openspec/AGENTS.md` to learn:
-- How to create and apply change proposals
-- Spec format and conventions
-- Project structure and guidelines
-
-Keep this managed block so 'openspec update' can refresh the instructions.
-
-<!-- OPENSPEC:END -->
-
 # Home Controller Service
 
 ## Important Instructions for AI Assistants
@@ -190,11 +171,6 @@ home-controller/
 ├── metrics/
 │   ├── pusher.go          # Prometheus remote_write client
 │   └── pusher_test.go
-├── openspec/              # OpenSpec change proposals and specs
-│   ├── AGENTS.md          # Agent instructions for OpenSpec
-│   ├── project.md         # Project metadata
-│   ├── changes/           # Active and archived changes
-│   └── specs/             # Current specifications
 ├── config.yaml            # Default configuration
 ├── example.env            # Environment variable examples
 ├── Dockerfile             # Multi-stage Docker build
@@ -596,5 +572,4 @@ Traces are automatically created for:
 ## Related Documentation
 
 - [README.md](./README.md): Detailed setup and troubleshooting
-- [OpenSpec Changes](./openspec/changes/): Design documents and proposals
 - [Root CLAUDE.md](../CLAUDE.md): Project-level instructions
