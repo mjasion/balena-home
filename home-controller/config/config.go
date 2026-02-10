@@ -109,7 +109,7 @@ type ThermostatControlConfig struct {
 	HardOverrides           []HardOverride      `yaml:"hardOverrides"`
 	MetricJobCron           string              `yaml:"metricJobCron" env:"METRIC_JOB_CRON" env-default:"0 * * * * *"`                   // Cron expression for metric job (runs every minute at :00)
 	MetricJobEnabled        bool                `yaml:"metricJobEnabled" env:"METRIC_JOB_ENABLED" env-default:"false"`                   // Enable/disable metric job cron
-	ControlJobCron          string              `yaml:"controlJobCron" env:"CONTROL_JOB_CRON" env-default:"5 0,15,30,45 * * * *"`        // Cron expression for control job (runs every 15 min at :05/:20/:35/:50, 5 seconds after metric job)
+	ControlJobCron          string              `yaml:"controlJobCron" env:"CONTROL_JOB_CRON" env-default:"5 * * * * *"`                  // Cron expression for control job (runs every minute at :05, 5 seconds after metric job)
 	ControlJobEnabled       bool                `yaml:"controlJobEnabled" env:"CONTROL_JOB_ENABLED" env-default:"false"`                 // Enable/disable control job cron
 	HardOverrideJobCron     string              `yaml:"hardOverrideJobCron" env:"HARD_OVERRIDE_JOB_CRON" env-default:"0 * * * * *"`      // Cron expression for hard override job (runs every minute at :00)
 	HardOverrideJobEnabled  bool                `yaml:"hardOverrideJobEnabled" env:"HARD_OVERRIDE_JOB_ENABLED" env-default:"false"`      // Enable/disable hard override job cron

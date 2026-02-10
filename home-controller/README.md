@@ -165,7 +165,7 @@ thermostatControl:
 
   # Cron schedules (6-field with seconds)
   metricJobCron: "0 * * * * *"              # Every minute at :00
-  controlJobCron: "5 0,15,30,45 * * * *"    # Every 15 min at :05
+  controlJobCron: "5 * * * * *"             # Every minute at :05
   hardOverrideJobCron: "0 * * * * *"        # Every minute at :00
 
   # Safety limits

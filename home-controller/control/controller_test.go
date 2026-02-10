@@ -21,7 +21,7 @@ func TestControllerConstructor(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		TemperatureThreshold:    0.2,
 		MetricJobCron:           "0 * * * * *",
-		ControlJobCron:          "0 0,15,30,45 * * * *",
+		ControlJobCron:          "0 * * * * *",
 		OverrideDurationMinutes: 30,
 		Mappings: []config.ThermostatMapping{
 			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
@@ -86,7 +86,7 @@ func TestWeightedAverageTemperature(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		TemperatureThreshold:    0.2,
 		MetricJobCron:           "0 * * * * *",
-		ControlJobCron:          "0 0,15,30,45 * * * *",
+		ControlJobCron:          "0 * * * * *",
 		OverrideDurationMinutes: 10,
 	}
 
@@ -449,7 +449,7 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 	cfg := &config.ThermostatControlConfig{
 		TemperatureThreshold:    0.3, // Low threshold to trigger action
 		MetricJobCron:           "0 * * * * *",
-		ControlJobCron:          "0 0,15,30,45 * * * *",
+		ControlJobCron:          "0 * * * * *",
 		HardOverrideJobCron:     "0 * * * * *",
 		OverrideDurationMinutes: 30,
 		Mappings: []config.ThermostatMapping{

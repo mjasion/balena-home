@@ -221,7 +221,7 @@ The system detects and respects manual thermostat changes to avoid fighting with
 - `metricJobEnabled`: Enable/disable metric job cron (default: false)
 - `metricJobCron`: Cron schedule for metric job (default: "0 * * * * *")
 - `controlJobEnabled`: Enable/disable control job cron (default: false)
-- `controlJobCron`: Cron schedule for control job (default: "5 0,15,30,45 * * * *")
+- `controlJobCron`: Cron schedule for control job (default: "5 * * * * *")
 - `hardOverrideJobEnabled`: Enable/disable hard override job cron (default: false)
 - `hardOverrideJobCron`: Cron schedule for hard override job (default: "0 * * * * *")
 

@@ -216,10 +216,10 @@ thermostatControl:
   metricJobCron: "0 * * * * *"  # or use METRIC_JOB_CRON env var
   metricJobEnabled: true  # Enable/disable metric job cron (default: false) or use METRIC_JOB_ENABLED env var
 
-  # Control Job: Evaluates rooms and applies control decisions every 15 minutes at :05 seconds
+  # Control Job: Evaluates rooms and applies control decisions every minute at :05 seconds
   # Runs 5 seconds after Metric Job to ensure fresh data is available
   # Uses data from shared state (if < 30s old) or fetches fresh data itself
-  controlJobCron: "5 0,15,30,45 * * * *"  # or use CONTROL_JOB_CRON env var
+  controlJobCron: "5 * * * * *"  # or use CONTROL_JOB_CRON env var
   controlJobEnabled: true  # Enable/disable control job cron (default: false) or use CONTROL_JOB_ENABLED env var
 
   # Hard Override Job: Applies time-based temperature overrides every minute
