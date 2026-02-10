@@ -901,8 +901,9 @@ func (p *Pusher) buildWeightedAvgTimeSeries(readings []*buffer.WeightedAvgReadin
 			},
 		}
 
-		// Temperature time series (weighted average)
+		// Temperature and humidity time series (weighted averages)
 		tempSamples := make([]prompb.Sample, 0, len(sensorData))
+		humiditySamples := make([]prompb.Sample, 0, len(sensorData))
 
 		for _, reading := range sensorData {
 			// Round timestamp to nearest 10 seconds, then convert to milliseconds
@@ -921,6 +922,12 @@ func (p *Pusher) buildWeightedAvgTimeSeries(readings []*buffer.WeightedAvgReadin
 				Value:     reading.TemperatureCelsius,
 				Timestamp: timestampMs,
 			})
+
+			// Add humidity sample
+			humiditySamples = append(humiditySamples, prompb.Sample{
+				Value:     reading.HumidityPercent,
+				Timestamp: timestampMs,
+			})
 		}
 
 		// Add weighted average temperature time series
@@ -933,6 +940,18 @@ func (p *Pusher) buildWeightedAvgTimeSeries(readings []*buffer.WeightedAvgReadin
 		timeSeries = append(timeSeries, prompb.TimeSeries{
 			Labels:  tempLabels,
 			Samples: tempSamples,
+		})
+
+		// Add weighted average humidity time series
+		humidityLabels := append([]prompb.Label{
+			{
+				Name:  "__name__",
+				Value: "ble_humidity_weighted_avg_percent",
+			},
+		}, baseLabels...)
+		timeSeries = append(timeSeries, prompb.TimeSeries{
+			Labels:  humidityLabels,
+			Samples: humiditySamples,
 		})
 	}
 

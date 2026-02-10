@@ -92,6 +92,7 @@ func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan t
 						sensorReadings = append(sensorReadings, buffer.TimestampedReading{
 							Timestamp:   ts,
 							Temperature: reading.BLE.TemperatureCelsius,
+							Humidity:    float64(reading.BLE.HumidityPercent),
 						})
 					}
 				}
@@ -107,8 +108,9 @@ func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan t
 			continue
 		}
 
-		// Calculate weighted average using shared implementation
+		// Calculate weighted averages using shared implementation
 		weightedAvg := buffer.CalculateWeightedAverage(sensorReadings, cutoff, now)
+		weightedHumidity := buffer.CalculateWeightedAverageHumidity(sensorReadings, cutoff, now)
 
 		// Create weighted average reading
 		avgReading := &buffer.Reading{
@@ -119,6 +121,7 @@ func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan t
 				RoomName:           sensor.Name,
 				SensorID:           sensor.ID,
 				TemperatureCelsius: weightedAvg,
+				HumidityPercent:    weightedHumidity,
 				ReadingCount:       len(sensorReadings),
 			},
 		}
@@ -133,6 +136,7 @@ func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan t
 			zap.String("sensor_mac", sensorMAC),
 			zap.Int("reading_count", len(sensorReadings)),
 			zap.Float64("weighted_average", weightedAvg),
+			zap.Float64("weighted_humidity", weightedHumidity),
 			zap.String("trace_id", parentSpan.SpanContext().TraceID().String()),
 		)
 	}

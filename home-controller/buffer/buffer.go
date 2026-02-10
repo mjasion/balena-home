@@ -85,6 +85,7 @@ type WeightedAvgReading struct {
 	RoomName           string
 	SensorID           int
 	TemperatureCelsius float64 // Weighted average over last 60 seconds
+	HumidityPercent    float64 // Weighted average humidity over last 60 seconds
 	ReadingCount       int     // Number of readings used in calculation
 }
 
@@ -484,6 +485,7 @@ func (rb *RingBuffer) Size() int {
 type TimestampedReading struct {
 	Timestamp   time.Time
 	Temperature float64
+	Humidity    float64
 }
 
 // CalculateWeightedAverage calculates a time-weighted average of temperature readings.
@@ -508,6 +510,34 @@ func CalculateWeightedAverage(readings []TimestampedReading, cutoff, now time.Ti
 		var sum float64
 		for _, reading := range readings {
 			sum += reading.Temperature
+		}
+		return math.Round(sum/float64(len(readings))*100) / 100
+	}
+
+	return math.Round(weightedSum/totalWeight*100) / 100
+}
+
+// CalculateWeightedAverageHumidity calculates a time-weighted average of humidity readings.
+// Uses the same algorithm as CalculateWeightedAverage but operates on the Humidity field.
+func CalculateWeightedAverageHumidity(readings []TimestampedReading, cutoff, now time.Time) float64 {
+	if len(readings) == 0 {
+		return 0
+	}
+
+	var weightedSum float64
+	var totalWeight float64
+	timeRange := now.Sub(cutoff).Seconds()
+
+	for _, reading := range readings {
+		weight := reading.Timestamp.Sub(cutoff).Seconds() / timeRange
+		weightedSum += reading.Humidity * weight
+		totalWeight += weight
+	}
+
+	if totalWeight == 0 {
+		var sum float64
+		for _, reading := range readings {
+			sum += reading.Humidity
 		}
 		return math.Round(sum/float64(len(readings))*100) / 100
 	}
