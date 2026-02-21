@@ -9,6 +9,7 @@ import (
 
 	"github.com/mjasion/balena-home/thermostats/config"
 	"github.com/mjasion/balena-home/thermostats/netatmo"
+	homeOtel "github.com/mjasion/balena-home/thermostats/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -30,7 +31,7 @@ func (c *Controller) evaluateRoom(
 	defer span.End()
 
 	c.logger.Debug("evaluating room - starting decision process",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("room_name", mapping.RoomName),
 	)
 
@@ -45,7 +46,7 @@ func (c *Controller) evaluateRoom(
 	if !roomExists {
 		decision.Reason = "room not found in Netatmo status"
 		c.logger.Warn("evaluating room - room not found in Netatmo home status",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("room_name", mapping.RoomName),
 			zap.String("room_id", mapping.RoomID),
 		)
@@ -56,7 +57,7 @@ func (c *Controller) evaluateRoom(
 	if !roomStatus.Reachable {
 		decision.Reason = "thermostat not reachable"
 		c.logger.Info("evaluating room - thermostat not reachable, skipping",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("room_name", mapping.RoomName),
 		)
 		span.SetAttributes(attribute.String("skip_reason", "not_reachable"))
@@ -77,7 +78,7 @@ func (c *Controller) evaluateRoom(
 	if err != nil || xiaomiTemp == 0 {
 		decision.Reason = "sensor data unavailable"
 		c.logger.Warn("evaluating room - sensor data unavailable",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("room_name", mapping.RoomName),
 			zap.String("sensor_mac", sensorMAC),
 		)
@@ -87,7 +88,7 @@ func (c *Controller) evaluateRoom(
 	decision.XiaomiTemperature = xiaomiTemp
 
 	c.logger.Debug("evaluating room - sensor data retrieved",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("room_name", mapping.RoomName),
 		zap.Float64("xiaomi_temp", xiaomiTemp),
 		zap.Float64("thermostat_measured", decision.ThermostatMeasured),
@@ -97,7 +98,7 @@ func (c *Controller) evaluateRoom(
 	if c.isHumanOverride(roomStatus) {
 		decision.Reason = "human override detected (duration >= 60 min), skipping"
 		c.logger.Info("evaluating room - human override detected, skipping control",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("room_name", mapping.RoomName),
 			zap.String("mode", roomStatus.ThermSetpointMode),
 		)
@@ -105,11 +106,24 @@ func (c *Controller) evaluateRoom(
 		return decision
 	}
 
+	// Skip non-controllable modes (frost guard, away)
+	// These are intentional user-set modes that the algorithm should not override
+	if decision.ThermostatMode == "hg" || decision.ThermostatMode == "away" {
+		decision.Reason = fmt.Sprintf("thermostat in %s mode, skipping control", decision.ThermostatMode)
+		c.logger.Info("evaluating room - skipping non-controllable mode",
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
+			zap.String("room_name", mapping.RoomName),
+			zap.String("mode", decision.ThermostatMode),
+		)
+		span.SetAttributes(attribute.String("skip_reason", "non_controllable_mode"))
+		return decision
+	}
+
 	// Calculate temperature difference
 	tempDiff := xiaomiTemp - decision.ScheduledTemp
 
 	c.logger.Debug("evaluating room - temperature difference calculated",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("room_name", mapping.RoomName),
 		zap.Float64("xiaomi_temp", xiaomiTemp),
 		zap.Float64("target_temp", decision.ScheduledTemp),
@@ -128,7 +142,7 @@ func (c *Controller) evaluateRoom(
 		zone = "too_cold"
 		span.SetAttributes(attribute.String("zone", zone))
 		c.logger.Info("evaluating room - three-zone algorithm: ZONE 1 (too cold)",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("room_name", mapping.RoomName),
 			zap.Float64("temp_diff", tempDiff),
 			zap.Float64("adjustment", 0.5),
@@ -141,7 +155,7 @@ func (c *Controller) evaluateRoom(
 		zone = "too_warm"
 		span.SetAttributes(attribute.String("zone", zone))
 		c.logger.Info("evaluating room - three-zone algorithm: ZONE 3 (too warm)",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("room_name", mapping.RoomName),
 			zap.Float64("temp_diff", tempDiff),
 			zap.Float64("adjustment", -0.5),
@@ -154,7 +168,7 @@ func (c *Controller) evaluateRoom(
 		zone = "within_range"
 		span.SetAttributes(attribute.String("zone", zone))
 		c.logger.Debug("evaluating room - three-zone algorithm: ZONE 2 (within range)",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("room_name", mapping.RoomName),
 			zap.Float64("temp_diff", tempDiff),
 			zap.String("action", "maintain current measured temperature"),
@@ -168,7 +182,7 @@ func (c *Controller) evaluateRoom(
 	calculatedSetpoint = c.applySafetyBounds(calculatedSetpoint)
 
 	c.logger.Debug("evaluating room - setpoint calculated and bounded",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("room_name", mapping.RoomName),
 		zap.Float64("raw_calculated", decision.ThermostatMeasured),
 		zap.Float64("rounded", roundToHalfDegree(decision.ThermostatMeasured)),
@@ -181,7 +195,7 @@ func (c *Controller) evaluateRoom(
 		decision.Reason = fmt.Sprintf("setpoint already at target (%.1f°C)", calculatedSetpoint)
 
 		c.logger.Info("evaluating room - no adjustment needed, setpoint already at target",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("room_name", mapping.RoomName),
 			zap.Float64("current_setpoint", decision.SetpointTemperature),
 			zap.Float64("target_setpoint", calculatedSetpoint),
@@ -227,7 +241,7 @@ func (c *Controller) evaluateRoom(
 			decision.Reason = skipReason
 
 			c.logger.Info("evaluating room - skipping override, schedule already correct",
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 				zap.String("room_name", mapping.RoomName),
 				zap.String("zone", zone),
 				zap.String("reason", skipReason),
@@ -266,7 +280,7 @@ func (c *Controller) evaluateRoom(
 	decision.Reason = strings.Join(reasonParts, ", ")
 
 	c.logger.Info("evaluating room - decision: set manual override",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("room_name", mapping.RoomName),
 		zap.String("zone", zone),
 		zap.Float64("xiaomi_temp", xiaomiTemp),

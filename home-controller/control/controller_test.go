@@ -529,3 +529,105 @@ func TestLargeSensorOffsetCompensation(t *testing.T) {
 	t.Logf("  Calculated setpoint: %.1f°C (compensates for offset)", decision.CalculatedSetpoint)
 	t.Logf("  Reason: %s", decision.Reason)
 }
+
+// TestEvaluateRoom_HGMode_SkipsControl tests that frost guard mode is not overridden
+func TestEvaluateRoom_HGMode_SkipsControl(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	cfg := &config.ThermostatControlConfig{
+		TemperatureThreshold:    0.2,
+		OverrideDurationMinutes: 10,
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
+		},
+	}
+
+	sharedHomeStatus := NewSharedHomeStatus()
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, sharedHomeStatus)
+
+	// Add sensor reading: Xiaomi shows 28°C (well above HG setpoint)
+	now := time.Now()
+	controlBuffer.Add(context.Background(), &buffer.Reading{
+		Type: buffer.ReadingTypeBLE,
+		BLE: &buffer.SensorReading{
+			Timestamp:          now,
+			MAC:                "AA:BB:CC:DD:EE:FF",
+			TemperatureCelsius: 28.0,
+		},
+	})
+
+	roomStatusMap := map[string]*netatmo.RoomStatus{
+		"room1": {
+			ID:                       "room1",
+			Reachable:                true,
+			ThermMeasuredTemperature: 28.0,
+			ThermSetpointTemperature: 22.0, // HG setpoint
+			ThermSetpointMode:        "hg",
+		},
+	}
+
+	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
+
+	if decision.Action != "skip" {
+		t.Errorf("Expected action 'skip' for hg mode, got '%s' (reason: %s)", decision.Action, decision.Reason)
+	}
+	if !strings.Contains(decision.Reason, "hg mode") {
+		t.Errorf("Expected reason to mention hg mode, got: %s", decision.Reason)
+	}
+	if decision.CalculatedSetpoint != 0 {
+		t.Errorf("Expected no calculated setpoint, got %.1f", decision.CalculatedSetpoint)
+	}
+}
+
+// TestEvaluateRoom_AwayMode_SkipsControl tests that away mode is not overridden
+func TestEvaluateRoom_AwayMode_SkipsControl(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controlBuffer := buffer.New(100, logger)
+	metricsBuffer := buffer.New(100, logger)
+
+	cfg := &config.ThermostatControlConfig{
+		TemperatureThreshold:    0.2,
+		OverrideDurationMinutes: 10,
+		Mappings: []config.ThermostatMapping{
+			{RoomName: "Living Room", SensorMAC: "AA:BB:CC:DD:EE:FF", RoomID: "room1"},
+		},
+	}
+
+	sharedHomeStatus := NewSharedHomeStatus()
+	c := New(cfg, nil, controlBuffer, metricsBuffer, logger, sharedHomeStatus)
+
+	// Add sensor reading
+	now := time.Now()
+	controlBuffer.Add(context.Background(), &buffer.Reading{
+		Type: buffer.ReadingTypeBLE,
+		BLE: &buffer.SensorReading{
+			Timestamp:          now,
+			MAC:                "AA:BB:CC:DD:EE:FF",
+			TemperatureCelsius: 25.0,
+		},
+	})
+
+	roomStatusMap := map[string]*netatmo.RoomStatus{
+		"room1": {
+			ID:                       "room1",
+			Reachable:                true,
+			ThermMeasuredTemperature: 25.0,
+			ThermSetpointTemperature: 16.0, // Away setpoint
+			ThermSetpointMode:        "away",
+		},
+	}
+
+	decision := c.evaluateRoom(context.Background(), cfg.Mappings[0], roomStatusMap)
+
+	if decision.Action != "skip" {
+		t.Errorf("Expected action 'skip' for away mode, got '%s' (reason: %s)", decision.Action, decision.Reason)
+	}
+	if !strings.Contains(decision.Reason, "away mode") {
+		t.Errorf("Expected reason to mention away mode, got: %s", decision.Reason)
+	}
+	if decision.CalculatedSetpoint != 0 {
+		t.Errorf("Expected no calculated setpoint, got %.1f", decision.CalculatedSetpoint)
+	}
+}
