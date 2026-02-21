@@ -19,8 +19,61 @@ import (
 	"go.uber.org/zap"
 )
 
+// CreateResource builds a shared OTel resource with service name, version, and custom attributes.
+// The returned resource is used by both the tracer and log provider.
+func CreateResource(ctx context.Context, cfg *config.OpenTelemetryConfig, logger *zap.Logger) (*resource.Resource, error) {
+	resourceAttrs := []attribute.KeyValue{
+		semconv.ServiceName(cfg.ServiceName),
+		semconv.ServiceVersion("1.0.0"), // TODO: make this configurable or get from build info
+	}
+
+	for key, value := range cfg.ResourceAttributes {
+		resourceAttrs = append(resourceAttrs, attribute.String(key, value))
+		logger.Debug("custom resource attribute",
+			zap.String("key", key),
+			zap.String("value", value),
+		)
+	}
+
+	res, err := resource.New(ctx,
+		resource.WithAttributes(resourceAttrs...),
+		resource.WithProcessRuntimeDescription(),
+		resource.WithHost(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create resource: %w", err)
+	}
+	return res, nil
+}
+
+// parseEndpoint extracts the host and URL path from an OTLP endpoint string.
+// It returns the host (without protocol) and the path prefix (e.g., "/otlp").
+func parseEndpoint(rawEndpoint string) (host string, urlPath string) {
+	host = rawEndpoint
+
+	// Remove protocol prefix if present
+	if len(host) > 8 && host[:8] == "https://" {
+		host = host[8:]
+	} else if len(host) > 7 && host[:7] == "http://" {
+		host = host[7:]
+	}
+
+	// Extract path if present (e.g., "/otlp" from "host/otlp")
+	if idx := strings.Index(host, "/"); idx > 0 {
+		urlPath = host[idx:] // e.g., "/otlp"
+		host = host[:idx]    // e.g., "host"
+	}
+
+	return host, urlPath
+}
+
+// isHTTPS returns true if the endpoint starts with https://
+func isHTTPS(endpoint string) bool {
+	return len(endpoint) > 8 && endpoint[:8] == "https://"
+}
+
 // InitTracer initializes the OpenTelemetry tracer with OTLP HTTP exporter
-func InitTracer(ctx context.Context, cfg *config.OpenTelemetryConfig, logger *zap.Logger) (func(context.Context) error, error) {
+func InitTracer(ctx context.Context, cfg *config.OpenTelemetryConfig, res *resource.Resource, logger *zap.Logger) (func(context.Context) error, error) {
 	if !cfg.Enabled {
 		logger.Info("OpenTelemetry tracing is disabled")
 		return func(ctx context.Context) error { return nil }, nil
@@ -33,29 +86,9 @@ func InitTracer(ctx context.Context, cfg *config.OpenTelemetryConfig, logger *za
 		zap.Float64("sampling_rate", cfg.SamplingRate),
 	)
 
-	// Parse endpoint to extract host and path
-	endpoint := cfg.Endpoint
-	var urlPath string
-
-	// Remove protocol prefix if present
-	if len(endpoint) > 8 && endpoint[:8] == "https://" {
-		endpoint = endpoint[8:]
-	} else if len(endpoint) > 7 && endpoint[:7] == "http://" {
-		endpoint = endpoint[7:]
-	}
-
-	// Extract path if present (e.g., "/otlp" from "host/otlp")
-	if idx := strings.Index(endpoint, "/"); idx > 0 {
-		urlPath = endpoint[idx:]  // e.g., "/otlp"
-		endpoint = endpoint[:idx] // e.g., "host"
-	}
-
-	// Combine extracted path with /v1/traces
-	// If urlPath is "/otlp", result will be "/otlp/v1/traces"
-	// If urlPath is empty, result will be "/v1/traces"
+	endpoint, urlPath := parseEndpoint(cfg.Endpoint)
 	fullPath := urlPath + "/v1/traces"
 
-	// Configure OTLP HTTP exporter options
 	opts := []otlptracehttp.Option{
 		otlptracehttp.WithEndpoint(endpoint),
 		otlptracehttp.WithURLPath(fullPath),
@@ -66,49 +99,21 @@ func InitTracer(ctx context.Context, cfg *config.OpenTelemetryConfig, logger *za
 		zap.String("url_path", fullPath),
 	)
 
-	// Parse and add headers if configured
 	if cfg.Headers != "" {
 		headers := parseHeaders(cfg.Headers)
 		opts = append(opts, otlptracehttp.WithHeaders(headers))
 		logger.Debug("OpenTelemetry headers configured", zap.Int("header_count", len(headers)))
 	}
 
-	// Use HTTPS if endpoint starts with https://
-	if len(cfg.Endpoint) > 8 && cfg.Endpoint[:8] == "https://" {
+	if isHTTPS(cfg.Endpoint) {
 		opts = append(opts, otlptracehttp.WithTLSClientConfig(&tls.Config{MinVersion: tls.VersionTLS12}))
 	} else {
 		opts = append(opts, otlptracehttp.WithInsecure())
 	}
 
-	// Create OTLP HTTP exporter
 	exporter, err := otlptracehttp.New(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OTLP HTTP exporter: %w", err)
-	}
-
-	// Build resource attributes
-	resourceAttrs := []attribute.KeyValue{
-		semconv.ServiceName(cfg.ServiceName),
-		semconv.ServiceVersion("1.0.0"), // TODO: make this configurable or get from build info
-	}
-
-	// Add custom resource attributes
-	for key, value := range cfg.ResourceAttributes {
-		resourceAttrs = append(resourceAttrs, attribute.String(key, value))
-		logger.Debug("custom resource attribute",
-			zap.String("key", key),
-			zap.String("value", value),
-		)
-	}
-
-	// Create resource
-	res, err := resource.New(ctx,
-		resource.WithAttributes(resourceAttrs...),
-		resource.WithProcessRuntimeDescription(),
-		resource.WithHost(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
 	// Create sampler with separate metrics sampling rate

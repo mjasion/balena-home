@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
+	homeOtel "github.com/mjasion/balena-home/thermostats/otel"
 	"github.com/mjasion/balena-home/thermostats/scanner"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -49,8 +50,7 @@ func (a *Aggregator) Run(ctx context.Context) {
 	defer span.End()
 
 	a.logger.Debug("starting BLE aggregator job",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
-		zap.String("span_id", span.SpanContext().SpanID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 	)
 
 	a.calculateWeightedAverages(ctx, span)
@@ -66,7 +66,7 @@ func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan t
 
 	if len(readings) == 0 {
 		a.logger.Debug("no readings available for weighted average calculation",
-			zap.String("trace_id", parentSpan.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		)
 		parentSpan.SetAttributes(attribute.Int("sensor_count", 0))
 		return
@@ -103,7 +103,7 @@ func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan t
 			a.logger.Debug("no readings found for sensor in last 60 seconds",
 				zap.String("sensor_name", sensor.Name),
 				zap.String("sensor_mac", sensorMAC),
-				zap.String("trace_id", parentSpan.SpanContext().TraceID().String()),
+				homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			)
 			continue
 		}
@@ -137,7 +137,7 @@ func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan t
 			zap.Int("reading_count", len(sensorReadings)),
 			zap.Float64("weighted_average", weightedAvg),
 			zap.Float64("weighted_humidity", weightedHumidity),
-			zap.String("trace_id", parentSpan.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		)
 	}
 
@@ -145,7 +145,7 @@ func (a *Aggregator) calculateWeightedAverages(ctx context.Context, parentSpan t
 
 	a.logger.Info("completed BLE aggregation",
 		zap.Int("sensors_processed", sensorsProcessed),
-		zap.String("trace_id", parentSpan.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 	)
 }
 

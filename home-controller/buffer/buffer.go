@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	homeOtel "github.com/mjasion/balena-home/thermostats/otel"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -166,7 +167,7 @@ func (rb *RingBuffer) Add(ctx context.Context, reading *Reading) {
 		rb.logger.Debug("ring buffer full, overwriting oldest data",
 			zap.Int("capacity", rb.capacity),
 			zap.String("overwritten_type", string(overwrittenType)),
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		)
 	}
 

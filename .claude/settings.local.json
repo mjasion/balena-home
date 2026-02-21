@@ -1,4 +1,12 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(go:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)"
+    ]
+  },
   "sandbox": {
     "enabled": false,
     "autoAllowBashIfSandboxed": false

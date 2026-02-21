@@ -8,6 +8,7 @@ import (
 
 	"github.com/mjasion/balena-home/thermostats/config"
 	"github.com/mjasion/balena-home/thermostats/netatmo"
+	homeOtel "github.com/mjasion/balena-home/thermostats/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -45,7 +46,7 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 	defer span.End()
 
 	h.logger.Info("hard override job started - checking for active time-based overrides",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("configured_overrides", len(h.controller.config.HardOverrides)),
 	)
 
@@ -66,7 +67,7 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 	if hasData && age <= maxDataAge {
 		homeStatus = sharedStatus
 		h.logger.Debug("hard override job - using fresh data from metric job",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("metric_job_trace_id", metricJobTraceID),
 			zap.Duration("data_age", age),
 		)
@@ -77,12 +78,12 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 	} else {
 		if hasData {
 			h.logger.Debug("hard override job - shared data is stale, fetching fresh",
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 				zap.Duration("data_age", age),
 			)
 		} else {
 			h.logger.Debug("hard override job - no shared data, fetching from Netatmo API",
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			)
 		}
 
@@ -90,7 +91,7 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 		if err != nil {
 			h.logger.Error("hard override job failed - could not fetch home status",
 				zap.Error(err),
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			)
 			span.RecordError(err)
 			span.SetAttributes(attribute.Bool("fetch_success", false))
@@ -106,7 +107,7 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 	)
 
 	h.logger.Debug("hard override job - home status available",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 	)
 
@@ -136,7 +137,7 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 		activeOverrideCount++
 
 		h.logger.Info("hard override job - active override detected",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("room_name", override.RoomName),
 			zap.Float64("target_temperature", targetTemp),
 		)
@@ -238,13 +239,13 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 
 			if err != nil {
 				h.logger.Error("hard override job - failed to apply override",
-					zap.String("trace_id", span.SpanContext().TraceID().String()),
+					homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 					zap.String("room_name", override.RoomName),
 					zap.Error(err),
 				)
 			} else {
 				h.logger.Info("hard override job - override applied successfully",
-					zap.String("trace_id", span.SpanContext().TraceID().String()),
+					homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 					zap.String("room_name", override.RoomName),
 					zap.Float64("calculated_setpoint", calculatedSetpoint),
 					zap.Float64("target_temperature", targetTemp),
@@ -269,7 +270,7 @@ func (h *HardOverrideJob) Run(ctx context.Context) {
 	)
 
 	h.logger.Info("hard override job completed",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("active_overrides", activeOverrideCount),
 		zap.Int("applied_overrides", appliedOverrideCount),
 		zap.Int("skipped_overrides", skippedOverrideCount),

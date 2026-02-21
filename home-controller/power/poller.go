@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
+	homeOtel "github.com/mjasion/balena-home/thermostats/otel"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -39,8 +40,8 @@ func (p *Poller) Run(ctx context.Context) {
 	defer span.End()
 
 	p.logger.Debug("starting power poller job",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
-		zap.String("span_id", span.SpanContext().SpanID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
+
 	)
 
 	p.scrapeAndBuffer(ctx)
@@ -55,7 +56,7 @@ func (p *Poller) scrapeAndBuffer(ctx context.Context) {
 	if err != nil {
 		p.logger.Error("failed to scrape power meter data",
 			zap.Error(err),
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		)
 		span.RecordError(err)
 		return
@@ -63,7 +64,7 @@ func (p *Poller) scrapeAndBuffer(ctx context.Context) {
 
 	if len(result.Readings) == 0 {
 		p.logger.Debug("no power readings returned",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		)
 		span.SetAttributes(attribute.Int("reading_count", 0))
 		return
@@ -105,6 +106,6 @@ func (p *Poller) scrapeAndBuffer(ctx context.Context) {
 	p.logger.Info("scraped and buffered power meter data",
 		zap.Int("reading_count", len(result.Readings)),
 		zap.Any("sensor_types", typeCount),
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 	)
 }

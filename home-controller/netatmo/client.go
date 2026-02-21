@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	homeOtel "github.com/mjasion/balena-home/thermostats/otel"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -97,7 +98,7 @@ func (c *Client) refreshAccessToken(ctx context.Context) error {
 	}
 
 	c.logger.Debug("refreshing Netatmo access token",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("token_url", tokenURLToUse),
 		zap.String("grant_type", "refresh_token"),
 	)
@@ -124,7 +125,7 @@ func (c *Client) refreshAccessToken(ctx context.Context) error {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		c.logger.Debug("token refresh failed",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.Int("status_code", resp.StatusCode),
 			zap.String("response_body", string(body)),
 		)
@@ -151,7 +152,7 @@ func (c *Client) refreshAccessToken(ctx context.Context) error {
 	}
 
 	c.logger.Debug("token refreshed successfully",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("expires_in", tokenResp.ExpiresIn),
 		zap.Time("token_expiry", c.tokenExpiry),
 	)
@@ -209,7 +210,7 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body io.Read
 	}
 
 	c.logger.Debug("Netatmo API request",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("method", method),
 		zap.String("url", url),
 		zap.String("body", bodyStr),
@@ -265,7 +266,7 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body io.Read
 			if result != nil {
 				bodyBytes, _ := io.ReadAll(resp.Body)
 				c.logger.Debug("Netatmo API response",
-					zap.String("trace_id", span.SpanContext().TraceID().String()),
+					homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 					zap.String("url", url),
 					zap.Int("status_code", resp.StatusCode),
 					zap.String("response_body", string(bodyBytes)),
@@ -292,7 +293,7 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body io.Read
 		errMsg := string(bodyBytes)
 
 		c.logger.Debug("Netatmo API error response",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("url", url),
 			zap.Int("status_code", resp.StatusCode),
 			zap.String("response_body", errMsg),
@@ -313,7 +314,7 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body io.Read
 				// Calculate exponential backoff: 2s, 4s, 8s
 				delay := baseDelay * time.Duration(1<<uint(attempt))
 				c.logger.Warn("Netatmo API rate limit hit, retrying with backoff",
-					zap.String("trace_id", span.SpanContext().TraceID().String()),
+					homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 					zap.String("url", url),
 					zap.Int("attempt", attempt+1),
 					zap.Int("max_retries", maxRetries+1),
@@ -332,7 +333,7 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body io.Read
 			} else {
 				// Max retries exhausted
 				c.logger.Error("max retries exhausted for Netatmo API call",
-					zap.String("trace_id", span.SpanContext().TraceID().String()),
+					homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 					zap.String("url", url),
 					zap.Int("attempts", attempt+1),
 				)
@@ -446,7 +447,7 @@ func (c *Client) SetRoomThermpoint(ctx context.Context, homeID, roomID string, m
 	}
 
 	c.logger.Debug("setting room thermpoint",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("home_id", homeID),
 		zap.String("room_id", roomID),
 		zap.String("mode", mode),
@@ -470,7 +471,7 @@ func (c *Client) SetRoomThermpoint(ctx context.Context, homeID, roomID string, m
 	}
 
 	c.logger.Debug("room thermpoint set successfully",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("home_id", homeID),
 		zap.String("room_id", roomID),
 		zap.String("response_status", response.Status),
@@ -559,7 +560,7 @@ func (c *Client) FetchAllThermostats(ctx context.Context) ([]ThermostatReading, 
 	span.SetStatus(codes.Ok, "all thermostats fetched successfully")
 
 	c.logger.Debug("fetched all thermostats",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("total_readings", len(readings)),
 		zap.Int("homes_count", len(homesData.Body.Homes)),
 	)

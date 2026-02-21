@@ -7,6 +7,7 @@ import (
 
 	"github.com/mjasion/balena-home/thermostats/buffer"
 	"github.com/mjasion/balena-home/thermostats/netatmo"
+	homeOtel "github.com/mjasion/balena-home/thermostats/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -44,8 +45,8 @@ func (m *MetricJob) Run(ctx context.Context) {
 	fetchStart := time.Now()
 
 	m.logger.Info("metric job started - fetching home status from Netatmo API",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
-		zap.String("span_id", span.SpanContext().SpanID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
+
 		zap.String("home_id", m.controller.homeID),
 	)
 
@@ -55,7 +56,7 @@ func (m *MetricJob) Run(ctx context.Context) {
 	if err != nil {
 		m.logger.Error("metric job failed - could not fetch home status from Netatmo API",
 			zap.Error(err),
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("home_id", m.controller.homeID),
 		)
 		span.RecordError(err)
@@ -72,14 +73,14 @@ func (m *MetricJob) Run(ctx context.Context) {
 	)
 
 	m.logger.Info("metric job - home status fetched successfully from Netatmo API",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 		zap.Duration("fetch_duration", fetchDuration),
 	)
 
 	// Add Netatmo data to metrics buffer for Prometheus push
 	m.logger.Debug("metric job - adding Netatmo data to metrics buffer",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 	)
 	m.controller.addToMetricsBuffer(ctx, homeStatus)
@@ -99,7 +100,7 @@ func (m *MetricJob) Run(ctx context.Context) {
 	)
 
 	m.logger.Info("metric job completed - home status stored in shared state",
-		zap.String("trace_id", traceID),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Duration("total_duration", totalDuration),
 		zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 	)
@@ -182,7 +183,7 @@ func (m *MetricJob) pushTemperatureDifferenceMetrics(ctx context.Context, homeSt
 	span.SetAttributes(attribute.Int("metrics_pushed", pushedCount))
 
 	m.logger.Debug("metric job - temperature difference metrics pushed",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("metrics_pushed", pushedCount),
 	)
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/mjasion/balena-home/thermostats/buffer"
 	"github.com/mjasion/balena-home/thermostats/config"
 	"github.com/mjasion/balena-home/thermostats/netatmo"
+	homeOtel "github.com/mjasion/balena-home/thermostats/otel"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -215,7 +216,7 @@ func (c *Controller) addToMetricsBuffer(ctx context.Context, homeStatus *netatmo
 			readingsAdded++
 
 			c.logger.Debug("added Netatmo reading to metrics buffer",
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 				zap.String("room_name", roomName),
 				zap.String("room_id", roomStatus.ID),
 				zap.Float64("measured_temp", roomStatus.ThermMeasuredTemperature),
@@ -228,7 +229,7 @@ func (c *Controller) addToMetricsBuffer(ctx context.Context, homeStatus *netatmo
 		span.SetAttributes(attribute.Int("readings_added", readingsAdded))
 
 		c.logger.Debug("added Netatmo readings to metrics buffer",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.Int("readings_added", readingsAdded),
 		)
 	}()
@@ -252,8 +253,8 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 	c.logger.Info("control job started - waiting for home status from metric job",
 		zap.Int("mapping_count", len(c.config.Mappings)),
 		zap.Bool("dry_run", c.config.DryRun),
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
-		zap.String("span_id", span.SpanContext().SpanID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
+
 	)
 
 	// Check if mappings configured
@@ -277,7 +278,7 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		metricJobTraceID = traceID
 
 		c.logger.Info("control job - using fresh data from metric job",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("metric_job_trace_id", metricJobTraceID),
 			zap.Duration("data_age", age),
 			zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
@@ -292,13 +293,13 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		// Data is stale or missing, fetch fresh data ourselves
 		if hasData {
 			c.logger.Warn("control job - shared data is stale, fetching fresh data from Netatmo API",
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 				zap.Duration("data_age", age),
 				zap.Duration("max_age", maxDataAge),
 			)
 		} else {
 			c.logger.Warn("control job - no shared data available, fetching fresh data from Netatmo API",
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			)
 		}
 
@@ -306,7 +307,7 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		fetchedStatus, err := c.netatmoClient.GetHomeStatus(ctx, c.homeID)
 		if err != nil {
 			c.logger.Error("control job - failed to fetch home status from Netatmo API",
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 				zap.Error(err),
 			)
 			span.RecordError(err)
@@ -318,7 +319,7 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 		fetchDuration := time.Since(fetchStart)
 
 		c.logger.Info("control job - fetched fresh data from Netatmo API",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.Duration("fetch_duration", fetchDuration),
 			zap.Int("rooms_count", len(homeStatus.Body.Home.Rooms)),
 		)
@@ -343,7 +344,7 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 
 	c.logger.Info("control job - processing rooms concurrently with per-room waiting logic",
 		zap.Int("rooms_to_evaluate", len(c.config.Mappings)),
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 	)
 
 	// Process rooms concurrently with per-room waiting for manual mode expiration
@@ -358,7 +359,7 @@ func (c *Controller) runControlLoop(ctx context.Context) {
 	)
 
 	c.logger.Info("control job completed - all rooms processed",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("rooms_evaluated", len(c.config.Mappings)),
 		zap.Int("skipped", skipCount),
 		zap.Int("adjusted", adjustCount),
@@ -379,7 +380,7 @@ func (c *Controller) processRoomsConcurrently(ctx context.Context, initialRoomSt
 	var mu sync.Mutex
 
 	c.logger.Debug("spawning concurrent goroutines for room processing",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("goroutine_count", len(c.config.Mappings)),
 	)
 
@@ -498,7 +499,7 @@ func (c *Controller) processRoomsConcurrently(ctx context.Context, initialRoomSt
 	}
 
 	c.logger.Debug("waiting for all room processing goroutines to complete",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 	)
 
 	wg.Wait()
@@ -510,7 +511,7 @@ func (c *Controller) processRoomsConcurrently(ctx context.Context, initialRoomSt
 	)
 
 	c.logger.Debug("all room processing goroutines completed",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("skipped", skipCount),
 		zap.Int("adjusted", adjustCount),
 		zap.Int("no_adjustment", noAdjustCount),

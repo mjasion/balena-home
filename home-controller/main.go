@@ -21,8 +21,10 @@ import (
 	"github.com/mjasion/balena-home/thermostats/pyroscope"
 	"github.com/mjasion/balena-home/thermostats/scanner"
 	"github.com/mjasion/balena-home/thermostats/scheduler"
+	"go.opentelemetry.io/contrib/bridges/otelzap"
 	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func main() {
@@ -60,8 +62,15 @@ func main() {
 		}
 	}()
 
+	// Initialize OpenTelemetry resource (shared by tracer and log provider)
+	res, err := homeOtel.CreateResource(context.Background(), &cfg.OpenTelemetry, logger)
+	if err != nil {
+		logger.Error("failed to create opentelemetry resource", zap.Error(err))
+		os.Exit(1)
+	}
+
 	// Initialize OpenTelemetry tracer if enabled
-	shutdownTracer, err := homeOtel.InitTracer(context.Background(), &cfg.OpenTelemetry, logger)
+	shutdownTracer, err := homeOtel.InitTracer(context.Background(), &cfg.OpenTelemetry, res, logger)
 	if err != nil {
 		logger.Error("failed to initialize opentelemetry tracer", zap.Error(err))
 		os.Exit(1)
@@ -71,6 +80,29 @@ func main() {
 			logger.Error("failed to shutdown opentelemetry tracer", zap.Error(err))
 		}
 	}()
+
+	// Initialize OpenTelemetry log provider and otelzap bridge
+	logProvider, shutdownLogProvider, err := homeOtel.InitLogProvider(context.Background(), &cfg.OpenTelemetry, res, logger)
+	if err != nil {
+		logger.Error("failed to initialize opentelemetry log provider", zap.Error(err))
+		os.Exit(1)
+	}
+	defer func() {
+		if err := shutdownLogProvider(context.Background()); err != nil {
+			logger.Error("failed to shutdown opentelemetry log provider", zap.Error(err))
+		}
+	}()
+
+	// Wrap logger with otelzap bridge to send logs via OTLP alongside traces
+	if logProvider != nil {
+		otelCore := otelzap.NewCore("home-controller",
+			otelzap.WithLoggerProvider(logProvider),
+		)
+		logger = logger.WithOptions(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
+			return zapcore.NewTee(c, otelCore)
+		}))
+		logger.Info("otelzap bridge enabled - logs will be sent via OTLP")
+	}
 
 	// Create dual ring buffers for separate purposes
 	// Metrics buffer: Used by metrics pusher (cleared every push interval)

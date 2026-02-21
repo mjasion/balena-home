@@ -84,6 +84,7 @@ otelcol.receiver.otlp "default" {
 
   output {
     traces = [otelcol.processor.batch.default.input]
+    logs   = [otelcol.processor.batch.logs.input]
   }
 }
 
@@ -97,6 +98,25 @@ otelcol.processor.batch "default" {
   output {
     traces = [
       otelcol.exporter.otlphttp.grafana_cloud.input,
+      otelcol.exporter.otlphttp.new_relic.input,
+      otelcol.exporter.otlphttp.honeycomb.input,
+      otelcol.exporter.otlphttp.better_stack.input,
+    ]
+  }
+}
+
+// Batch processor for OTLP logs from home-controller
+otelcol.processor.batch "logs" {
+  timeout         = "5s"
+  send_batch_size = 1024
+  send_batch_max_size = 2048
+
+  output {
+    logs = [
+      otelcol.exporter.otlphttp.grafana_cloud.input,
+      otelcol.exporter.otlphttp.new_relic.input,
+      otelcol.exporter.otlphttp.honeycomb.input,
+      otelcol.exporter.otlphttp.better_stack.input,
     ]
   }
 }
@@ -106,6 +126,42 @@ otelcol.exporter.otlphttp "grafana_cloud" {
   client {
     endpoint = "https://otlp-gateway-prod-us-central-0.grafana.net/otlp"
     auth = otelcol.auth.basic.grafana_cloud.handler
+  }
+}
+
+// ============================================================================
+// New Relic OTLP Exporter
+// ============================================================================
+otelcol.exporter.otlphttp "new_relic" {
+  client {
+    endpoint = sys.env("NEW_RELIC_OTLP_ENDPOINT")
+    headers  = {
+      "api-key" = sys.env("NEW_RELIC_LICENSE_KEY"),
+    }
+  }
+}
+
+// ============================================================================
+// Honeycomb OTLP Exporter
+// ============================================================================
+otelcol.exporter.otlphttp "honeycomb" {
+  client {
+    endpoint = sys.env("HONEYCOMB_OTLP_ENDPOINT")
+    headers  = {
+      "x-honeycomb-team" = sys.env("HONEYCOMB_API_KEY"),
+    }
+  }
+}
+
+// ============================================================================
+// Better Stack OTLP Exporter
+// ============================================================================
+otelcol.exporter.otlphttp "better_stack" {
+  client {
+    endpoint = sys.env("BETTER_STACK_OTLP_ENDPOINT")
+    headers  = {
+      "Authorization" = sys.env("BETTER_STACK_AUTH_HEADER"),
+    }
   }
 }
 

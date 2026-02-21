@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	homeOtel "github.com/mjasion/balena-home/thermostats/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -22,14 +23,14 @@ func (c *Controller) executeDecision(ctx context.Context, decision ControlDecisi
 	defer span.End()
 
 	c.logger.Debug("executing decision",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("room_name", decision.RoomName),
 		zap.String("action", decision.Action),
 		zap.String("reason", decision.Reason),
 	)
 
 	if decision.Action == "skip" || decision.Action == "no_adjustment_needed" {
-		c.logDecision(span, decision)
+		c.logDecision(ctx, decision)
 		return
 	}
 
@@ -39,9 +40,9 @@ func (c *Controller) executeDecision(ctx context.Context, decision ControlDecisi
 }
 
 // logDecision logs the control decision
-func (c *Controller) logDecision(span trace.Span, decision ControlDecision) {
+func (c *Controller) logDecision(ctx context.Context, decision ControlDecision) {
 	logFields := []zap.Field{
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("room_name", decision.RoomName),
 		zap.String("action", decision.Action),
 		zap.String("reason", decision.Reason),
@@ -62,7 +63,7 @@ func (c *Controller) logDecision(span trace.Span, decision ControlDecision) {
 // executeManualOverride executes a manual override decision
 func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span, decision ControlDecision) {
 	c.logger.Debug("executing manual override - applying safety limits",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("room_name", decision.RoomName),
 		zap.Float64("calculated_setpoint", decision.CalculatedSetpoint),
 	)
@@ -82,7 +83,7 @@ func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span,
 
 	if clamped {
 		c.logger.Warn("executing manual override - setpoint clamped by safety limits",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("room_name", decision.RoomName),
 			zap.Float64("original", decision.CalculatedSetpoint),
 			zap.Float64("clamped_to", safeSetpoint),
@@ -92,7 +93,7 @@ func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span,
 	// Dry-run mode: log what would be sent but don't call API
 	if c.config.DryRun {
 		c.logger.Info("[DRY-RUN] executing manual override - WOULD set temperature (not sent to API)",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("room_name", decision.RoomName),
 			zap.String("room_id", decision.RoomID),
 			zap.Float64("new_setpoint", safeSetpoint),
@@ -119,7 +120,7 @@ func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span,
 	}
 
 	c.logger.Info("executing manual override - preparing to call Netatmo API",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("room_name", decision.RoomName),
 		zap.Float64("new_setpoint", safeSetpoint),
 		zap.Float64("original_calculated_setpoint", decision.CalculatedSetpoint),
@@ -142,7 +143,7 @@ func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span,
 		span.SetAttributes(attribute.Bool("api_call_success", false))
 
 		c.logger.Error("executing manual override - Netatmo API call failed",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("room_name", decision.RoomName),
 			zap.Error(err),
 		)
@@ -159,7 +160,7 @@ func (c *Controller) executeManualOverride(ctx context.Context, span trace.Span,
 	c.updateRoomState(decision.RoomID, safeSetpoint, overrideEndTime)
 
 	c.logger.Info("executing manual override - Netatmo API call successful, override applied",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("room_name", decision.RoomName),
 		zap.Float64("setpoint", safeSetpoint),
 		zap.Time("override_end_time", overrideEndTime.In(c.warsawLocation())),
@@ -207,7 +208,7 @@ func (c *Controller) setNetatmoThermostat(ctx context.Context, roomID, roomName 
 	defer span.End()
 
 	c.logger.Debug("calling Netatmo API SetRoomThermpoint",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("room_name", roomName),
 		zap.String("home_id", c.homeID),
 		zap.String("room_id", roomID),
@@ -223,7 +224,7 @@ func (c *Controller) setNetatmoThermostat(ctx context.Context, roomID, roomName 
 		span.SetAttributes(attribute.Bool("api_success", false))
 
 		c.logger.Error("Netatmo API SetRoomThermpoint failed",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.String("room_name", roomName),
 			zap.Error(err),
 		)
@@ -233,7 +234,7 @@ func (c *Controller) setNetatmoThermostat(ctx context.Context, roomID, roomName 
 	span.SetAttributes(attribute.Bool("api_success", true))
 
 	c.logger.Debug("Netatmo API SetRoomThermpoint successful",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.String("room_name", roomName),
 	)
 

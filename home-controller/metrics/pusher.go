@@ -11,6 +11,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
 	"github.com/mjasion/balena-home/thermostats/buffer"
+	homeOtel "github.com/mjasion/balena-home/thermostats/otel"
 	"github.com/prometheus/prometheus/prompb"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -72,7 +73,7 @@ func (p *Pusher) pushMetrics() {
 	readings := p.buffer.GetAllAndClear(ctx)
 	if len(readings) == 0 {
 		p.logger.Debug("no readings to push",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		)
 		span.SetStatus(codes.Ok, "no readings to push")
 		return
@@ -110,7 +111,7 @@ func (p *Pusher) pushMetrics() {
 	)
 
 	p.logger.Debug("pushing metrics to prometheus",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("total_readings", len(readings)),
 		zap.Int("ble_readings", bleCount),
 		zap.Int("netatmo_readings", netatmoCount),
@@ -137,7 +138,7 @@ func (p *Pusher) pushMetrics() {
 		))
 
 		p.logger.Debug("pushing batch",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.Int("batch_number", batchNum+1),
 			zap.Int("total_batches", totalBatches),
 			zap.Int("batch_readings", len(batch)),
@@ -148,7 +149,7 @@ func (p *Pusher) pushMetrics() {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, fmt.Sprintf("failed to push batch %d", batchNum+1))
 			p.logger.Error("failed to push batch, re-adding remaining readings to buffer",
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 				zap.Error(err),
 				zap.Int("batch_number", batchNum+1),
 				zap.Int("failed_readings", len(readings)-start),
@@ -159,7 +160,7 @@ func (p *Pusher) pushMetrics() {
 		}
 
 		p.logger.Debug("successfully pushed batch",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.Int("batch_number", batchNum+1),
 			zap.Int("batch_readings", len(batch)),
 		)
@@ -180,7 +181,7 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 
 	if len(readings) == 0 {
 		p.logger.Debug("no readings to push",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		)
 		span.SetStatus(codes.Ok, "no readings to push")
 		return nil
@@ -246,7 +247,7 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 
 	// Log metric names and their counts
 	p.logger.Debug("pushing metrics to Prometheus",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("time_series_count", totalTimeSeries),
 		zap.Int("total_samples", totalSamples),
 		zap.Any("metric_names", metricNames),
@@ -262,7 +263,7 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 			p.lastPush = time.Now()
 
 			p.logger.Info("successfully pushed metrics",
-				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 				zap.Int("ble_data_points", bleCount),
 				zap.Int("netatmo_data_points", netatmoCount),
 				zap.Int("power_data_points", powerCount),
@@ -286,7 +287,7 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 		))
 
 		p.logger.Warn("failed to push metrics, will retry",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.Int("attempt", attempt),
 			zap.Error(err),
 		)
@@ -629,7 +630,7 @@ func (p *Pusher) pushOnce(ctx context.Context, writeReq *prompb.WriteRequest) er
 	)
 
 	p.logger.Debug("prepared metrics payload",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("protobuf_size_bytes", len(data)),
 		zap.Int("compressed_size_bytes", len(compressed)),
 		zap.Float64("compression_ratio", compressionRatio),
@@ -668,7 +669,7 @@ func (p *Pusher) pushOnce(ctx context.Context, writeReq *prompb.WriteRequest) er
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
 		p.logger.Debug("Prometheus remote_write error response",
-			zap.String("trace_id", span.SpanContext().TraceID().String()),
+			homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 			zap.Int("status_code", resp.StatusCode),
 			zap.String("response_body", string(body)),
 		)
@@ -677,7 +678,7 @@ func (p *Pusher) pushOnce(ctx context.Context, writeReq *prompb.WriteRequest) er
 	}
 
 	p.logger.Debug("Prometheus remote_write successful",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("status_code", resp.StatusCode),
 	)
 
