@@ -7,10 +7,11 @@ require (
 	github.com/go-co-op/gocron/v2 v2.19.1
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/snappy v1.0.0
-	github.com/grafana/pyroscope-go v1.2.7
+	github.com/grafana/pyroscope-go v1.2.8
 	github.com/ilyakaznacheev/cleanenv v1.5.0
 	github.com/jsternberg/zap-logfmt v1.3.0
 	github.com/prometheus/prometheus v0.309.1
+	go.opentelemetry.io/contrib/bridges/otelzap v0.15.0
 	go.opentelemetry.io/otel v1.40.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.16.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.39.0
@@ -49,7 +50,6 @@ require (
 	github.com/tinygo-org/cbgo v0.0.4 // indirect
 	github.com/tinygo-org/pio v0.2.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/contrib/bridges/otelzap v0.15.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.39.0 // indirect
 	go.opentelemetry.io/otel/log v0.16.0 // indirect
 	go.opentelemetry.io/otel/metric v1.40.0 // indirect
