@@ -25,7 +25,7 @@ jobs:
         EOF
 
     - name: Test Balena Build
-      uses: balena-io/deploy-to-balena-action@61a347b1b9fa00afbc8e117f0f280e989d02d7cb # master
+      uses: balena-io/deploy-to-balena-action@3653c472f0bb6a9885110328b28c3a80470b3b63 # master
       with:
         balena_token: ${{ secrets.BALENA_API_TOKEN }}
         fleet: ${{ secrets.BALENA_APP_NAME }}
