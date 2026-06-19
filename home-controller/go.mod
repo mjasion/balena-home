@@ -18,7 +18,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.44.0
 	go.opentelemetry.io/otel/sdk/log v0.20.0
 	go.opentelemetry.io/otel/trace v1.44.0
-	go.uber.org/zap v1.27.1
+	go.uber.org/zap v1.28.0
 	tinygo.org/x/bluetooth v0.15.0
 )
 
