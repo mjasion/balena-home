@@ -7,7 +7,7 @@ require (
 	github.com/go-co-op/gocron/v2 v2.19.1
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/snappy v1.0.0
-	github.com/grafana/pyroscope-go v1.3.1
+	github.com/grafana/pyroscope-go v1.4.1
 	github.com/ilyakaznacheev/cleanenv v1.5.0
 	github.com/jsternberg/zap-logfmt v1.3.0
 	github.com/prometheus/prometheus v0.313.1
