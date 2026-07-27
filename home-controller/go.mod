@@ -11,7 +11,7 @@ require (
 	github.com/ilyakaznacheev/cleanenv v1.5.0
 	github.com/jsternberg/zap-logfmt v1.3.0
 	github.com/prometheus/prometheus v0.313.1
-	go.opentelemetry.io/contrib/bridges/otelzap v0.15.0
+	go.opentelemetry.io/contrib/bridges/otelzap v0.19.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.44.0
