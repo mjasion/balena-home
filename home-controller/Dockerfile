@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for BLE temperature monitoring service
 
 # Builder stage
-FROM golang:1.26-bookworm AS builder
+FROM golang:1.27-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
