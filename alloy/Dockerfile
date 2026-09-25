@@ -1,4 +1,4 @@
-FROM grafana/alloy:v1.19.2
+FROM grafana/alloy:v1.20.0
 
 # Copy Alloy configuration into the image
 COPY config.alloy /etc/alloy/config.alloy
