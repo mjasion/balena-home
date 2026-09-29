@@ -101,7 +101,7 @@ shared:
 services:
   home-controller:
     # Scoped to home-controller service (not prefixed)
-    NETATMO_CLIENT_ID: "your-id"
+    POWER_SCRAPE_URL: "http://192.168.1.100/state"
 
   datadog-agent:
     # Scoped to datadog-agent service (not prefixed)
@@ -113,14 +113,14 @@ environments:
       LOG_LEVEL: "info"
     services:
       home-controller:
-        THERMOSTAT_CONTROL_DRY_RUN: "false"
+        POWER_ENABLED: "true"
 ```
 
 **Variable Scoping in Balena:**
 - **Shared secrets**: Applied to all services (serviceName: `*`)
   - Example: `PROMETHEUS_PASSWORD`
 - **Service-specific**: Scoped to specific service using `--service` flag (serviceName: `home-controller`)
-  - Example: `NETATMO_CLIENT_ID` (scoped to `home-controller` service)
+  - Example: `POWER_SCRAPE_URL` (scoped to `home-controller` service)
   - Example: `DD_API_KEY` (scoped to `datadog-agent` service)
   - Note: Service names in secrets.yaml must match docker-compose.yml service names
 
@@ -137,7 +137,7 @@ Standard `.env` file:
 ```bash
 # Comment
 PROMETHEUS_PASSWORD=glc_abc123xyz
-NETATMO_CLIENT_ID=your-client-id
+PROMETHEUS_USERNAME=123456
 
 # Empty and placeholders skipped
 PLACEHOLDER=your-value-here

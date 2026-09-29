@@ -14,16 +14,14 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	BLE               BLEConfig               `yaml:"ble"`
-	Netatmo           NetatmoConfig           `yaml:"netatmo"`
-	Power             PowerConfig             `yaml:"power"`
-	Pyroscope         PyroscopeConfig         `yaml:"pyroscope"`
-	OpenTelemetry     OpenTelemetryConfig     `yaml:"opentelemetry"`
-	Prometheus        PrometheusConfig        `yaml:"prometheus"`
-	Logging           LoggingConfig           `yaml:"logging"`
-	ThermostatControl ThermostatControlConfig `yaml:"thermostatControl"`
-	Aggregator        AggregatorConfig        `yaml:"aggregator"`
-	Scheduler         SchedulerConfig         `yaml:"scheduler"`
+	BLE           BLEConfig           `yaml:"ble"`
+	Power         PowerConfig         `yaml:"power"`
+	Pyroscope     PyroscopeConfig     `yaml:"pyroscope"`
+	OpenTelemetry OpenTelemetryConfig `yaml:"opentelemetry"`
+	Prometheus    PrometheusConfig    `yaml:"prometheus"`
+	Logging       LoggingConfig       `yaml:"logging"`
+	Aggregator    AggregatorConfig    `yaml:"aggregator"`
+	Scheduler     SchedulerConfig     `yaml:"scheduler"`
 }
 
 // BLEConfig contains BLE scanning configuration
@@ -36,14 +34,6 @@ type SensorConfig struct {
 	Name       string `yaml:"name"`
 	ID         int    `yaml:"id"`
 	MACAddress string `yaml:"macAddress"`
-}
-
-// NetatmoConfig contains Netatmo API configuration
-// Note: Netatmo polling is now handled by the thermostat controller
-type NetatmoConfig struct {
-	ClientID     string `yaml:"clientId" env:"NETATMO_CLIENT_ID"`
-	ClientSecret string `yaml:"clientSecret" env:"NETATMO_CLIENT_SECRET"`
-	RefreshToken string `yaml:"refreshToken" env:"NETATMO_REFRESH_TOKEN"`
 }
 
 // PowerConfig contains power meter scraping configuration
@@ -96,44 +86,6 @@ type PrometheusConfig struct {
 type LoggingConfig struct {
 	Format string `yaml:"logFormat" env:"LOG_FORMAT" env-default:"console"`
 	Level  string `yaml:"logLevel" env:"LOG_LEVEL" env-default:"info"`
-}
-
-// ThermostatControlConfig contains thermostat control configuration
-type ThermostatControlConfig struct {
-	DryRun                  bool                `yaml:"dryRun" env:"THERMOSTAT_CONTROL_DRY_RUN" env-default:"false"`
-	TemperatureThreshold    float64             `yaml:"temperatureThreshold" env:"TEMPERATURE_THRESHOLD" env-default:"0.2"`
-	OverrideDurationMinutes int                 `yaml:"overrideDurationMinutes" env:"OVERRIDE_DURATION_MINUTES" env-default:"10"`
-	MinSetpointCelsius      float64             `yaml:"minSetpointCelsius" env:"MIN_SETPOINT_CELSIUS" env-default:"10.0"`
-	MaxSetpointCelsius      float64             `yaml:"maxSetpointCelsius" env:"MAX_SETPOINT_CELSIUS" env-default:"30.0"`
-	Mappings                []ThermostatMapping `yaml:"mappings"`
-	HardOverrides           []HardOverride      `yaml:"hardOverrides"`
-	MetricJobCron           string              `yaml:"metricJobCron" env:"METRIC_JOB_CRON" env-default:"0 * * * * *"`                   // Cron expression for metric job (runs every minute at :00)
-	MetricJobEnabled        bool                `yaml:"metricJobEnabled" env:"METRIC_JOB_ENABLED" env-default:"false"`                   // Enable/disable metric job cron
-	ControlJobCron          string              `yaml:"controlJobCron" env:"CONTROL_JOB_CRON" env-default:"5 * * * * *"`                  // Cron expression for control job (runs every minute at :05, 5 seconds after metric job)
-	ControlJobEnabled       bool                `yaml:"controlJobEnabled" env:"CONTROL_JOB_ENABLED" env-default:"false"`                 // Enable/disable control job cron
-	HardOverrideJobCron     string              `yaml:"hardOverrideJobCron" env:"HARD_OVERRIDE_JOB_CRON" env-default:"0 * * * * *"`      // Cron expression for hard override job (runs every minute at :00)
-	HardOverrideJobEnabled  bool                `yaml:"hardOverrideJobEnabled" env:"HARD_OVERRIDE_JOB_ENABLED" env-default:"false"`      // Enable/disable hard override job cron
-}
-
-// ThermostatMapping maps a Netatmo room to a Xiaomi sensor
-type ThermostatMapping struct {
-	RoomName  string `yaml:"roomName"`
-	SensorMAC string `yaml:"sensorMAC"`
-	RoomID    string `yaml:"roomID"` // Optional: Can be populated at runtime
-}
-
-// HardOverride defines a time-based temperature override
-type HardOverride struct {
-	RoomName string               `yaml:"roomName"`
-	Schedule []HardOverrideWindow `yaml:"schedule"`
-}
-
-// HardOverrideWindow defines a time window with target temperature
-type HardOverrideWindow struct {
-	StartTime         string   `yaml:"startTime"` // HH:MM format
-	EndTime           string   `yaml:"endTime"`   // HH:MM format
-	TargetTemperature float64  `yaml:"targetTemperature"`
-	Days              []string `yaml:"days"` // Optional: Days of week (e.g., ["Mon", "Tue", "Wed"]). If empty, applies to all days.
 }
 
 // AggregatorConfig contains configuration for the BLE sensor aggregator
@@ -204,9 +156,6 @@ func (c *Config) Validate() error {
 		}
 		seenMACs[macUpper] = true
 	}
-
-	// Netatmo credentials are validated when thermostat control is enabled
-	// (see thermostat control validation below)
 
 	// Validate Power configuration if enabled
 	if c.Power.Enabled {
@@ -316,142 +265,6 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Check if any thermostat control job is enabled
-	anyThermostatJobEnabled := c.ThermostatControl.MetricJobEnabled ||
-		c.ThermostatControl.ControlJobEnabled ||
-		c.ThermostatControl.HardOverrideJobEnabled
-
-	// Validate thermostat control configuration if any job is enabled
-	if anyThermostatJobEnabled {
-		// Validate temperature threshold
-		if c.ThermostatControl.TemperatureThreshold < 0.1 || c.ThermostatControl.TemperatureThreshold > 5.0 {
-			return fmt.Errorf("thermostat control temperature threshold must be between 0.1 and 5.0°C, got: %.2f", c.ThermostatControl.TemperatureThreshold)
-		}
-
-		// Validate cron expressions (only if corresponding job is enabled)
-		if c.ThermostatControl.MetricJobEnabled && c.ThermostatControl.MetricJobCron == "" {
-			return fmt.Errorf("thermostat control metric job cron expression is required when metric job is enabled")
-		}
-		if c.ThermostatControl.ControlJobEnabled && c.ThermostatControl.ControlJobCron == "" {
-			return fmt.Errorf("thermostat control job cron expression is required when control job is enabled")
-		}
-		if c.ThermostatControl.HardOverrideJobEnabled && c.ThermostatControl.HardOverrideJobCron == "" {
-			return fmt.Errorf("thermostat control hard override job cron expression is required when hard override job is enabled")
-		}
-
-		// Validate override duration
-		if c.ThermostatControl.OverrideDurationMinutes < 1 {
-			return fmt.Errorf("thermostat override duration must be at least 1 minute")
-		}
-
-		// Validate mappings
-		if len(c.ThermostatControl.Mappings) == 0 {
-			return fmt.Errorf("at least one thermostat mapping must be configured when any thermostat control job is enabled")
-		}
-
-		// Track room names and validate sensor MACs
-		seenRoomNames := make(map[string]bool)
-		for i, mapping := range c.ThermostatControl.Mappings {
-			// Validate room name
-			if mapping.RoomName == "" {
-				return fmt.Errorf("thermostat mapping %d: room name is required", i)
-			}
-
-			// Note: We allow duplicate room names (one sensor can control multiple rooms)
-			seenRoomNames[mapping.RoomName] = true
-
-			// Validate sensor MAC
-			if !macAddressRegex.MatchString(mapping.SensorMAC) {
-				return fmt.Errorf("thermostat mapping %d (room: %s): invalid sensor MAC address format: %s", i, mapping.RoomName, mapping.SensorMAC)
-			}
-
-			// Verify sensor MAC exists in BLE sensor configuration
-			macUpper := strings.ToUpper(mapping.SensorMAC)
-			found := false
-			for _, sensor := range c.BLE.Sensors {
-				if strings.ToUpper(sensor.MACAddress) == macUpper {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return fmt.Errorf("thermostat mapping %d (room: %s): sensor MAC %s not found in BLE sensor configuration", i, mapping.RoomName, mapping.SensorMAC)
-			}
-		}
-
-		// Validate hard overrides
-		for i, override := range c.ThermostatControl.HardOverrides {
-			// Validate room name
-			if override.RoomName == "" {
-				return fmt.Errorf("hard override %d: room name is required", i)
-			}
-
-			// Validate schedule
-			if len(override.Schedule) == 0 {
-				return fmt.Errorf("hard override %d (room: %s): at least one schedule window is required", i, override.RoomName)
-			}
-
-			// Validate each schedule window
-			for j, window := range override.Schedule {
-				// Validate time format
-				if !timeFormatRegex.MatchString(window.StartTime) {
-					return fmt.Errorf("hard override %d (room: %s), window %d: invalid start time format: %s (expected HH:MM)", i, override.RoomName, j, window.StartTime)
-				}
-				if !timeFormatRegex.MatchString(window.EndTime) {
-					return fmt.Errorf("hard override %d (room: %s), window %d: invalid end time format: %s (expected HH:MM)", i, override.RoomName, j, window.EndTime)
-				}
-
-				// Validate target temperature
-				if window.TargetTemperature < 10.0 || window.TargetTemperature > 30.0 {
-					return fmt.Errorf("hard override %d (room: %s), window %d: target temperature must be between 10.0 and 30.0°C, got: %.1f", i, override.RoomName, j, window.TargetTemperature)
-				}
-
-				// Validate days of week (if specified)
-				if len(window.Days) > 0 {
-					validDays := map[string]bool{
-						"Mon": true, "Tue": true, "Wed": true, "Thu": true,
-						"Fri": true, "Sat": true, "Sun": true,
-						"Monday": true, "Tuesday": true, "Wednesday": true, "Thursday": true,
-						"Friday": true, "Saturday": true, "Sunday": true,
-					}
-					seenDays := make(map[string]bool)
-					for _, day := range window.Days {
-						// Check if day is valid
-						if !validDays[day] {
-							return fmt.Errorf("hard override %d (room: %s), window %d: invalid day '%s' (valid values: Mon, Tue, Wed, Thu, Fri, Sat, Sun, or full names)", i, override.RoomName, j, day)
-						}
-						// Check for duplicates (normalize to short form)
-						normalizedDay := day
-						if len(day) > 3 {
-							normalizedDay = day[:3]
-						}
-						if seenDays[normalizedDay] {
-							return fmt.Errorf("hard override %d (room: %s), window %d: duplicate day '%s'", i, override.RoomName, j, day)
-						}
-						seenDays[normalizedDay] = true
-					}
-				}
-
-				// Validate that start time is before end time (simple string comparison works for HH:MM)
-				if window.StartTime >= window.EndTime {
-					return fmt.Errorf("hard override %d (room: %s), window %d: start time (%s) must be before end time (%s)", i, override.RoomName, j, window.StartTime, window.EndTime)
-				}
-			}
-		}
-
-		// Validate Netatmo credentials when any thermostat control job is enabled
-		if c.Netatmo.ClientID == "" {
-			return fmt.Errorf("netatmo client ID is required when any thermostat control job is enabled")
-		}
-		if c.Netatmo.ClientSecret == "" {
-			return fmt.Errorf("netatmo client secret is required when any thermostat control job is enabled")
-		}
-		if c.Netatmo.RefreshToken == "" {
-			return fmt.Errorf("netatmo refresh token is required when any thermostat control job is enabled")
-		}
-
-	}
-
 	return nil
 }
 
@@ -546,16 +359,9 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		sensorInfo[i] = fmt.Sprintf("%s (ID:%d, MAC:%s)", sensor.Name, sensor.ID, sensor.MACAddress)
 	}
 
-	// Build thermostat mapping info for logging
-	mappingInfo := make([]string, len(c.ThermostatControl.Mappings))
-	for i, mapping := range c.ThermostatControl.Mappings {
-		mappingInfo[i] = fmt.Sprintf("%s → %s", mapping.RoomName, mapping.SensorMAC)
-	}
-
 	logger.Info("configuration loaded",
 		zap.Int("sensor_count", len(c.BLE.Sensors)),
 		zap.Strings("sensors", sensorInfo),
-		zap.Bool("netatmo_configured", c.Netatmo.ClientID != "" && c.Netatmo.RefreshToken != ""),
 		zap.Bool("power_enabled", c.Power.Enabled),
 		zap.String("power_scrape_url", c.Power.ScrapeURL),
 		zap.Float64("power_scrape_timeout_seconds", c.Power.ScrapeTimeoutSeconds),
@@ -582,16 +388,5 @@ func (c *Config) PrintConfig(logger *zap.Logger) {
 		zap.String("log_level", c.Logging.Level),
 		zap.Bool("aggregator_enabled", c.Aggregator.Enabled),
 		zap.String("aggregator_cron", c.Aggregator.Cron),
-		zap.Float64("thermostat_temperature_threshold", c.ThermostatControl.TemperatureThreshold),
-		zap.String("thermostat_metric_job_cron", c.ThermostatControl.MetricJobCron),
-		zap.Bool("thermostat_metric_job_enabled", c.ThermostatControl.MetricJobEnabled),
-		zap.String("thermostat_control_job_cron", c.ThermostatControl.ControlJobCron),
-		zap.Bool("thermostat_control_job_enabled", c.ThermostatControl.ControlJobEnabled),
-		zap.String("thermostat_hard_override_job_cron", c.ThermostatControl.HardOverrideJobCron),
-		zap.Bool("thermostat_hard_override_job_enabled", c.ThermostatControl.HardOverrideJobEnabled),
-		zap.Int("thermostat_override_duration_minutes", c.ThermostatControl.OverrideDurationMinutes),
-		zap.Int("thermostat_mapping_count", len(c.ThermostatControl.Mappings)),
-		zap.Strings("thermostat_mappings", mappingInfo),
-		zap.Int("thermostat_hard_override_count", len(c.ThermostatControl.HardOverrides)),
 	)
 }

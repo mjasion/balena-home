@@ -18,9 +18,7 @@ type ReadingType string
 
 const (
 	ReadingTypeBLE            ReadingType = "ble"
-	ReadingTypeNetatmo        ReadingType = "netatmo"
 	ReadingTypePower          ReadingType = "power"
-	ReadingTypeControl        ReadingType = "control"
 	ReadingTypeBLEWeightedAvg ReadingType = "ble_weighted_avg"
 )
 
@@ -39,21 +37,6 @@ type SensorReading struct {
 	RSSI               int16
 }
 
-// ThermostatReading represents a thermostat reading from Netatmo
-type ThermostatReading struct {
-	Timestamp           interface{} // time.Time
-	HomeID              string
-	HomeName            string
-	RoomID              string
-	RoomName            string
-	MeasuredTemperature float64
-	SetpointTemperature float64
-	SetpointMode        string
-	HeatingPowerRequest int
-	OpenWindow          bool
-	Reachable           bool
-}
-
 // PowerReading represents a power/energy sensor measurement from energy meter
 type PowerReading struct {
 	Timestamp  interface{} // time.Time
@@ -61,22 +44,6 @@ type PowerReading struct {
 	SensorType string // snake_case type: active_power, apparent_power, voltage, current, etc.
 	RoomName   string // Optional friendly name
 	Value      float64
-}
-
-// ControlReading represents a control loop decision and metrics
-type ControlReading struct {
-	Timestamp             interface{} // time.Time
-	RoomName              string
-	Action                string // "skip", "no_adjustment_needed", "set_manual_override"
-	XiaomiTemperature     float64
-	ScheduledTemperature  float64
-	ThermostatMeasured    float64
-	ThermostatMode        string // "schedule", "manual", "away", "hg" (frost guard), etc.
-	CalculatedSetpoint    float64
-	TemperatureDifference float64 // xiaomiTemp - scheduledTemp
-	SetpointAdjustment    float64 // calculatedSetpoint - thermostatMeasured
-	ExternallyModified    bool
-	HardOverrideActive    bool
 }
 
 // WeightedAvgReading represents a weighted average temperature reading from BLE sensors
@@ -90,13 +57,11 @@ type WeightedAvgReading struct {
 	ReadingCount       int     // Number of readings used in calculation
 }
 
-// Reading is a union type that can hold BLE sensor, Netatmo thermostat, power, control, or weighted average readings
+// Reading is a union type that can hold BLE sensor, power, or weighted average readings
 type Reading struct {
 	Type        ReadingType
 	BLE         *SensorReading
-	Thermostat  *ThermostatReading
 	Power       *PowerReading
-	Control     *ControlReading
 	WeightedAvg *WeightedAvgReading
 }
 
@@ -219,21 +184,9 @@ func (rb *RingBuffer) cleanupOldReadings() {
 					timestamp = ts
 				}
 			}
-		case ReadingTypeNetatmo:
-			if r.Thermostat != nil {
-				if ts, ok := r.Thermostat.Timestamp.(time.Time); ok {
-					timestamp = ts
-				}
-			}
 		case ReadingTypePower:
 			if r.Power != nil {
 				if ts, ok := r.Power.Timestamp.(time.Time); ok {
-					timestamp = ts
-				}
-			}
-		case ReadingTypeControl:
-			if r.Control != nil {
-				if ts, ok := r.Control.Timestamp.(time.Time); ok {
 					timestamp = ts
 				}
 			}
@@ -351,9 +304,7 @@ func (rb *RingBuffer) GetAllAndClear(ctx context.Context) []*Reading {
 	span.SetAttributes(
 		attribute.Int("reading_count", len(result)),
 		attribute.Int("ble_count", typeCounts[ReadingTypeBLE]),
-		attribute.Int("netatmo_count", typeCounts[ReadingTypeNetatmo]),
 		attribute.Int("power_count", typeCounts[ReadingTypePower]),
-		attribute.Int("control_count", typeCounts[ReadingTypeControl]),
 		attribute.Int("weighted_avg_count", typeCounts[ReadingTypeBLEWeightedAvg]),
 	)
 
@@ -428,9 +379,7 @@ func (rb *RingBuffer) GetReadingsByTimeWindow(ctx context.Context, startTime, en
 		attribute.Int("reading_count", len(result)),
 		attribute.Int("buffer_size", rb.size),
 		attribute.Int("ble_count", typeCounts[ReadingTypeBLE]),
-		attribute.Int("netatmo_count", typeCounts[ReadingTypeNetatmo]),
 		attribute.Int("power_count", typeCounts[ReadingTypePower]),
-		attribute.Int("control_count", typeCounts[ReadingTypeControl]),
 		attribute.Int("weighted_avg_count", typeCounts[ReadingTypeBLEWeightedAvg]),
 	)
 
@@ -448,17 +397,9 @@ func matchesTimeWindow(reading *Reading, start, end time.Time) bool {
 		if reading.BLE != nil {
 			timestamp, ok = reading.BLE.Timestamp.(time.Time)
 		}
-	case ReadingTypeNetatmo:
-		if reading.Thermostat != nil {
-			timestamp, ok = reading.Thermostat.Timestamp.(time.Time)
-		}
 	case ReadingTypePower:
 		if reading.Power != nil {
 			timestamp, ok = reading.Power.Timestamp.(time.Time)
-		}
-	case ReadingTypeControl:
-		if reading.Control != nil {
-			timestamp, ok = reading.Control.Timestamp.(time.Time)
 		}
 	case ReadingTypeBLEWeightedAvg:
 		if reading.WeightedAvg != nil {

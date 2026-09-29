@@ -463,16 +463,16 @@ func TestRingBuffer_GetReadingsByTimeWindow_MultipleReadingTypes(t *testing.T) {
 	}
 	rb.Add(ctx, bleReading)
 
-	// Add Netatmo reading
-	netatmoReading := &Reading{
-		Type: ReadingTypeNetatmo,
-		Thermostat: &ThermostatReading{
-			Timestamp:           now.Add(-20 * time.Second),
-			RoomName:            "Living Room",
-			MeasuredTemperature: 24.0,
+	// Add weighted average reading
+	weightedReading := &Reading{
+		Type: ReadingTypeBLEWeightedAvg,
+		WeightedAvg: &WeightedAvgReading{
+			Timestamp:          now.Add(-20 * time.Second),
+			RoomName:           "Living Room",
+			TemperatureCelsius: 24.0,
 		},
 	}
-	rb.Add(ctx, netatmoReading)
+	rb.Add(ctx, weightedReading)
 
 	// Add Power reading
 	powerReading := &Reading{
@@ -494,19 +494,19 @@ func TestRingBuffer_GetReadingsByTimeWindow_MultipleReadingTypes(t *testing.T) {
 	}
 
 	// Verify we have one of each type
-	var bleCount, netatmoCount, powerCount int
+	var bleCount, weightedCount, powerCount int
 	for _, r := range readings {
 		switch r.Type {
 		case ReadingTypeBLE:
 			bleCount++
-		case ReadingTypeNetatmo:
-			netatmoCount++
+		case ReadingTypeBLEWeightedAvg:
+			weightedCount++
 		case ReadingTypePower:
 			powerCount++
 		}
 	}
 
-	if bleCount != 1 || netatmoCount != 1 || powerCount != 1 {
-		t.Errorf("expected 1 of each type, got BLE=%d, Netatmo=%d, Power=%d", bleCount, netatmoCount, powerCount)
+	if bleCount != 1 || weightedCount != 1 || powerCount != 1 {
+		t.Errorf("expected 1 of each type, got BLE=%d, WeightedAvg=%d, Power=%d", bleCount, weightedCount, powerCount)
 	}
 }

@@ -13,16 +13,13 @@ import (
 	"github.com/mjasion/balena-home/thermostats/aggregator"
 	"github.com/mjasion/balena-home/thermostats/buffer"
 	"github.com/mjasion/balena-home/thermostats/config"
-	"github.com/mjasion/balena-home/thermostats/control"
 	"github.com/mjasion/balena-home/thermostats/metrics"
-	"github.com/mjasion/balena-home/thermostats/netatmo"
 	homeOtel "github.com/mjasion/balena-home/thermostats/otel"
 	"github.com/mjasion/balena-home/thermostats/power"
 	"github.com/mjasion/balena-home/thermostats/pyroscope"
 	"github.com/mjasion/balena-home/thermostats/scanner"
 	"github.com/mjasion/balena-home/thermostats/scheduler"
 	"go.opentelemetry.io/contrib/bridges/otelzap"
-	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -109,7 +106,7 @@ func main() {
 	metricsBuffer := buffer.New(cfg.Prometheus.BufferSize, logger)
 	logger.Info("metrics buffer created", zap.Int("capacity", cfg.Prometheus.BufferSize))
 
-	// Control buffer: Used by control loop (auto-cleanup enabled, keeps last 5 minutes)
+	// Control buffer: Used by BLE aggregator for weighted averages (auto-cleanup enabled, keeps last 5 minutes)
 	controlBufferSize := 10000 // Large capacity, but auto-cleanup keeps last 5 minutes
 	controlBuffer := buffer.NewWithAutoCleanup(controlBufferSize, logger)
 	logger.Info("control buffer created",
@@ -175,22 +172,6 @@ func main() {
 		}
 	}()
 
-	// Create Netatmo client if any thermostat control job is enabled
-	// Controller handles both control and metrics collection
-	var netatmoClient *netatmo.Client
-	anyThermostatJobEnabled := cfg.ThermostatControl.MetricJobEnabled ||
-		cfg.ThermostatControl.ControlJobEnabled ||
-		cfg.ThermostatControl.HardOverrideJobEnabled
-	if anyThermostatJobEnabled {
-		logger.Info("creating Netatmo API client for thermostat control")
-		netatmoClient = netatmo.NewClient(
-			cfg.Netatmo.ClientID,
-			cfg.Netatmo.ClientSecret,
-			cfg.Netatmo.RefreshToken,
-		)
-		netatmoClient.SetLogger(logger)
-	}
-
 	// Add Power poller job if enabled
 	if cfg.Power.Enabled {
 		logger.Info("power monitoring enabled, adding scheduler job")
@@ -232,79 +213,6 @@ func main() {
 		}
 	} else {
 		logger.Info("BLE aggregator disabled")
-	}
-
-	// Initialize and add thermostat control jobs if any job is enabled
-	if anyThermostatJobEnabled {
-		logger.Info("thermostat control jobs enabled, initializing and adding scheduler jobs")
-
-		// Create shared home status for Metric Job → Control Job communication
-		sharedHomeStatus := control.NewSharedHomeStatus()
-
-		// Create controller (uses shared Netatmo client)
-		controller := control.New(
-			&cfg.ThermostatControl,
-			netatmoClient,
-			controlBuffer,
-			metricsBuffer,
-			logger,
-			sharedHomeStatus,
-		)
-
-		// Initialize controller (fetch room IDs from Netatmo)
-		if err := controller.Initialize(ctx); err != nil {
-			logger.Error("failed to initialize thermostat controller", zap.Error(err))
-			os.Exit(1)
-		}
-
-		// Get tracer for control jobs
-		tracer := otel.Tracer("home-controller/control")
-
-		// Create Metric Job (runs every minute at :00, stores data in shared state)
-		if cfg.ThermostatControl.MetricJobEnabled {
-			metricJob := control.NewMetricJob(controller, logger, tracer)
-
-			// Add metric job
-			if err := jobScheduler.AddCronJobWithSeconds("Metric Job", cfg.ThermostatControl.MetricJobCron, metricJob.Run); err != nil {
-				logger.Error("failed to add metric job cron job", zap.Error(err))
-				os.Exit(1)
-			}
-			logger.Info("metric job enabled", zap.String("metric_cron", cfg.ThermostatControl.MetricJobCron))
-		} else {
-			logger.Info("metric job disabled")
-		}
-
-		// Create Control Job (runs every 15 minutes, waits for data from Metric Job)
-		if cfg.ThermostatControl.ControlJobEnabled {
-			controlJob := controller
-
-			// Add control job
-			if err := jobScheduler.AddCronJobWithSeconds("Thermostat Control Job", cfg.ThermostatControl.ControlJobCron, controlJob.Run); err != nil {
-				logger.Error("failed to add thermostat control job cron job", zap.Error(err))
-				os.Exit(1)
-			}
-			logger.Info("control job enabled", zap.String("control_cron", cfg.ThermostatControl.ControlJobCron))
-		} else {
-			logger.Info("control job disabled")
-		}
-
-		// Create Hard Override Job (runs every minute)
-		if cfg.ThermostatControl.HardOverrideJobEnabled {
-			hardOverrideJob := control.NewHardOverrideJob(controller, logger, tracer, sharedHomeStatus)
-
-			// Add hard override job
-			if err := jobScheduler.AddCronJobWithSeconds("Hard Override Job", cfg.ThermostatControl.HardOverrideJobCron, hardOverrideJob.Run); err != nil {
-				logger.Error("failed to add hard override job cron job", zap.Error(err))
-				os.Exit(1)
-			}
-			logger.Info("hard override job enabled", zap.String("hard_override_cron", cfg.ThermostatControl.HardOverrideJobCron))
-		} else {
-			logger.Info("hard override job disabled")
-		}
-
-		logger.Info("thermostat control jobs configured")
-	} else {
-		logger.Info("all thermostat control jobs disabled")
 	}
 
 	// Add Prometheus pusher job (runs independently)

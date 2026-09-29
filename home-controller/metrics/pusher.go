@@ -81,20 +81,14 @@ func (p *Pusher) pushMetrics() {
 
 	// Count readings by type
 	bleCount := 0
-	netatmoCount := 0
 	powerCount := 0
-	controlCount := 0
 	weightedAvgCount := 0
 	for _, r := range readings {
 		switch r.Type {
 		case buffer.ReadingTypeBLE:
 			bleCount++
-		case buffer.ReadingTypeNetatmo:
-			netatmoCount++
 		case buffer.ReadingTypePower:
 			powerCount++
-		case buffer.ReadingTypeControl:
-			controlCount++
 		case buffer.ReadingTypeBLEWeightedAvg:
 			weightedAvgCount++
 		}
@@ -103,9 +97,7 @@ func (p *Pusher) pushMetrics() {
 	span.SetAttributes(
 		attribute.Int("total_readings", len(readings)),
 		attribute.Int("ble_readings", bleCount),
-		attribute.Int("netatmo_readings", netatmoCount),
 		attribute.Int("power_readings", powerCount),
-		attribute.Int("control_readings", controlCount),
 		attribute.Int("weighted_avg_readings", weightedAvgCount),
 		attribute.Int("batch_size", p.batchSize),
 	)
@@ -114,9 +106,7 @@ func (p *Pusher) pushMetrics() {
 		homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 		zap.Int("total_readings", len(readings)),
 		zap.Int("ble_readings", bleCount),
-		zap.Int("netatmo_readings", netatmoCount),
 		zap.Int("power_readings", powerCount),
-		zap.Int("control_readings", controlCount),
 		zap.Int("weighted_avg_readings", weightedAvgCount),
 		zap.Int("batch_size", p.batchSize),
 	)
@@ -189,20 +179,14 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 
 	// Count readings by type
 	bleCount := 0
-	netatmoCount := 0
 	powerCount := 0
-	controlCount := 0
 	weightedAvgCount := 0
 	for _, r := range readings {
 		switch r.Type {
 		case buffer.ReadingTypeBLE:
 			bleCount++
-		case buffer.ReadingTypeNetatmo:
-			netatmoCount++
 		case buffer.ReadingTypePower:
 			powerCount++
-		case buffer.ReadingTypeControl:
-			controlCount++
 		case buffer.ReadingTypeBLEWeightedAvg:
 			weightedAvgCount++
 		}
@@ -210,9 +194,7 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 
 	span.SetAttributes(
 		attribute.Int("ble_data_points", bleCount),
-		attribute.Int("netatmo_data_points", netatmoCount),
 		attribute.Int("power_data_points", powerCount),
-		attribute.Int("control_data_points", controlCount),
 		attribute.Int("weighted_avg_data_points", weightedAvgCount),
 	)
 
@@ -265,9 +247,7 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 			p.logger.Info("successfully pushed metrics",
 				homeOtel.TraceField(ctx), homeOtel.LogContext(ctx),
 				zap.Int("ble_data_points", bleCount),
-				zap.Int("netatmo_data_points", netatmoCount),
 				zap.Int("power_data_points", powerCount),
-				zap.Int("control_data_points", controlCount),
 				zap.Int("weighted_avg_data_points", weightedAvgCount),
 				zap.Int("total_data_points", len(readings)),
 				zap.Int("time_series_count", totalTimeSeries),
@@ -314,11 +294,9 @@ func (p *Pusher) Push(ctx context.Context, readings []*buffer.Reading) error {
 func (p *Pusher) buildWriteRequest(readings []*buffer.Reading) (*prompb.WriteRequest, error) {
 	var timeSeries []prompb.TimeSeries
 
-	// Separate BLE, Netatmo, Power, Control, and Weighted Average readings
+	// Separate BLE, Power, and Weighted Average readings
 	var bleReadings []*buffer.SensorReading
-	var netatmoReadings []*buffer.ThermostatReading
 	var powerReadings []*buffer.PowerReading
-	var controlReadings []*buffer.ControlReading
 	var weightedAvgReadings []*buffer.WeightedAvgReading
 
 	for _, reading := range readings {
@@ -327,17 +305,9 @@ func (p *Pusher) buildWriteRequest(readings []*buffer.Reading) (*prompb.WriteReq
 			if reading.BLE != nil {
 				bleReadings = append(bleReadings, reading.BLE)
 			}
-		case buffer.ReadingTypeNetatmo:
-			if reading.Thermostat != nil {
-				netatmoReadings = append(netatmoReadings, reading.Thermostat)
-			}
 		case buffer.ReadingTypePower:
 			if reading.Power != nil {
 				powerReadings = append(powerReadings, reading.Power)
-			}
-		case buffer.ReadingTypeControl:
-			if reading.Control != nil {
-				controlReadings = append(controlReadings, reading.Control)
 			}
 		case buffer.ReadingTypeBLEWeightedAvg:
 			if reading.WeightedAvg != nil {
@@ -353,26 +323,12 @@ func (p *Pusher) buildWriteRequest(readings []*buffer.Reading) (*prompb.WriteReq
 	}
 	timeSeries = append(timeSeries, bleSeries...)
 
-	// Process Netatmo readings
-	netatmoSeries, err := p.buildNetatmoTimeSeries(netatmoReadings)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build Netatmo time series: %w", err)
-	}
-	timeSeries = append(timeSeries, netatmoSeries...)
-
 	// Process Power readings
 	powerSeries, err := p.buildPowerTimeSeries(powerReadings)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build Power time series: %w", err)
 	}
 	timeSeries = append(timeSeries, powerSeries...)
-
-	// Process Control readings
-	controlSeries, err := p.buildControlTimeSeries(controlReadings)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build Control time series: %w", err)
-	}
-	timeSeries = append(timeSeries, controlSeries...)
 
 	// Process Weighted Average readings
 	weightedAvgSeries, err := p.buildWeightedAvgTimeSeries(weightedAvgReadings)
@@ -480,121 +436,6 @@ func (p *Pusher) buildBLETimeSeries(readings []*buffer.SensorReading) ([]prompb.
 		timeSeries = append(timeSeries, prompb.TimeSeries{
 			Labels:  batteryLabels,
 			Samples: batterySamples,
-		})
-	}
-
-	return timeSeries, nil
-}
-
-// buildNetatmoTimeSeries builds time series for Netatmo thermostat readings
-func (p *Pusher) buildNetatmoTimeSeries(readings []*buffer.ThermostatReading) ([]prompb.TimeSeries, error) {
-	// Group readings by room
-	type roomKey struct {
-		homeID   string
-		homeName string
-		roomID   string
-		roomName string
-	}
-	roomReadings := make(map[roomKey][]*buffer.ThermostatReading)
-	for _, reading := range readings {
-		key := roomKey{
-			homeID:   reading.HomeID,
-			homeName: reading.HomeName,
-			roomID:   reading.RoomID,
-			roomName: reading.RoomName,
-		}
-		roomReadings[key] = append(roomReadings[key], reading)
-	}
-
-	// Build time series for each room and metric
-	var timeSeries []prompb.TimeSeries
-	for key, roomData := range roomReadings {
-		// Create base labels for this room
-		baseLabels := []prompb.Label{
-			{
-				Name:  "home_id",
-				Value: key.homeID,
-			},
-			{
-				Name:  "room_id",
-				Value: key.roomID,
-			},
-			{
-				Name:  "room_name",
-				Value: key.roomName,
-			},
-		}
-
-		// Prepare samples
-		measuredTempSamples := make([]prompb.Sample, 0, len(roomData))
-		setpointTempSamples := make([]prompb.Sample, 0, len(roomData))
-		heatingPowerSamples := make([]prompb.Sample, 0, len(roomData))
-
-		for _, reading := range roomData {
-			// Round timestamp to nearest 10 seconds, then convert to milliseconds
-			ts, ok := reading.Timestamp.(time.Time)
-			if !ok {
-				p.logger.Warn("invalid timestamp type in netatmo reading",
-					zap.String("room_name", key.roomName),
-				)
-				continue
-			}
-			roundedTime := roundToTenSeconds(ts)
-			timestampMs := roundedTime.UnixMilli()
-
-			// Add measured temperature sample
-			measuredTempSamples = append(measuredTempSamples, prompb.Sample{
-				Value:     reading.MeasuredTemperature,
-				Timestamp: timestampMs,
-			})
-
-			// Add setpoint temperature sample
-			setpointTempSamples = append(setpointTempSamples, prompb.Sample{
-				Value:     reading.SetpointTemperature,
-				Timestamp: timestampMs,
-			})
-
-			// Add heating power request sample
-			heatingPowerSamples = append(heatingPowerSamples, prompb.Sample{
-				Value:     float64(reading.HeatingPowerRequest),
-				Timestamp: timestampMs,
-			})
-		}
-
-		// Add measured temperature time series
-		measuredTempLabels := append([]prompb.Label{
-			{
-				Name:  "__name__",
-				Value: "netatmo_measured_temperature_celsius",
-			},
-		}, baseLabels...)
-		timeSeries = append(timeSeries, prompb.TimeSeries{
-			Labels:  measuredTempLabels,
-			Samples: measuredTempSamples,
-		})
-
-		// Add setpoint temperature time series
-		setpointTempLabels := append([]prompb.Label{
-			{
-				Name:  "__name__",
-				Value: "netatmo_setpoint_temperature_celsius",
-			},
-		}, baseLabels...)
-		timeSeries = append(timeSeries, prompb.TimeSeries{
-			Labels:  setpointTempLabels,
-			Samples: setpointTempSamples,
-		})
-
-		// Add heating power request time series
-		heatingPowerLabels := append([]prompb.Label{
-			{
-				Name:  "__name__",
-				Value: "netatmo_heating_power_request",
-			},
-		}, baseLabels...)
-		timeSeries = append(timeSeries, prompb.TimeSeries{
-			Labels:  heatingPowerLabels,
-			Samples: heatingPowerSamples,
 		})
 	}
 
@@ -756,123 +597,6 @@ func (p *Pusher) buildPowerTimeSeries(readings []*buffer.PowerReading) ([]prompb
 			Labels:  labels,
 			Samples: samples,
 		})
-	}
-
-	return timeSeries, nil
-}
-
-// buildControlTimeSeries builds time series for control loop metrics
-func (p *Pusher) buildControlTimeSeries(readings []*buffer.ControlReading) ([]prompb.TimeSeries, error) {
-	// Group readings by room
-	roomReadings := make(map[string][]*buffer.ControlReading)
-	for _, reading := range readings {
-		roomReadings[reading.RoomName] = append(roomReadings[reading.RoomName], reading)
-	}
-
-	var timeSeries []prompb.TimeSeries
-
-	for roomName, roomData := range roomReadings {
-		// Create base labels for this room
-		baseLabels := []prompb.Label{
-			{Name: "room_name", Value: roomName},
-		}
-
-		// Prepare samples for different metrics
-		xiaomiTempSamples := make([]prompb.Sample, 0, len(roomData))
-		scheduledTempSamples := make([]prompb.Sample, 0, len(roomData))
-		thermostatMeasuredSamples := make([]prompb.Sample, 0, len(roomData))
-		calculatedSetpointSamples := make([]prompb.Sample, 0, len(roomData))
-		tempDiffSamples := make([]prompb.Sample, 0, len(roomData))
-		setpointAdjSamples := make([]prompb.Sample, 0, len(roomData))
-		actionSamples := make([]prompb.Sample, 0, len(roomData))
-
-		for _, reading := range roomData {
-			ts, ok := reading.Timestamp.(time.Time)
-			if !ok {
-				continue
-			}
-			roundedTime := roundToTenSeconds(ts)
-			timestampMs := roundedTime.UnixMilli()
-
-			xiaomiTempSamples = append(xiaomiTempSamples, prompb.Sample{
-				Value:     reading.XiaomiTemperature,
-				Timestamp: timestampMs,
-			})
-
-			scheduledTempSamples = append(scheduledTempSamples, prompb.Sample{
-				Value:     reading.ScheduledTemperature,
-				Timestamp: timestampMs,
-			})
-
-			thermostatMeasuredSamples = append(thermostatMeasuredSamples, prompb.Sample{
-				Value:     reading.ThermostatMeasured,
-				Timestamp: timestampMs,
-			})
-
-			calculatedSetpointSamples = append(calculatedSetpointSamples, prompb.Sample{
-				Value:     reading.CalculatedSetpoint,
-				Timestamp: timestampMs,
-			})
-
-			tempDiffSamples = append(tempDiffSamples, prompb.Sample{
-				Value:     reading.TemperatureDifference,
-				Timestamp: timestampMs,
-			})
-
-			setpointAdjSamples = append(setpointAdjSamples, prompb.Sample{
-				Value:     reading.SetpointAdjustment,
-				Timestamp: timestampMs,
-			})
-
-			// Convert action to numeric value
-			actionValue := 0.0
-			switch reading.Action {
-			case "skip":
-				actionValue = 0.0
-			case "no_adjustment_needed":
-				actionValue = 1.0
-			case "set_manual_override":
-				actionValue = 2.0
-			case "metric":
-				actionValue = 3.0
-			}
-			actionSamples = append(actionSamples, prompb.Sample{
-				Value:     actionValue,
-				Timestamp: timestampMs,
-			})
-		}
-
-		// Build time series for each metric
-		timeSeries = append(timeSeries,
-			prompb.TimeSeries{
-				Labels:  append(baseLabels, prompb.Label{Name: "__name__", Value: "thermostat_control_xiaomi_temperature_celsius"}),
-				Samples: xiaomiTempSamples,
-			},
-			prompb.TimeSeries{
-				Labels:  append(baseLabels, prompb.Label{Name: "__name__", Value: "thermostat_control_scheduled_temperature_celsius"}),
-				Samples: scheduledTempSamples,
-			},
-			prompb.TimeSeries{
-				Labels:  append(baseLabels, prompb.Label{Name: "__name__", Value: "thermostat_control_measured_temperature_celsius"}),
-				Samples: thermostatMeasuredSamples,
-			},
-			prompb.TimeSeries{
-				Labels:  append(baseLabels, prompb.Label{Name: "__name__", Value: "thermostat_control_calculated_setpoint_celsius"}),
-				Samples: calculatedSetpointSamples,
-			},
-			prompb.TimeSeries{
-				Labels:  append(baseLabels, prompb.Label{Name: "__name__", Value: "thermostat_control_temperature_difference_celsius"}),
-				Samples: tempDiffSamples,
-			},
-			prompb.TimeSeries{
-				Labels:  append(baseLabels, prompb.Label{Name: "__name__", Value: "thermostat_control_setpoint_adjustment_celsius"}),
-				Samples: setpointAdjSamples,
-			},
-			prompb.TimeSeries{
-				Labels:  append(baseLabels, prompb.Label{Name: "__name__", Value: "thermostat_control_action"}),
-				Samples: actionSamples,
-			},
-		)
 	}
 
 	return timeSeries, nil

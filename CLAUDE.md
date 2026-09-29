@@ -8,12 +8,10 @@ This is a home automation service repository containing multiple Go applications
 
 ### Services
 
-- **home-controller**: Climate monitoring and automation service
+- **home-controller**: Climate and energy monitoring service
   - BLE temperature sensor monitoring (LYWSD03MMC with ATC firmware)
-  - Netatmo thermostat integration
   - Power meter monitoring
   - Prometheus metrics push
-  - Future: Intelligent climate control automation
 
 - **wolweb**: Wake-on-LAN web interface
   - Web UI for sending magic packets to devices
@@ -38,11 +36,10 @@ This is a home automation service repository containing multiple Go applications
 balena-home/
 ├── docker-compose.yml           # Service orchestration
 ├── CLAUDE.md                    # This file (project-level instructions)
-├── home-controller/             # Climate monitoring & automation
+├── home-controller/             # Climate & energy monitoring
 │   ├── CLAUDE.md                # Service-specific instructions
 │   ├── main.go                  # Entry point
 │   ├── scanner/                 # BLE scanning
-│   ├── netatmo/                 # Netatmo API integration
 │   ├── power/                   # Power meter scraping
 │   ├── metrics/                 # Prometheus push
 │   ├── buffer/                  # Ring buffer
@@ -100,14 +97,11 @@ Service configurations:
 Critical secrets managed via environment variables:
 - `TUNNEL_TOKEN`: Cloudflare tunnel token
 - `PROMETHEUS_PASSWORD`: Grafana Cloud API key
-- `NETATMO_CLIENT_ID`: Netatmo OAuth2 client ID
-- `NETATMO_CLIENT_SECRET`: Netatmo OAuth2 client secret
-- `NETATMO_REFRESH_TOKEN`: Netatmo OAuth2 refresh token
 
 ### Service-Specific Configuration
 
 Each service has its own configuration file:
-- `home-controller/config.yaml`: BLE sensors, Netatmo, Prometheus
+- `home-controller/config.yaml`: BLE sensors, Prometheus
 - `wolweb/config.json`: WoL settings, virtual directory
 - `wolweb/devices.json`: Device database
 - `alloy/config.alloy`: Grafana Alloy pipeline
@@ -229,5 +223,4 @@ Balena-specific labels are used for:
 
 - Grafana Cloud: Metrics and logs
 - Cloudflare Tunnel: Secure remote access
-- Netatmo API: https://dev.netatmo.com/
 - ATC Firmware: https://github.com/atc1441/ATC_MiThermometer
