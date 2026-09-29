@@ -416,6 +416,55 @@ func TestBuildWriteRequest(t *testing.T) {
 	}
 }
 
+func TestBuildWriteRequest_WeightedAvg(t *testing.T) {
+	logger := zap.NewNop()
+	pusher := newTestPusher("https://example.com", "user", "pass", logger)
+
+	readings := []*buffer.Reading{
+		{
+			Type: buffer.ReadingTypeBLEWeightedAvg,
+			WeightedAvg: &buffer.WeightedAvgReading{
+				Timestamp:          time.Now(),
+				MAC:                "A4:C1:38:26:E2:4C",
+				RoomName:           "Salon",
+				SensorID:           2,
+				TemperatureCelsius: 24.7,
+				HumidityPercent:    46.2,
+				ReadingCount:       5,
+			},
+		},
+	}
+
+	writeReq, err := pusher.buildWriteRequest(readings)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	values := make(map[string]float64)
+	for _, ts := range writeReq.Timeseries {
+		var name, room string
+		for _, label := range ts.Labels {
+			switch label.Name {
+			case "__name__":
+				name = label.Value
+			case "room_name":
+				room = label.Value
+			}
+		}
+		if room != "Salon" || len(ts.Samples) != 1 {
+			t.Fatalf("unexpected time series %s: room=%q samples=%d", name, room, len(ts.Samples))
+		}
+		values[name] = ts.Samples[0].Value
+	}
+
+	if v, ok := values["ble_temperature_weighted_avg_celsius"]; !ok || v != 24.7 {
+		t.Errorf("Expected ble_temperature_weighted_avg_celsius=24.7, got %v (present=%v)", v, ok)
+	}
+	if v, ok := values["ble_humidity_weighted_avg_percent"]; !ok || v != 46.2 {
+		t.Errorf("Expected ble_humidity_weighted_avg_percent=46.2, got %v (present=%v)", v, ok)
+	}
+}
+
 func TestLastPushTime(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
