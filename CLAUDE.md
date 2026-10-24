@@ -23,6 +23,10 @@ This is a home automation service repository containing multiple Go applications
   - Metrics scraping
   - Integration with Grafana Cloud
 
+- **edgartools**: SEC EDGAR MCP server ([edgartools/CLAUDE.md](./edgartools/CLAUDE.md))
+  - Streamable HTTP at `https://edgar.mjasion.dev/mcp` for claude.ai / Claude Code
+  - No auth of its own: Cloudflare Access (Managed OAuth) is the only gate
+
 - **nginx**: Reverse proxy
   - Exposes services via HTTPS
   - Cloudflare tunnel integration
@@ -50,6 +54,10 @@ balena-home/
 │   └── config.json              # Configuration
 ├── alloy/                       # Grafana Alloy configuration
 │   └── config.alloy             # Alloy config
+├── edgartools/                  # SEC EDGAR MCP server (pinned pip package)
+│   ├── CLAUDE.md                # Request path, Cloudflare Access setup
+│   ├── Dockerfile
+│   └── requirements.txt
 ├── nginx/                       # Nginx reverse proxy
 │   └── *.conf                   # Nginx configurations
 └── .github/workflows/           # CI/CD
@@ -89,6 +97,7 @@ Service configurations:
 - `nginx`: Ports 80/443 exposed
 - `tunnel`: Requires `TUNNEL_TOKEN` environment variable
 - `alloy`: Port 12345, Balena socket access
+- `edgartools`: Bridge network, no published ports (reached by nginx as `edgartools:8000`), `mem_limit: 512m`
 
 ## Configuration
 
@@ -126,8 +135,8 @@ Each service has its own configuration file:
 Internet → Cloudflare Tunnel → nginx → Services
                                  ↓
                           ┌──────┼──────┐
-                          ▼      ▼      ▼
-                       wolweb  home-  alloy
+                          ▼      ▼      ▼         ▼
+                       wolweb  home-  alloy  edgartools
                               controller
                                  ↓
                           Grafana Cloud
@@ -206,6 +215,7 @@ docker-compose ps
 
 For detailed information about each service, see:
 - [home-controller/CLAUDE.md](./home-controller/CLAUDE.md): Climate monitoring details
+- [edgartools/CLAUDE.md](./edgartools/CLAUDE.md): SEC EDGAR MCP server, Cloudflare Access setup
 - Individual service README files where available
 
 ## Deployment

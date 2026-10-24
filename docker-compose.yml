@@ -13,6 +13,11 @@ services:
     ports:
       - "80:80"
       - "443:443"
+  edgartools:
+    build: edgartools
+    restart: unless-stopped
+    # Pi 4 has ~2 GB RAM; the server idles at ~80 MB and grows to ~200 MB while parsing filings
+    mem_limit: 512m
   wolweb:
     build: wolweb
     network_mode: host

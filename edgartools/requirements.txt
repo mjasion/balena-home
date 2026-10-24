@@ -1,0 +1,1 @@
+edgartools[ai]==5.62.0
