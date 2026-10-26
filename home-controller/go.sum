@@ -8,6 +8,8 @@ github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XL
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/go-co-op/gocron-ui v0.3.0 h1:gZJ1qkDZdJQFDsQmtqAZhJFhQVWDSGYAwBBnTL5LHbc=
 github.com/go-co-op/gocron-ui v0.3.0/go.mod h1:4cv3MyalL1kgvYaMw/cI9V3g2mlNGa/IIjTFnVQYT2A=
+github.com/go-co-op/gocron-ui v0.4.0 h1:7/0Ab4reROw+3Fv0YWbe0I0znkTO5nqbx2q6kZwVjt8=
+github.com/go-co-op/gocron-ui v0.4.0/go.mod h1:jjOcMn8oHvl/PAyuRQxe26YMeMZn/vwVHlCxGaiUWi0=
 github.com/go-co-op/gocron/v2 v2.22.0 h1:uEuH2F7k7VoESb1BYSaffuuV+T0kkpzsC0aXk7/z79I=
 github.com/go-co-op/gocron/v2 v2.22.0/go.mod h1:hiH/U9RMhTi1BBZJmef9s3KC9QwhpBF6PFrvUKaXY9M=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
