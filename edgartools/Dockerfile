@@ -1,7 +1,7 @@
 # EdgarTools MCP server (SEC EDGAR filings) over Streamable HTTP.
 # Reached only through nginx → Cloudflare tunnel → Cloudflare Access (Managed OAuth);
 # the server itself has no authentication.
-FROM python:3.15.1-slim
+FROM python:3.15.2-slim
 
 # SEC requires a User-Agent with contact details ("Name email")
 ENV EDGAR_IDENTITY="Marcin Jasion marcinjasion@gmail.com" \
