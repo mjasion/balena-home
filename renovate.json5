@@ -3,4 +3,12 @@
   "extends": [
     'local>mjasion/renovate-base',
   ],
+  packageRules: [
+    {
+      description: 'cloudflare/cloudflared publishes several tag shapes on Docker Hub: plain multi-arch CalVer (2026.10.7, a manifest list with amd64+arm64), arch-suffixed (2026.10.7-arm64, 2002-872b241-arm64), build-number/sha (2002-872b241, 2002-872b241f9487), git-describe (2025.10.1-4-g2ab5f57b) and latest. Only the plain CalVer tag is safe for the multi-arch Raspberry Pi fleet, so allow nothing else.',
+      matchDatasources: ['docker'],
+      matchPackageNames: ['cloudflare/cloudflared'],
+      allowedVersions: '/^\\d{4}\\.\\d{1,2}\\.\\d+$/',
+    },
+  ],
 }

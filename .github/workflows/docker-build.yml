@@ -1,0 +1,87 @@
+name: Docker Build
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+  workflow_dispatch:
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.service }}
+    # The fleet is aarch64 (Raspberry Pi 4), so build natively on arm64 runners
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: alloy
+            smoke: alloy validate /etc/alloy/config.alloy
+          - service: edgartools
+            smoke: python -c 'import edgar, edgar.ai.mcp.server' && edgartools-mcp --help >/dev/null
+          - service: home-controller
+            smoke: test -x /app/ble-temp-monitor && /app/ble-temp-monitor -h
+          - service: nginx
+            smoke: nginx -t
+          - service: wolweb
+            smoke: test -x /wolweb/wolweb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: ./${{ matrix.service }}
+          push: false
+          load: true
+          tags: ci-${{ matrix.service }}:test
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }},ignore-error=true
+
+      - name: Smoke test
+        env:
+          IMAGE: ci-${{ matrix.service }}:test
+          SMOKE: ${{ matrix.smoke }}
+        run: docker run --rm --entrypoint sh "$IMAGE" -c "$SMOKE"
+
+  compose:
+    name: Validate docker-compose
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Create dummy .env file
+        run: |
+          cat > .env << EOF
+          TUNNEL_TOKEN=dummy
+          GRAFANA_CLOUD_API_KEY=dummy
+          GRAFANA_CLOUD_INSTANCE_ID=dummy
+          GRAFANA_CLOUD_OTLP_ENDPOINT=dummy
+          GRAFANA_CLOUD_LOKI_URL=dummy
+          GRAFANA_CLOUD_LOKI_USERNAME=dummy
+          NEW_RELIC_OTLP_ENDPOINT=dummy
+          NEW_RELIC_LICENSE_KEY=dummy
+          HONEYCOMB_OTLP_ENDPOINT=dummy
+          HONEYCOMB_API_KEY=dummy
+          BETTER_STACK_OTLP_ENDPOINT=dummy
+          BETTER_STACK_AUTH_HEADER=dummy
+          EOF
+
+      - name: Validate compose file
+        run: docker compose config -q
+
+      - name: Check pinned cloudflared image exists for arm64
+        run: docker compose pull tunnel

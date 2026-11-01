@@ -3,9 +3,6 @@ name: Balena Build Test
 on:
   pull_request:
     branches: [ main ]
-  push:
-    branches-ignore:
-      - main
 
 concurrency:
   group: balena-test-${{ github.ref }}
@@ -13,6 +10,8 @@ concurrency:
 
 jobs:
   test-build:
+    # BALENA_API_TOKEN is not available to Dependabot or fork PRs
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
@@ -31,5 +30,3 @@ jobs:
         fleet: ${{ secrets.BALENA_APP_NAME }}
         create_ref: false
 
-    - name: Build completed
-      run: echo "Balena build test completed successfully"

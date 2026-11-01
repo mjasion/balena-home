@@ -165,6 +165,8 @@ go vet ./...
 
 CI/CD runs automatically:
 - `home-controller-test.yml`: Tests on PR to main
+- `docker-build.yml`: Builds all five service images on `ubuntu-24.04-arm` (matches the Pi's aarch64) with a per-service smoke test, and validates `docker-compose.yml` (pulls the pinned cloudflared image). Needs no secrets.
+- `balena-test.yml`: Draft Balena release build; runs only for same-repo, non-dependabot PRs (needs `BALENA_API_TOKEN`)
 - Other workflows for additional services
 
 ## Go Versions

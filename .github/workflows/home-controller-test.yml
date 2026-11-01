@@ -6,12 +6,6 @@ on:
     paths:
       - 'home-controller/**'
       - '.github/workflows/home-controller-test.yml'
-  push:
-    branches-ignore:
-      - main
-    paths:
-      - 'home-controller/**'
-      - '.github/workflows/home-controller-test.yml'
   schedule:
     - cron: '0 12 1-7 * 0'  # First Sunday of every month at 10:00 AM UTC
 
@@ -50,6 +44,9 @@ jobs:
 
     - name: Verify dependencies
       run: go mod verify
+
+    - name: Build
+      run: go build ./...
 
     - name: Run go vet
       run: go vet ./...
