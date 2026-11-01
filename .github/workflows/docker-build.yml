@@ -18,7 +18,7 @@ jobs:
   build:
     name: Build ${{ matrix.service }}
     # The fleet is aarch64 (Raspberry Pi 4), so build natively on arm64 runners
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     strategy:
       fail-fast: false
       matrix:
@@ -58,7 +58,7 @@ jobs:
 
   compose:
     name: Validate docker-compose
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
