@@ -10,6 +10,8 @@ github.com/go-co-op/gocron-ui v0.4.0 h1:7/0Ab4reROw+3Fv0YWbe0I0znkTO5nqbx2q6kZwV
 github.com/go-co-op/gocron-ui v0.4.0/go.mod h1:jjOcMn8oHvl/PAyuRQxe26YMeMZn/vwVHlCxGaiUWi0=
 github.com/go-co-op/gocron/v2 v2.23.0 h1:Qkhe0ZlUf3sRMCEuoXRi5VU/t8fi5lyD97eO+PsGJ4g=
 github.com/go-co-op/gocron/v2 v2.23.0/go.mod h1:QwAfxPmGC9tPDL5R9R3inaJYPDvYEXs/zkYrXD3L9jk=
+github.com/go-co-op/gocron/v2 v2.23.1 h1:DAM4k6jfBHaaaLS0yCps8Jdq3smQZRoEg+/hwR5bLlk=
+github.com/go-co-op/gocron/v2 v2.23.1/go.mod h1:QwAfxPmGC9tPDL5R9R3inaJYPDvYEXs/zkYrXD3L9jk=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
 github.com/go-logr/logr v1.4.4 h1:tG4xh9yMsRCAiodLVTxyrkzSZ9+o0L1Kg/+cPVcbP/8=
 github.com/go-logr/logr v1.4.4/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
